@@ -356,15 +356,22 @@ Preparing writes three artifacts:
 
 | File | Role |
 | --- | --- |
-| `candidates.json` | Every deduplicated candidate, independent of the threshold. |
+| `candidates.json` | Discovery candidates before thresholding and optional Ollama reranking. |
 | `selection.json` | The threshold, score range, counts, durations, and profile metadata. |
 | `segments.json` | The passing clips, editable in Studio and consumed by the renderer. |
 
-Changing only the minimum score re-filters `candidates.json` without rescanning
-the transcript. Changing discovery inputs (length range, preferred length,
-search settings) runs discovery again. In Studio, the summary shows the passing
-count, score range, and duration range; candidates are paginated 25 per page and
-all passing clips start selected.
+In automatic mode, changing the minimum score, clip cap, or Ollama model
+reuses discovery and reruns selection. Changing the transcript, effective
+lengths, scoring profile, or discovery version rebuilds candidates. Keyword and
+semantic search refresh the active results when the query or mode changes.
+These operations reuse the downloaded media and edited transcript when their
+own inputs still match.
+
+The first **Find clips** after this cache update refreshes the candidates for
+existing projects. It also regenerates `segments.json`. Use **Export selected**
+or `--action render` to export previously saved clip edits before refreshing.
+In Studio, the summary shows the passing count, score range, and duration range;
+candidates are paginated 25 per page and all passing clips start selected.
 
 ## Very long sources and section rendering
 

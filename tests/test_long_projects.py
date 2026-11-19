@@ -15,8 +15,8 @@ def long_meta(source="https://example.com/long", **overrides):
 
 
 def stub_scoring(monkeypatch, path):
-    monkeypatch.setattr(projects.score_clips, "discover",
-                        lambda *args, **kwargs: None)
+    monkeypatch.setattr(projects.score_clips, "discover", lambda *args, **kwargs:
+                        projects.score_clips.save_candidates(path, [], {}))
 
     def select(*args, **kwargs):
         projects.atomic_json(path / "segments.json", [])

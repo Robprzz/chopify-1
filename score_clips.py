@@ -40,6 +40,8 @@ OLLAMA_HOST = "http://localhost:11434"
 LONG_SOURCE_SECONDS = 7200
 BLOCK_SECONDS = 1800
 BLOCK_VERSION = 2
+# Bump when candidate windows, deterministic scoring, or discovery metadata change.
+DISCOVERY_VERSION = 1
 
 BASE_LADDER = (15, 30, 45, 60, 90, 120, 180, 300)
 DURATION_HELP = "Use seconds or a duration like 45s, 2m, or 1m30s (5s to 1h)."
@@ -787,7 +789,7 @@ def _transcript_identity(workdir):
 
 def _block_key(identity, min_len, max_len, preferred_len, band):
     return hashlib.sha256(json.dumps([
-        BLOCK_VERSION, identity, float(min_len), float(max_len),
+        BLOCK_VERSION, DISCOVERY_VERSION, identity, float(min_len), float(max_len),
         None if preferred_len is None else float(preferred_len),
         list(band), evidence.EVIDENCE_VERSION, visual.FEATURE_VERSION,
     ]).encode("utf-8")).hexdigest()
@@ -812,7 +814,7 @@ def _block_part_matches(part, scan_key, index, start, end):
 
 def discover_blocks(sentences, min_len, max_len, preferred_len=None,
                     band=(30, 120), duration=None, workdir=None,
-                    progress=None):
+                    progress=None, resume=True):
     """Scan 30-minute ownership blocks and merge candidates in source order.
 
     Each block owns seeds starting inside it, while reading up to ``max_len``
@@ -830,8 +832,13 @@ def discover_blocks(sentences, min_len, max_len, preferred_len=None,
     source_duration = float(
         duration if duration is not None else sentences[-1]["end"])
     starts = [float(item["start"]) for item in sentences]
-    identity = _transcript_identity(workdir)
-    scan_key = _block_key(identity, min_len, max_len, preferred_len, band)
+    scan_key = None
+    if workdir:
+        identity = _transcript_identity(workdir)
+        if not identity:
+            identity = hashlib.sha256(json.dumps(sentences, sort_keys=True)
+                                      .encode("utf-8")).hexdigest()
+        scan_key = _block_key(identity, min_len, max_len, preferred_len, band)
 
     bounds = []
     position = 0.0
@@ -847,7 +854,7 @@ def discover_blocks(sentences, min_len, max_len, preferred_len=None,
         part_path = (Path(workdir) / f"candidates.part{index:03d}.json"
                      if workdir else None)
         part = None
-        if part_path is not None and part_path.exists():
+        if resume and part_path is not None and part_path.exists():
             try:
                 part = json.loads(part_path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
@@ -1540,7 +1547,7 @@ def attach_media_evidence(candidates, sections, timeline, profile, energy,
 
 def discover(workdir, min_len=15, max_len=300, preferred_len=None,
              band=None, progress=None, profile=None, detection=None,
-             format_info=None):
+             format_info=None, resume=True):
     """Load the transcript, measure evidence, discover, write candidates.json."""
     workdir = Path(workdir)
     data = load_transcript(workdir)
@@ -1576,7 +1583,7 @@ def discover(workdir, min_len=15, max_len=300, preferred_len=None,
             candidates, stats = discover_blocks(
                 sentences, min_len, max_len, preferred_len=preferred_len,
                 band=effective_band, duration=duration, workdir=workdir,
-                progress=progress)
+                progress=progress, resume=resume)
         else:
             candidates, stats = discover_candidates(
                 sentences, min_len, max_len, preferred_len=preferred_len,
@@ -1636,12 +1643,8 @@ def select(workdir, min_score=8.0, max_clips=None, preferred_len=None,
         adjusted = ollama_rerank(deduped[:50], llm, host)
         if adjusted is not None:
             by_key = {_candidate_key(item): item for item in adjusted}
-            candidates = [{**item, **by_key[_candidate_key(item)]}
-                          if _candidate_key(item) in by_key else item
-                          for item in candidates]
             deduped = [by_key.get(_candidate_key(item), item) for item in deduped]
             mode = "ollama"
-            save_candidates(workdir, candidates, discovery, mode=mode)
 
     segments, stats = select_candidates(
         deduped, min_score=min_score, max_clips=max_clips,

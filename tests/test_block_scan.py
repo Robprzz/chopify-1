@@ -51,6 +51,23 @@ def test_block_scan_reuses_parts_until_transcript_changes(tmp_path, monkeypatch)
                                 workdir=tmp_path)
     assert len(calls) == 8
 
+    monkeypatch.setattr(score_clips, "DISCOVERY_VERSION", score_clips.DISCOVERY_VERSION + 1)
+    score_clips.discover_blocks(sentences, 15, 60, duration=7200,
+                                workdir=tmp_path)
+    assert len(calls) == 12
+    score_clips.discover_blocks(sentences, 15, 60, duration=7200,
+                                workdir=tmp_path, resume=False)
+    assert len(calls) == 16
+
+
+def test_blocks_without_transcript_file_key_off_supplied_sentences(tmp_path):
+    first = score_clips.sentenceize([{"word": "Victoria.", "start": 0, "end": 20}])
+    second = score_clips.sentenceize([{"word": "Derrota.", "start": 0, "end": 20}])
+    candidates, _ = score_clips.discover_blocks(first, 15, 60, workdir=tmp_path)
+    assert candidates[0]["text"] == "Victoria."
+    candidates, _ = score_clips.discover_blocks(second, 15, 60, workdir=tmp_path)
+    assert candidates[0]["text"] == "Derrota."
+
 
 def test_block_scan_caps_windows_at_max_len_across_boundaries(tmp_path):
     sentences = long_sentences()

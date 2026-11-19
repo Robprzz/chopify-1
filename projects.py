@@ -161,12 +161,15 @@ def score_options(options):
     return {key: options[key] for key in keys}
 
 
-def score_keys(transcript_key, data, options):
+def score_keys(transcript_key, data, options, recipe=None):
     """Return (discovery_key, selection_key) for split stage caching."""
     discovery_options = {key: options.get(key) for key in (
         "search", "semantic", "embed_model", "min_len", "max_len",
         "preferred_len", "video_type", "format", "video_type_model")}
+    recipe = recipe or {}
+    recipe_scoring = [recipe.get(key) for key in ("profile", "min_len", "max_len")]
     discovery_key = digest([transcript_key, data, discovery_options,
+                            recipe_scoring, score_clips.DISCOVERY_VERSION,
                             evidence.EVIDENCE_VERSION,
                             visual.FEATURE_VERSION])
     selection_options = {key: options[key] for key in (
@@ -175,12 +178,23 @@ def score_keys(transcript_key, data, options):
     return discovery_key, selection_key
 
 
+def _read_cached_selection(path):
+    """Treat missing or unreadable scoring outputs as a cache miss."""
+    try:
+        selection = read_json(path / "selection.json")
+        segments = read_json(path / "segments.json")
+    except (OSError, ValueError):
+        return None
+    if isinstance(selection, dict) and isinstance(segments, list):
+        return selection
+    return None
+
+
 def apply_detection(path, state, options, detection, on_detection=None,
                     explicit_keys=None):
     """Resolve a format for the detection and return updated options and state."""
-    if explicit_keys is None:
-        explicit_keys = {key for key, default in DEFAULT_OPTIONS.items()
-                         if options.get(key) != default}
+    explicit_keys = set(explicit_keys or ()) | {
+        key for key, default in DEFAULT_OPTIONS.items() if options.get(key) != default}
     resolved = video_types.resolve_format(
         detection, options.get("video_type"), options.get("format"))
     if on_detection is not None:
@@ -192,8 +206,7 @@ def apply_detection(path, state, options, detection, on_detection=None,
         if choice:
             resolved = video_types.resolve_format(
                 detection, options.get("video_type"), options.get("format"))
-    options = video_types.apply_format(options, resolved["format"],
-                                       explicit_keys or set())
+    options = video_types.apply_format(options, resolved["format"], explicit_keys)
     state = {
         **state,
         "detection": detection,
@@ -447,43 +460,54 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
                 path, state, options, detection, on_detection, explicit_keys)
             save_project(path, state)
             recipe = state["format_recipe"]
-            discovery_key, selection_key = score_keys(transcript_key, data, options)
+            discovery_key, selection_key = score_keys(transcript_key, data, options, recipe)
             candidates_path = path / "candidates.json"
-            selection_path = path / "selection.json"
-            segments_path = path / "segments.json"
+            cache = state["cache"]
+            discovery_hit = (resume and cache.get("discovery") == discovery_key
+                             and candidates_path.is_file()
+                             and cache.get("candidate_file") == file_identity(candidates_path))
+            selection = (_read_cached_selection(path)
+                         if discovery_hit and cache.get("selection") == selection_key
+                         else None)
+            search_mode = bool(options["search"] or options["semantic"])
+            # All modes publish to the same files. Checkpoint invalidation before writing.
+            if not discovery_hit or (search_mode and selection is None):
+                cache.pop("discovery", None)
+                cache.pop("selection", None)
             stage("discover")
-            if options["search"] or options["semantic"]:
-                combined_key = digest([discovery_key, selection_key])
-                if (not resume or state["cache"].get("score") != combined_key
-                        or not segments_path.exists()):
+            if search_mode:
+                if selection is None:
                     score_clips.run(path, **score_options(options))
-                    state["cache"]["score"] = combined_key
+                    cache.update(discovery=discovery_key, selection=selection_key,
+                                 candidate_file=file_identity(candidates_path))
                     save_project(path, state)
             else:
-                if (not resume or state["cache"].get("discovery") != discovery_key
-                        or not candidates_path.exists()):
+                if not discovery_hit:
                     score_clips.discover(
                         path, min_len=options["min_len"], max_len=options["max_len"],
                         preferred_len=options["preferred_len"],
                         profile=recipe.get("profile"),
                         band=(recipe["min_len"], recipe["max_len"]),
                         detection=state.get("detection"),
-                        format_info=state.get("format"))
-                    state["cache"]["discovery"] = discovery_key
+                        format_info=state.get("format"), resume=resume)
+                    cache.update(discovery=discovery_key,
+                                 candidate_file=file_identity(candidates_path))
                     save_project(path, state)
 
+                if selection is None:
+                    cache.pop("selection", None)
                 stage("select")
-                if (not resume or state["cache"].get("selection") != selection_key
-                        or not segments_path.exists() or not selection_path.exists()):
+                if selection is None:
                     score_clips.select(
                         path,
                         min_score=options["min_score"] if options["min_score"] is not None else 8.0,
                         max_clips=options["max_clips"],
                         preferred_len=options["preferred_len"], llm=options["llm"])
-                    state["cache"]["selection"] = selection_key
+                    cache["selection"] = selection_key
                     save_project(path, state)
 
-            state["selection"] = read_json(selection_path)
+            state["selection"] = (selection if selection is not None
+                                  else read_json(path / "selection.json"))
         if action == "prepare":
             state.update(status="review", stage="ready for review")
         else:

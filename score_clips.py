@@ -38,7 +38,7 @@ OLLAMA_HOST = "http://localhost:11434"
 
 LONG_SOURCE_SECONDS = 7200
 BLOCK_SECONDS = 1800
-BLOCK_VERSION = 1
+BLOCK_VERSION = 2
 
 BASE_LADDER = (15, 30, 45, 60, 90, 120, 180, 300)
 DURATION_HELP = "Use seconds or a duration like 45s, 2m, or 1m30s (5s to 1h)."
@@ -104,20 +104,33 @@ FILLER_SEQS = {("you", "know"), ("i", "mean"), ("kind", "of"), ("sort", "of")}
 HOOK_CUES = ("the secret", "nobody tells you", "here's the thing", "here is the thing",
              "what most people", "the truth is", "here's why", "here is why", "imagine",
              "the problem is", "the biggest mistake", "let me tell you", "you need to",
-             "here's how", "here is how", "the trick", "the key", "listen", "story")
+              "here's how", "here is how", "the trick", "the key", "listen", "story",
+              "el secreto", "nadie te dice", "la verdad es", "imagina", "el problema es",
+              "el mayor error", "el peor error", "te voy a contar", "te explico",
+              "así es como", "asi es como", "lo que nadie sabe", "escucha", "la clave")
 SHOCK_CUES = ("insane", "crazy", "shocking", "unbelievable", "never", "nobody", "everyone",
               "banned", "illegal", "mistake", "wrong", "destroyed", "worst", "best",
-              "huge", "million", "billion", "dead", "killed")
-HUMOUR_CUES = ("haha", "lol", "laugh", "joke", "funny", "hilarious", "kidding", "ridiculous")
+               "huge", "million", "billion", "dead", "killed",
+               "increíble", "increible", "imposible", "nunca", "nadie",
+               "error", "peor", "mejor", "millón", "millon", "prohibido")
+HUMOUR_CUES = ("haha", "lol", "laugh", "joke", "funny", "hilarious", "kidding", "ridiculous",
+               "jajaja", "jaja", "broma", "chiste", "gracioso", "risa")
 CONTROVERSY_CUES = ("i disagree", "unpopular opinion", "hot take", "controversial",
                     "stop doing", "don't do", "do not do", "overrated", "underrated",
-                    "everyone is wrong", "myth", "lie", "scam")
+                     "everyone is wrong", "myth", "lie", "scam",
+                     "no estoy de acuerdo", "opinión impopular", "opinion impopular",
+                     "mito", "mentira", "estafa", "sobrevalorado")
 INSIGHT_CUES = ("because", "the reason", "how it works", "step one", "first", "second",
                 "third", "the way", "what happens", "if you", "the difference",
-                "framework", "system", "lesson", "learned", "the point")
+                 "framework", "system", "lesson", "learned", "the point",
+                 "porque", "la razón", "la razon", "cómo funciona", "como funciona",
+                 "el primer paso", "la diferencia", "lección", "leccion", "aprendí",
+                 "aprendi", "el punto es")
 EMOTION_CUES = ("love", "hate", "afraid", "scared", "amazing", "terrible", "proud",
                 "embarrassed", "angry", "excited", "grateful", "hurts", "cried",
-                "dream", "hope", "believe")
+                "dream", "hope", "believe", "amo", "odio", "miedo", "increíble",
+                "increible", "orgullo", "furioso", "emocionado", "lloré", "llore",
+                "sueño", "sueno", "esperanza")
 
 
 # ---------------------------------------------------------------- transcript
@@ -146,6 +159,7 @@ def load_transcript(workdir):
 
 
 ARC_RE = re.compile(r"[.!?\u2026][\"')\]]?$")
+SENTENCE_PAUSE_SECONDS = 1.2
 
 
 def is_arc_complete(text):
@@ -153,28 +167,50 @@ def is_arc_complete(text):
     return bool(ARC_RE.search((text or "").strip()))
 
 
-def sentenceize(words, gap=1.2):
-    """Split a word list into sentences on terminal punctuation or >gap-second pauses."""
+def sentenceize(words, gap=SENTENCE_PAUSE_SECONDS):
+    """Split on punctuation or pauses, recording the reason for each boundary.
+
+    Whisper can emit a fully unpunctuated transcript. Pause-delimited spans
+    still provide useful endpoints even when a period never appears.
+    """
     sentences, cur = [], []
     for w in words:
         if cur and (w["start"] - cur[-1]["end"]) > gap:
-            sentences.append(cur)
+            sentences.append((cur, "pause"))
             cur = []
         cur.append(w)
         if is_arc_complete(w["word"]):
-            sentences.append(cur)
+            sentences.append((cur, "punct"))
             cur = []
     if cur:
-        sentences.append(cur)
+        sentences.append((cur, "source_end"))
     out = []
-    for s in sentences:
+    for s, boundary in sentences:
         out.append({
             "start": s[0]["start"],
             "end": s[-1]["end"],
             "text": " ".join(w["word"] for w in s).strip(),
             "words": s,
+            "boundary": boundary,
         })
     return out
+
+
+def is_usable_endpoint(sentences, index):
+    """Allow punctuation or a real pause; the end of the source is a fallback.
+
+    Unlike is_arc_complete, this does not require Whisper to generate periods.
+    It is intentionally conservative when no pause/punctuation is present.
+    """
+    if not 0 <= index < len(sentences):
+        return False
+    sent = sentences[index]
+    if is_arc_complete(sent.get("text", "")) or sent.get("boundary") == "pause":
+        return True
+    if index + 1 == len(sentences):
+        return True
+    return (float(sentences[index + 1]["start"]) - float(sent["end"])
+            > SENTENCE_PAUSE_SECONDS)
 
 
 # ------------------------------------------------------------- heuristic core
@@ -187,14 +223,19 @@ ANAPHORIC_OPENERS = ("this", "that", "it", "he", "she", "they", "those", "these"
 EARLIER_REFERENCES = ("as i said", "like i mentioned", "earlier", "last time",
                       "previous video", "as you know")
 INTENSITY_WORDS = ("insane", "crazy", "unbelievable", "massive", "huge",
-                   "terrified", "furious", "incredible", "disgusting", "wild",
-                   "forever", "broke", "destroyed", "brutal")
+                    "terrified", "furious", "incredible", "disgusting", "wild",
+                    "forever", "broke", "destroyed", "brutal",
+                    "increíble", "increible", "brutal", "imposible", "impactante")
 REACTION_PHRASES = ("no way", "let's go", "what the", "oh my god", "are you kidding")
 PAYOFF_WORDS = ("so", "therefore", "that is why", "the result", "it turned out",
                 "in the end", "changed", "finally", "which means", "the lesson",
-                "turned out", "which is why")
+                "turned out", "which is why", "por eso", "al final",
+                "por lo tanto", "resulta que", "el resultado", "en conclusión",
+                "en conclusion", "la lección", "la leccion")
 CURIOSITY_CUES = ("secret", "nobody tells", "truth", "reason", "mistake",
-                  "hidden", "discovery", "nobody knows", "what happened")
+                  "hidden", "discovery", "nobody knows", "what happened",
+                  "secreto", "nadie sabe", "verdad", "razón", "razon",
+                  "error", "descubrimiento", "qué pasó", "que paso")
 STAKES_WORDS = ("lose", "losing", "lost", "risk", "money", "business", "life",
                 "death", "everything", "nothing", "fail", "failure", "broke",
                 "fired", "quit", "divorce", "war", "fight", "survive", "broke")
@@ -291,7 +332,7 @@ def sentence_features(sent):
         "duration": duration, "words": len(tokens), "text": text,
         "tokens": tokens, "clean_words": max(1, len(tokens) - filler_count),
         "wps": len(tokens) / duration,
-        "terminal": is_arc_complete(text),
+        "terminal": (is_arc_complete(text) or sent.get("boundary") == "pause"),
         "filler_count": filler_count,
         "filler_ratio": filler_count / max(1, len(tokens)),
         "meta_open": any(phrase in low for phrase in META_OPENERS),
@@ -685,7 +726,7 @@ def discover_candidates(sentences, min_len=15, max_len=300,
     def evaluate(seed, end_index, choices):
         if end_index < seed or end_index > last_index:
             return
-        if not is_arc_complete(sentences[end_index]["text"]):
+        if not is_usable_endpoint(sentences, end_index):
             return
         duration = ends[end_index] - sentences[seed]["start"]
         if duration < min_len or duration > max_len:
@@ -1092,15 +1133,13 @@ def _grow_window(sentences, seed, taken, min_len, max_len):
         j -= 1
     if span(seed, j) < min_len * 0.6:
         return None
-    # complete-thought rule: keep growing (within max_len) until the last
-    # sentence ends with terminal punctuation
-    while not is_arc_complete(sentences[j]["text"]) and j + 1 < n \
+    # End at punctuation or a clear pause, including punctuation-free ASR.
+    while not is_usable_endpoint(sentences, j) and j + 1 < n \
             and not taken[j + 1] and span(seed, j + 1) <= max_len:
         j += 1
-    # still incomplete -> back off to the last complete sentence in the window
-    while j > seed and not is_arc_complete(sentences[j]["text"]):
+    while j > seed and not is_usable_endpoint(sentences, j):
         j -= 1
-    if not is_arc_complete(sentences[j]["text"]):
+    if not is_usable_endpoint(sentences, j):
         return None
     if span(seed, j) < min_len * 0.6:
         return None

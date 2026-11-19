@@ -17,9 +17,10 @@
         ></a
       >
       <div class="local">
-        <span class="dot"></span> Processing stays on this computer
+        <span class="dot"></span> Files stay on this computer
       </div>
       <button id="new-project" class="primary wide">＋ New project</button>
+      <button id="show-live" class="wide">● Live clipping</button>
       <div class="rail-heading">
         YOUR PROJECTS <span id="project-count">0</span>
       </div>
@@ -27,23 +28,23 @@
         <p class="muted">No projects yet.</p>
       </nav>
       <div class="rail-footer">
-        Your footage. Your machine.<br /><span
-          >Whisper · ffmpeg · optional Ollama</span
+        Local files · ffmpeg · Whisper<br /><span
+          >No upload, no subscription</span
         >
       </div>
     </aside>
     <main>
       <header class="topbar">
-        <span>THE LOCAL CUTTING ROOM</span
+        <span>CHOPIFY / STUDIO</span
         ><span id="connection"><span class="dot"></span> Local session</span>
       </header>
       <div id="notice" role="status" aria-live="polite" hidden></div>
       <section id="new-view" class="view">
         <div class="intro">
           <span class="eyebrow">FROM LONG FORM TO THE GOOD PART</span>
-          <h1>Find the moment.<br /><em>Make the cut.</em></h1>
+          <h1>Pick the clips.<br /><em>Export them.</em></h1>
           <p>
-            Turn recordings into captioned clips. Review every pick before you
+            Turn a recording into short, captioned clips. Review every pick before
             export.
           </p>
         </div>
@@ -63,6 +64,12 @@
             One source per line. Local files stay in place. URLs download to
             their project folder.
           </p>
+          <label for="brief-text">Campaign brief (optional)</label>
+          <textarea
+            id="brief-text"
+            rows="5"
+            placeholder="Paste campaign requirements here. Chopify uses a local LLM to extract rules and cut only matching moments."
+          ></textarea>
           <div class="form-grid">
             <label
               >Format<select id="new-aspect">
@@ -109,27 +116,58 @@
         </form>
         <div class="workflow">
           <div>
-            <b>Find</b>
-            <p>Transcribe and pick complete moments.</p>
+            <b>Score</b>
+            <p>Transcribe the recording and shortlist complete moments.</p>
           </div>
           <div>
             <b>Refine</b>
-            <p>Correct captions. Set your framing.</p>
+            <p>Fix words, timing, and framing.</p>
           </div>
           <div>
             <b>Export</b>
-            <p>Choose your clips. Save MP4 + SRT.</p>
+            <p>Render MP4 and SRT for the clips you selected.</p>
           </div>
         </div>
+      </section>
+      <section id="live-view" class="view" hidden>
+        <div class="intro">
+          <span class="eyebrow">WATCH · DETECT · CUT</span>
+          <h1>Clip <em>live streams.</em></h1>
+          <p>
+            Paste a stream URL. Chopify watches it on this computer and saves
+            captioned clips when the hype signals fire.
+          </p>
+        </div>
+        <form id="live-form" class="panel input-panel">
+          <div class="panel-title">
+            <h2>Start a live session</h2>
+            <span>HLS / RTMP URL OR LIVE PAGE</span>
+          </div>
+          <label for="live-source">Stream URL</label>
+          <input id="live-source" required placeholder="https://twitch.tv/channel or https://.../live.m3u8" />
+          <label for="live-brief">Campaign brief (optional)</label>
+          <textarea id="live-brief" rows="4"
+            placeholder="Paste requirements; chopify will only save clips that match."></textarea>
+          <button id="live-start" type="submit" class="primary">Start live session</button>
+        </form>
+        <button id="live-stop" hidden>Stop session</button>
+        <div id="live-status" class="muted">Not running.</div>
+        <div id="live-health" class="muted"></div>
+        <div id="live-score"></div>
+        <div id="live-clips"></div>
       </section>
       <section id="project-view" class="view" hidden>
         <div class="project-heading">
           <div>
-            <span class="eyebrow" id="project-id"></span>
+            <span id="project-id"></span>
             <h1 id="project-title">Project</h1>
             <p id="project-source" class="muted"></p>
+            <div id="detection-banner" class="detection-banner" hidden></div>
           </div>
           <span id="status" class="status"></span>
+          <div class="pulse-frame" aria-hidden="true">
+            <canvas id="job-pulse" width="1200" height="92"></canvas>
+          </div>
         </div>
         <p id="job-error" role="alert" hidden></p>
         <div class="workspace">
@@ -229,7 +267,7 @@
             </details>
           </div>
           <aside class="settings panel">
-            <div class="panel-title"><h2>Make it yours</h2></div>
+            <div class="panel-title"><h2>Render settings</h2></div>
             <form id="settings-form">
               <label
                 >Format<select name="aspect">
@@ -242,8 +280,23 @@
                 >Framing<select name="layout">
                   <option value="single">Single frame / face tracking</option>
                   <option value="split">Podcast · two stacked speakers</option>
+                  <option value="stacked">Gaming · facecam + gameplay</option>
                 </select></label
               >
+              <label
+                >Facecam box (x y w h, blank = auto)<input
+                  id="facecam-box"
+                  placeholder="0 0.62 0.26 0.30"
+              /></label>
+              <label
+                >Facecam height<input
+                  id="facecam-height"
+                  type="number"
+                  min="0.2"
+                  max="0.6"
+                  step="0.01"
+                  value="0.34"
+              /></label>
               <p class="hint">
                 Split-screen uses 9:16. Set each speaker's horizontal position
                 for fixed-camera footage.

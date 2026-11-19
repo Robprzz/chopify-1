@@ -1180,3 +1180,98 @@ def test_list_styles_flag():
     assert result.returncode == 0
     assert result.stdout.splitlines() == list(render_clips.CAPTION_STYLES)
     assert result.stderr == ""
+
+
+def test_live_options_defaults():
+    import projects
+    options = projects.validate_options({})
+    assert options["live_buffer"] == 300
+    assert options["live_buffer_max_mb"] == 512
+    assert options["live_pre_roll"] == 30
+    assert options["live_tail"] == 5
+    assert options["live_window"] == 10
+    assert options["live_threshold"] == 8.0
+    assert options["live_cooldown"] == 60
+    assert options["live_max_clips"] == 10
+    assert options["live_no_chat"] is False
+    assert options["live_no_transcript"] is False
+    assert options["live_headers"] == []
+
+
+@pytest.mark.parametrize("key,value", [
+    ("live_buffer", 59), ("live_buffer", 3601),
+    ("live_buffer_max_mb", 31), ("live_pre_roll", 4),
+    ("live_tail", 61), ("live_window", 1), ("live_window", 61),
+    ("live_threshold", -1), ("live_threshold", 11),
+    ("live_cooldown", -1), ("live_max_clips", -1),
+])
+def test_live_options_reject_out_of_range(key, value):
+    import projects
+    with pytest.raises(ValueError):
+        projects.validate_options({key: value})
+
+
+def test_live_options_headers():
+    import projects
+    options = projects.validate_options({"live_headers": ["X-Key: abc", "Referer: https://x/"]})
+    assert options["live_headers"] == ["X-Key: abc", "Referer: https://x/"]
+    with pytest.raises(ValueError):
+        projects.validate_options({"live_headers": ["not-a-header"]})
+    with pytest.raises(ValueError):
+        projects.validate_options({"live_headers": "X-Key: abc"})
+
+
+def test_facecam_options_defaults_and_validation():
+    import projects
+    o = projects.validate_options({})
+    assert o["facecam_box"] is None
+    assert o["facecam_height"] == 0.34
+    assert projects.validate_options({"facecam_box": [0.1, 0.6, 0.2, 0.3]})["facecam_box"] == [0.1, 0.6, 0.2, 0.3]
+    assert projects.validate_options({"layout": "stacked", "aspect": "9:16"})["layout"] == "stacked"
+    for bad in (0.19, 0.61, -1, 2):
+        with pytest.raises(ValueError):
+            projects.validate_options({"facecam_height": bad})
+    for bad in ([0.1, 0.2, 0.3], [0.1, 0.2, 0.3, 4], "0 0 1 1"):
+        with pytest.raises(ValueError):
+            projects.validate_options({"facecam_box": bad})
+
+
+def test_fit_option_default_and_validation():
+    import projects
+    assert projects.validate_options({})["fit"] == "cover"
+    assert projects.validate_options({"fit": "contain"})["fit"] == "contain"
+    with pytest.raises(ValueError, match="Fit"):
+        projects.validate_options({"fit": "stretch"})
+
+
+def test_fit_flag_is_exposed(monkeypatch):
+    import chopify
+    import live
+    seen = {}
+    monkeypatch.setattr(live, "run_live",
+                        lambda url, options, root, on_log=None, brief_text=None: seen.update(options))
+    monkeypatch.setattr(chopify, "check_environment", lambda: None)
+    monkeypatch.setattr(sys, "argv", [
+        "chopify", "--live", "https://x/l.m3u8", "--fit", "contain",
+        "--no-preflight"])
+    chopify.main()
+    assert seen["fit"] == "contain"
+
+
+def test_live_flag_is_exposed(monkeypatch):
+    import chopify
+    import live
+    seen = {}
+
+    def fake_run_live(url, options, root, on_log=None, brief_text=None):
+        seen.update(url=url, options=options, root=root)
+        return None
+
+    monkeypatch.setattr(live, "run_live", fake_run_live)
+    monkeypatch.setattr(chopify, "check_environment", lambda: None)
+    monkeypatch.setattr(sys, "argv", [
+        "chopify", "--live", "https://x/l.m3u8", "--live-threshold", "7.5",
+        "--no-preflight"])
+    chopify.main()
+    assert seen["url"] == "https://x/l.m3u8"
+    assert seen["options"]["live_threshold"] == 7.5

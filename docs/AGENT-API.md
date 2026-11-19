@@ -134,9 +134,14 @@ require a matching Origin. Never publish a running session's token.
 | POST | `/api/projects/ID/transcript` | `{ "words": [{ "word": "Hello", "start": 0, "end": 0.5 }] }` |
 | POST | `/api/projects/ID/candidates` | `{ "candidates": [{ "start": 0, "end": 20, "hook": "Title", "overall": 7 }] }` |
 | POST | `/api/projects/ID/run` | `{ "action": "render", "preview": true, "pick": "1,3" }`; queues job |
+| GET | `/api/live` | `{ "sessions": [session, ...] }` for live clipping sessions |
+| POST | `/api/live` | `{ "source": "https://twitch.tv/channel", "options": { "live_threshold": 8 } }`; starts a long-running live worker in the background |
+| GET | `/api/live/ID` | `{ "id": ..., "status": ..., "stream_time": ..., "recent_scores": [], "triggers": [], "errors": [] }` |
+| POST | `/api/live/ID/stop` | `{}`; stops the session |
 | POST | `/api/brands` | `{ "name": "channel", "preset": { "font": "Arial", "highlight": "#FFFF00", "animation": "pop" } }`; caption fields are optional |
 | GET | `/media/ID/source` | Full source video for a project with `playable_source: true`; byte-range support |
 | GET | `/media/ID/clips/FILE` | Project exports; `previews` also supported |
+| GET | `/media/live/ID/clips/FILE` | Exports from a live session; byte-range support |
 
 `GET /api/projects/ID` exposes `source_meta`, `selection`, `progress`,
 `render_errors`, and `playable_source`. `playable_source` is true only when a
@@ -152,6 +157,43 @@ unknown keys, or out-of-range values return 400 without changing the project.
 Busy projects reject edits and duplicate runs. Poll detail for completion;
 enqueueing is not success. On restart, unfinished jobs become `interrupted` and
 need explicit retry.
+
+## Agent interface (no MCP)
+
+`python agent.py` is a machine-readable interface for coding agents. stdout is
+newline-delimited JSON only; human logs go to stderr with `--verbose` and are
+discarded otherwise. Run `python agent.py describe` for the operation catalog
+with JSON Schemas — it is the source of truth for commands, inputs and errors.
+
+Commands: `describe`, `preflight`, `styles`,
+`project create|get|prepare|render|wait`, `batch create|wait`,
+`live start|status|stop`. Use `--help` on any subcommand for flags;
+`--options-json` accepts a JSON object of the options documented above. It also
+accepts `video_type` (`auto` or one of `podcast`, `gaming`, `movie`, `livestream`,
+`interview`, `tutorial`, `music`, `unknown`), `format` (a built-in or custom
+format name, or a JSON path) and `video_type_model` (optional local Ollama model
+for uncertain detections). Auto mode is silent: agents are never prompted. Read
+back `detection`, `format` and `format_recipe` from project state and from
+`candidates.json` / `selection.json` stats.
+
+Each command emits `start`, zero or more `progress`, then `result` or `error`.
+
+| Event | Extra fields |
+| --- | --- |
+| `start` | `request_id` |
+| `progress` | `stage`, optionally `project` |
+| `result` | `request_id`, `data` |
+| `error` | `request_id`, `code`, `message`, `retryable`, `details` |
+
+Exit codes: `0` success, `2` invalid input, `3` failed, `4` timeout. Error codes:
+`INVALID_ARGUMENT`, `INVALID_OPTIONS`, `NOT_FOUND`, `PRECONDITION_FAILED`,
+`BUSY`, `TIMEOUT`, `PREFLIGHT_FAILED`, `PROCESS_FAILED`, `RENDER_FAILED`,
+`LIVE_FAILED`. A project is settled at `complete`, `failed`, `interrupted` or
+`review`. `TIMEOUT` does not cancel work; poll `project get` again.
+
+A copyable skill that teaches the full workflow ships as `SKILL.md` (and
+`skills/chopify/SKILL.md`). Copy it to `~/.claude/skills/chopify/SKILL.md` or
+`.agents/skills/chopify/SKILL.md`. The public build publishes it as `skill.md`.
 
 Project files expose local paths and transcripts; keep them private. Studio is
 for one trusted local user, not a multi-tenant service. Do not expose it through

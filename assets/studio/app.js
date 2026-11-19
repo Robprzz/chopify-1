@@ -4,6 +4,7 @@ const state = {
   token: "",
   config: null,
   id: null,
+  liveId: null,
   detail: null,
   words: [],
   page: 0,
@@ -385,6 +386,7 @@ async function selectProject(id) {
   state.previewFile = null;
   state.pendingPreview = null;
   $("#new-view").hidden = true;
+  $("#live-view").hidden = true;
   $("#project-view").hidden = false;
   const detail = await api(`/api/projects/${id}`);
   if (state.id !== id) return;
@@ -401,8 +403,10 @@ function updateStatus(detail) {
     detail.busy && progress.stage && Number.isFinite(total) && total > 0
       ? ` · ${progress.stage} ${Number(progress.done) || 0}/${total}`
       : "";
-  $("#status").textContent =
+  const statusEl = $("#status");
+  statusEl.textContent =
     `${detail.project.status} · ${detail.project.stage}${progressText}`;
+  statusEl.dataset.state = detail.project.status || "";
   const errors = detail.render_errors || [];
   const error =
     detail.project.error ||
@@ -522,11 +526,61 @@ function renderSelectionSummary(detail) {
   box.textContent = lines.join("\n");
   box.hidden = false;
 }
+function renderDetection(detail) {
+  const banner = $("#detection-banner");
+  if (!banner) return;
+  const detection = detail.detection;
+  if (!detection) { banner.hidden = true; return; }
+  banner.hidden = false;
+  const confidence = Math.round((detection.confidence || 0) * 100);
+  const formatName = detail.format?.name || "unknown";
+  banner.textContent = `Detected: ${detection.type} (${confidence}%) · Using format: ${formatName}`;
+  const change = document.createElement("select");
+  change.setAttribute("aria-label", "Clipping format");
+  const formats = Object.keys((state.config && state.config.formats) || {});
+  for (const name of formats) {
+    const option = document.createElement("option");
+    option.value = name;
+    option.textContent = name;
+    option.selected = name === formatName;
+    change.appendChild(option);
+  }
+  change.addEventListener("change", async () => {
+    await api(`/api/projects/${state.id}/settings`, { format: change.value });
+    notice("Format saved. Prepare again to apply it.");
+  });
+  banner.appendChild(change);
+  const build = document.createElement("button");
+  build.type = "button";
+  build.textContent = "Build new format";
+  build.addEventListener("click", () => buildFormat(detail));
+  banner.appendChild(build);
+}
+
+async function buildFormat(detail) {
+  const name = window.prompt("New format name (lowercase):");
+  if (!name) return;
+  const base = detail.format_recipe || {};
+  const min = window.prompt("Minimum clip seconds", String(base.min_len || 30));
+  const max = window.prompt("Maximum clip seconds", String(base.max_len || 120));
+  try {
+    await api("/api/formats", {
+      ...base, name,
+      min_len: Number(min), max_len: Number(max),
+    });
+    notice("Format saved. Reload Studio to see it in the list.");
+    await config();
+  } catch (error) {
+    notice(error.message, true);
+  }
+}
+
 function renderDetail() {
   const detail = state.detail,
     p = detail.project,
     options = p.options;
-  $("#project-id").textContent = `PROJECT / ${p.id}`;
+  renderDetection(detail);
+  $("#project-id").textContent = `FAC ${String(p.id || "").slice(0, 6).toUpperCase()}`;
   $("#project-title").textContent = projectName(p.source);
   $("#project-source").textContent = p.source;
   const player = $("#source-player");
@@ -560,6 +614,10 @@ function renderDetail() {
   }
   form.elements.center1.value = options.centers[0];
   form.elements.center2.value = options.centers[1];
+  $("#facecam-box").value = options.facecam_box
+    ? options.facecam_box.join(" ")
+    : "";
+  $("#facecam-height").value = options.facecam_height ?? 0.34;
   const brand = options.brand
     ? basename(options.brand).replace(/\.json$/, "")
     : "";
@@ -693,6 +751,7 @@ async function run(action, preview = false) {
 $("#new-project").addEventListener("click", () => {
   state.id = null;
   $("#new-view").hidden = false;
+  $("#live-view").hidden = true;
   $("#project-view").hidden = true;
   $("#sources").focus();
   refreshProjects().catch((e) => notice(e.message, true));
@@ -721,7 +780,8 @@ $("#create-form").addEventListener(
         whisper_model: $("#new-model").value,
         style: $("#new-style").value,
       };
-      const result = await api("/api/batch", { sources, options });
+      const brief = ($("#brief-text")?.value || "").trim();
+      const result = await api("/api/batch", { sources, options, brief });
       await selectProject(result.projects[0].id);
       notice(
         `${sources.length} project${sources.length === 1 ? "" : "s"} queued for review.`,
@@ -749,6 +809,16 @@ $("#settings-form").addEventListener(
     values.centers = [Number(values.center1), Number(values.center2)];
     delete values.center1;
     delete values.center2;
+    const facecamText = ($("#facecam-box")?.value || "").trim();
+    let facecamBox = null;
+    if (facecamText) {
+      const parts = facecamText.split(/[\s,]+/).map(Number);
+      if (parts.length === 4 && parts.every(Number.isFinite)) facecamBox = parts;
+    }
+    values.facecam_box = facecamBox;
+    const facecamHeight = Number($("#facecam-height")?.value);
+    if (Number.isFinite(facecamHeight))
+      values.facecam_height = facecamHeight;
     values.llm = values.llm.trim() || null;
     values.search = null;
     values.semantic = null;
@@ -917,6 +987,88 @@ $("#select-none").addEventListener("click", () => {
 $("#show-clips").addEventListener("click", () => setTab("clips"));
 $("#show-transcript").addEventListener("click", () => setTab("transcript"));
 $("#show-captions").addEventListener("click", () => setTab("captions"));
+
+function showLive() {
+  state.id = null;
+  $("#new-view").hidden = true;
+  $("#project-view").hidden = true;
+  $("#live-view").hidden = false;
+  refreshLive().catch((e) => notice(e.message, true));
+}
+$("#show-live").addEventListener("click", showLive);
+
+$("#live-form").addEventListener(
+  "submit",
+  safe(async (event) => {
+    event.preventDefault();
+    const source = $("#live-source").value.trim();
+    const brief = ($("#live-brief")?.value || "").trim();
+    const result = await api("/api/live", {
+      source,
+      options: { aspect: "9:16" },
+      brief,
+    });
+    state.liveId = result.id;
+    $("#live-stop").hidden = false;
+    notice("Live session started. Hype moments will be saved automatically.");
+    await refreshLive();
+  }),
+);
+
+$("#live-stop").addEventListener(
+  "click",
+  safe(async () => {
+    await api(`/api/live/${state.liveId}/stop`, {});
+    state.liveId = null;
+    $("#live-stop").hidden = true;
+    await refreshLive();
+  }),
+);
+
+const LIVE_NEXT_ACTION = {
+  ok: "Watching",
+  degraded: "Waiting for segments",
+  failed: "Check the URL or restart Studio",
+};
+
+async function refreshLive() {
+  const data = await api("/api/live");
+  const sessions = data.sessions || [];
+  const detail = state.liveId
+    ? await api(`/api/live/${state.liveId}`)
+    : null;
+  $("#live-status").textContent = detail
+    ? `${detail.status} · ${Math.round(detail.stream_time)}s · ${detail.triggers.length} clips`
+    : sessions.length
+      ? `${sessions.length} session(s) on disk`
+      : "Not running.";
+  const health = detail?.health;
+  $("#live-health").textContent = health
+    ? `${health.state} · segment ${health.last_segment_age}s · ${health.restarts} restarts · `
+      + `${LIVE_NEXT_ACTION[health.state] || "Watching"} · brief `
+      + `${health.brief_source || "none"}/${health.brief_provider || "none"}`
+    : "";
+  const scores = detail?.recent_scores || [];
+  $("#live-score").textContent = scores.length
+    ? `score ${Number(scores[scores.length - 1]).toFixed(2)}`
+    : "";
+  const clips = $("#live-clips");
+  clips.replaceChildren();
+  for (const record of detail?.triggers || []) {
+    const row = document.createElement("div");
+    row.className = "live-clip";
+    row.textContent = `#${record.id} · ${Number(record.start).toFixed(1)}s-${Number(record.end).toFixed(1)}s · ${record.score}`;
+    const video = record.files?.mp4;
+    if (video && state.liveId) {
+      const link = document.createElement("a");
+      const name = basename(video);
+      link.href = `/media/live/${state.liveId}/clips/${encodeURIComponent(name)}`;
+      link.textContent = " play";
+      row.append(link);
+    }
+    clips.append(row);
+  }
+}
 $("#caption-form").addEventListener("input", () => syncCaption());
 $("#caption-preset").addEventListener("change", (event) =>
   applyCaptionPreset(event.target.value),
@@ -998,6 +1150,7 @@ setInterval(async () => {
   polling = true;
   try {
     await refreshProjects();
+    if (state.liveId) refreshLive().catch(() => {});
     if (state.id && state.busy) {
       const id = state.id,
         detail = await api(`/api/projects/${id}`);
@@ -1063,4 +1216,43 @@ setInterval(async () => {
 safe(async () => {
   await config();
   await refreshProjects();
+})();
+
+/* Signal Desk: one authored motion — a hairline pulse for the current job. */
+(() => {
+  const canvas = $("#job-pulse");
+  if (!canvas || !canvas.getContext) return;
+  const ctx = canvas.getContext("2d");
+  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let phase = 0;
+  function scores() {
+    const detail = state.detail;
+    if (!detail) return [];
+    const history = detail.recent_scores || [];
+    if (history.length) return history.slice(-60).map(Number);
+    const progress = detail.progress || {};
+    const total = Number(progress.total) || 0;
+    return total ? Array.from({ length: 24 }, (_, i) => i < Number(progress.done) || 0 ? 8 : 2) : [];
+  }
+  function draw() {
+    const w = canvas.width, h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+    const values = scores();
+    const count = Math.max(32, Math.min(120, values.length || 48));
+    const step = w / count;
+    for (let i = 0; i < count; i += 1) {
+      const v = values.length ? values[i % values.length] : 2 + Math.sin((i + phase) * 0.35) * 1.6;
+      const amp = Math.max(2, Math.min(1, v / 10) * (h - 16));
+      const active = !values.length && Math.abs(i - (phase % count)) < 1;
+      ctx.strokeStyle = active ? "#d4ef83" : "#3a4547";
+      ctx.lineWidth = active ? 2 : 1;
+      ctx.beginPath();
+      ctx.moveTo(i * step + step / 2, h / 2 - amp / 2);
+      ctx.lineTo(i * step + step / 2, h / 2 + amp / 2);
+      ctx.stroke();
+    }
+    phase += 0.12;
+    if (!reduced) requestAnimationFrame(draw);
+  }
+  draw();
 })();

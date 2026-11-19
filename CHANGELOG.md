@@ -8,6 +8,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Local video-type detection (podcast, gaming, movie, livestream, interview,
+  tutorial, music, unknown) with reusable clipping formats that set length,
+  scoring profile, captions, layout and live thresholds.
+- `--video-type`, `--format`, `--video-type-model` and `--list-formats` flags,
+  plus an interactive builder for custom formats when detection is uncertain.
+- Studio detection banner, format selector and **Build new format** action.
+- Live sessions and the agent interface accept type/format options.
+
+### Fixed
+- Brief provider failures now name the specific agent and reason (for example,
+  "claude found but not authenticated") instead of a generic error, and
+  `--brief-provider none` forces deterministic keyword rules.
+- Live capture restarts a stalled stream and re-resolves expiring page URLs
+  instead of silently stopping when ffmpeg exits.
+- Live sessions now decode only completed HLS segments instead of the segment
+  being written, avoiding partial-file decode failures.
+- Visual signal frames are reshaped from raw ffmpeg bytes before analysis.
+- Live clip rendering passes `do_tighten` to the renderer with its actual name.
+- Live capture maps only the first video and audio streams, avoiding DTS muxer
+  failures on streams that expose extra data streams, and logs ffmpeg errors to
+  a file instead of an undrained pipe.
+
+### Added
+- Agent-native interface: `python agent.py describe` exposes a self-describing
+  operation catalog with JSON Schemas; all commands emit NDJSON with typed
+  errors and stable exit codes. An installable `SKILL.md` teaches agents the
+  full create → prepare → review → render → verify workflow. No MCP server or
+  new dependency is required.
+- Live reliability: page-URL streams are re-resolved every 10 minutes and on
+  capture exit, stalled capture restarts with backoff, and a `health` object
+  (`state`, segment age, restarts, refreshes, warnings, brief source/provider)
+  is saved to `live_session.json` and shown in Studio and the CLI.
+- Best-effort ad-slate suppression with `--live-skip-ads` (off by default). It
+  only suppresses clip triggers; footage is still buffered and never discarded.
+- An offline HLS fixture integration test drives the live pipeline with local
+  ffmpeg — no network, account, or API key required.
+- Campaign brief clipping: paste requirements in Studio or via `--brief` and a
+  local LLM agent (Ollama, Claude, Codex, Hermes, or custom command) extracts
+  structured rules into `brief_rules.json`. Batch and live clips are filtered
+  and ranked by those rules, with a keyword fallback when no agent is available.
+- Gaming `stacked` layout: facecam above gameplay with captions at the seam,
+  available in batch and live modes from CLI and Studio. `--facecam-box` sets an
+  explicit normalized rectangle; auto-detection is used when it is omitted.
+- `--fit contain` renders vertical clips without cropping: the whole 16:9 frame
+  is scaled into 9:16 with black bars, useful for gameplay and screen captures.
+  Live sessions forward the setting through CLI and Studio options.
+- Live clipping from HLS/RTMP URLs: `chopify --live URL` watches a stream with a
+  rolling segment buffer, scores audio, visual motion, transcript and chat hype
+  in real time, and automatically saves finished 9:16 captioned clips. A Live
+  tab in Studio starts/stops sessions and shows the score and clip feed.
+- `docs/LIVE.md` covers live sources, signals, options, session files, and the
+  rights notice; linked from README, CLI reference, and `llms.txt`.
 - `python chopify.py --version` prints the release version and exits 0 without
   requiring a source, ffmpeg or network.
 - `python chopify.py --list-styles` prints the 13 caption preset names and

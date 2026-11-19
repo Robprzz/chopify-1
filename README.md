@@ -8,6 +8,14 @@
   <img src="assets/demo.gif" alt="A Chopify clip with word-by-word burned-in captions" width="720">
 </p>
 
+<p align="center"><b>Live clipping — full-frame vertical clip cut from a real Twitch stream</b></p>
+<p align="center">
+  <a href="https://github.com/mehbul/chopify/blob/main/docs/evidence/media/live-clip-gameplay.mp4">
+    <img src="docs/evidence/media/live-clip-gameplay.png?v=3" width="320" alt="Live-clipped full-frame vertical clip from a Twitch stream">
+  </a>
+</p>
+<p align="center"><a href="https://github.com/mehbul/chopify/blob/main/docs/evidence/media/live-clip-gameplay.mp4">Watch the live-clipping demo clip →</a></p>
+
 <p align="center">
   <a href="#install-in-one-command"><b>Install</b></a> ·
   <a href="https://mehbul.github.io/chopify/"><b>Live tour</b></a> ·
@@ -23,7 +31,7 @@
 
 Chopify is an open-source Python app with a local browser dashboard and a CLI. Import a recording or a video URL, find moments, correct captions, review drafts, and export MP4 clips with SRT subtitles. No subscription, API key, cloud upload, or watermark. The [live site](https://mehbul.github.io/chopify/) is a product tour; the app itself runs on your computer.
 
-[Workflow guide](docs/WORKFLOWS.md) · [CLI reference](docs/CLI.md) · [Agent/API reference](docs/AGENT-API.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [Changelog](CHANGELOG.md)
+[Workflow guide](docs/WORKFLOWS.md) · [CLI reference](docs/CLI.md) · [Agent/API reference](docs/AGENT-API.md) · [Live clipping](docs/LIVE.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [Changelog](CHANGELOG.md)
 
 ## What can Chopify do?
 
@@ -31,6 +39,10 @@ Chopify is an open-source Python app with a local browser dashboard and a CLI. I
 | --- | --- |
 | **Local browser dashboard** | Queue videos, watch job progress, review candidates, edit words and timestamps, and download exports. |
 | **Local video input** | Use MP4, MOV, MKV, WebM, M4V, or AVI recordings directly, or download a yt-dlp-supported URL. |
+| **Live clipping** | Watch an HLS/RTMP stream, detect hype from audio, visual motion, transcript, and chat, and auto-save finished captioned clips from the CLI or Studio. Use `--fit contain` for full-frame gameplay clips. |
+| **Gaming facecam layout** | `--layout stacked` puts the streamer's facecam above gameplay in 9:16 with captions at the seam — the Shorts/Reels gaming look — for batch and live clips. |
+| **Campaign brief clipping** | Paste a reward-platform brief; a local LLM agent extracts rules and chopify cuts only the moments that match. Rules are saved as `brief_rules.json`. |
+| **Video-type formats** | Detects podcast, gaming, movie, livestream, interview, tutorial, or music from local signals, then applies a matching clipping format. If none fits, Studio/CLI lets you build a new one. Explicit flags always win. |
 | **Any-length sources** | Podcasts, movies, streams, and gameplay VODs work without a duration setting. Long sources switch to a resumable audio-first path automatically. |
 | **Audio and visual discovery** | A local 1 Hz audio timeline boosts reactions, laughs, impacts, and gameplay events, while cached 2 fps visual analysis catches motion spikes, scene/UI changes, faces, and action arcs. Speech-sparse and action-only sources can still produce clips. |
 | **Resumable projects** | Reuse matching downloads, transcripts, and completed renders. Retry a failed job without discarding successful clips. |
@@ -124,6 +136,14 @@ python chopify.py "recording.mp4" --caption-json my-caption-style.json
 
 # Process a queue of videos into separate projects
 python chopify.py --batch examples/batch.json --projects-dir projects
+
+# Let Chopify detect the type and use its clipping format
+python chopify.py "C:\Videos\stream.mp4" --aspect 9:16
+
+# Force a type or a saved custom format; list available formats
+python chopify.py "recording.mp4" --video-type podcast
+python chopify.py "recording.mp4" --format my_cast
+python chopify.py --list-formats
 ```
 
 CLI single-video runs save state under `work/` and copy the latest exports to `clips/`. Set `--out DIR` or `CHOPIFY_OUT` to change the export folder. Dashboard and batch jobs save outputs inside `projects/<id>/clips/` and drafts inside `previews/`. **Replace the batch sample's sources with your own paths or URLs.**
@@ -285,6 +305,15 @@ No. Split-screen uses two adjustable horizontal crop centers for a fixed camera 
 ### What happens if processing fails or Studio closes?
 
 Completed stages and clips remain on disk. Restart Studio and queue the saved project again, or rerun the CLI with `--project PATH`. Interrupted jobs are marked for explicit retry. Changing the source, transcription model, selection settings, words, brand, or render options invalidates the relevant cached work. Do not run two writers against the same project directory at once.
+
+### How reliable is video-type detection?
+
+It infers a type from local speech, audio, visual, and source metadata signals —
+it is not a video-understanding model. A dialogue-heavy movie can look like a
+podcast. Chopify reports a confidence and the chosen format, lets you override
+the type or format at any time, and can ask you to build a new format when it is
+uncertain. No footage or metadata leaves your machine unless you enable an
+optional local Ollama model.
 
 ### Can it edit translated or multilingual subtitles?
 

@@ -27,6 +27,7 @@ CHOPIFY_VERSION = "1.4.0"
 
 import render_clips
 import score_clips
+import video_types
 
 # Python packages the pipeline needs, with a fix hint per missing module.
 IMPORT_HINTS = {
@@ -172,6 +173,85 @@ def _print_selection(path, state, explain=False):
             score_clips.print_explanations(segments)
 
 
+def detection_callback(detection, resolved):
+    """Human-facing detection notice; prompt only when the match is uncertain."""
+    fmt = resolved["format"]
+    print(f"Detected: {detection.get('type', 'unknown')} "
+          f"({(detection.get('confidence') or 0) * 100:.0f}%) "
+          f"\u00b7 Format: {fmt['name']}", flush=True)
+    if not resolved.get("needs_confirmation"):
+        return None
+    print("No confident type match. 1) use suggested  2) pick a format  "
+          "3) build a new format", flush=True)
+    while True:
+        try:
+            choice = input("Choose [1/2/3]: ").strip()
+        except EOFError:
+            return None
+        if choice == "1":
+            return None
+        if choice == "2":
+            custom, _ = video_types.load_custom_formats()
+            names = sorted({**video_types.FORMATS, **custom})
+            print("Formats: " + ", ".join(names), flush=True)
+            try:
+                name = input("Format name: ").strip()
+            except EOFError:
+                return None
+            if name in names:
+                return {"format": name}
+            print("Unknown format name.", flush=True)
+            continue
+        if choice == "3":
+            return build_new_format_interactive(fmt)
+        print("Enter 1, 2 or 3.", flush=True)
+
+
+def build_new_format_interactive(base, input_fn=input):
+    """Guided format builder with defaults from the detected type."""
+    while True:
+        try:
+            name = input_fn("New format name (lowercase): ").strip()
+        except EOFError:
+            return None
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,39}", name):
+            print("Use lowercase letters, digits, '-' or '_'.", flush=True)
+            continue
+        if name in video_types.FORMATS:
+            print("That name is reserved for a built-in format.", flush=True)
+            continue
+        break
+    data = dict(base)
+    data["name"] = name
+    for key, label, cast in (
+            ("min_len", "Minimum clip seconds", int),
+            ("max_len", "Maximum clip seconds", int),
+            ("caption_style", "Caption style", str),
+            ("layout", "Layout (single/split/stacked)", str),
+            ("fit", "Fit (cover/contain)", str)):
+        try:
+            answer = input_fn(f"{label} [{base.get(key, '')}]: ").strip()
+        except EOFError:
+            return None
+        if answer:
+            try:
+                data[key] = cast(answer)
+            except ValueError:
+                print("Invalid value; keeping the default.", flush=True)
+    for key in ("tighten", "loudnorm"):
+        try:
+            answer = input_fn(f"{key} [{'y' if base.get(key) else 'n'}]: ").strip().lower()
+        except EOFError:
+            return None
+        if answer in {"y", "yes", "n", "no"}:
+            data[key] = answer in {"y", "yes"}
+    try:
+        return video_types.save_custom_format(data)
+    except ValueError as exc:
+        print(f"Could not save format: {exc}", flush=True)
+        return None
+
+
 def main():
     ap = argparse.ArgumentParser(
         prog="chopify",
@@ -179,10 +259,44 @@ def main():
     ap.add_argument("--version", action="version", version=f"Chopify {CHOPIFY_VERSION}")
     ap.add_argument("--list-styles", action="store_true",
                     help="print the caption style preset names and exit")
+    ap.add_argument("--live", metavar="URL", help="Watch a live HLS/RTMP stream and auto-clip hype moments")
+    ap.add_argument("--live-buffer", type=int, default=None)
+    ap.add_argument("--live-buffer-max-mb", type=int, default=None)
+    ap.add_argument("--live-pre-roll", type=int, default=None)
+    ap.add_argument("--live-tail", type=int, default=None)
+    ap.add_argument("--live-window", type=int, default=None)
+    ap.add_argument("--live-threshold", type=float, default=None)
+    ap.add_argument("--live-cooldown", type=int, default=None)
+    ap.add_argument("--live-max-clips", type=int, default=None)
+    ap.add_argument("--live-no-chat", action="store_true", default=None)
+    ap.add_argument("--live-no-transcript", action="store_true", default=None)
+    ap.add_argument("--live-skip-ads", action="store_true", default=None,
+                    help="suppress clip triggers while a flat ad slate is detected")
+    ap.add_argument("--live-header", dest="live_headers", action="append", default=None)
+    ap.add_argument("--video-type", dest="video_type", default=None,
+                    choices=["auto", *video_types.VIDEO_TYPES],
+                    help="video type override, or auto (default) to detect locally")
+    ap.add_argument("--format", dest="format", default=None,
+                    help="built-in or custom clipping format name, or a JSON path")
+    ap.add_argument("--video-type-model", default=None, metavar="MODEL",
+                    help="optional local Ollama model to resolve uncertain detections")
+    ap.add_argument("--list-formats", action="store_true",
+                    help="print built-in and custom format names and exit")
+    ap.add_argument("--brief", default=None,
+                    help="campaign requirements text (conflicts with --brief-file)")
+    ap.add_argument("--brief-file", default=None,
+                    help="path to a .txt/.md campaign brief")
+    ap.add_argument("--brief-provider", default=None,
+                    choices=["ollama", "claude", "codex", "hermes", "none"],
+                    help="local LLM agent for brief parsing (auto-detected by default)")
+    ap.add_argument("--brief-command", default=None,
+                    help="custom command template for the local LLM, with {prompt}")
     ap.add_argument("url", nargs="?", help="local video path or yt-dlp-supported URL")
     ap.add_argument("--workdir", default="work", help="intermediate files dir")
     ap.add_argument("--aspect", default="16:9", choices=["16:9", "9:16", "1:1"],
                     help="output aspect ratio (default 16:9)")
+    ap.add_argument("--fit", choices=["cover", "contain"], default=None,
+                    help="cover crops to fill (default); contain keeps the whole frame with bars")
     ap.add_argument("--out", default=None,
                     help="output directory (default ./clips, or $CHOPIFY_OUT)")
     ap.add_argument("--style", default="default",
@@ -229,15 +343,70 @@ def main():
     ap.add_argument("--semantic", help="find clips by meaning with local embeddings")
     ap.add_argument("--embed-model", default="nomic-embed-text")
     ap.add_argument("--brand", help="JSON brand preset path")
-    ap.add_argument("--layout", choices=["single", "split"], default="single")
+    ap.add_argument("--layout", choices=["single", "split", "stacked"], default="single")
+    ap.add_argument("--facecam-box", type=float, nargs=4, default=None,
+                    metavar=("X", "Y", "W", "H"),
+                    help="normalized facecam rectangle x y w h (0-1) for --layout stacked")
+    ap.add_argument("--facecam-height", type=float, default=None,
+                    help="facecam panel fraction of output height, 0.20-0.60 (default 0.34)")
     ap.add_argument("--centers", type=float, nargs=2, default=[0.25, 0.75],
                     help="horizontal speaker centers from 0 to 1 for split-screen")
     ap.add_argument("--device", choices=["cpu", "cuda", "auto"], default="cpu")
     render_clips.add_caption_arguments(ap)
     args = ap.parse_args()
+    if args.list_formats:
+        custom, _ = video_types.load_custom_formats()
+        for name in sorted({**video_types.FORMATS, **custom}):
+            print(name)
+        return
+    brief_text = args.brief
+    if args.brief_file:
+        if brief_text:
+            ap.error("--brief and --brief-file are mutually exclusive.")
+        brief_text = Path(args.brief_file).read_text(encoding="utf-8-sig")
+    if brief_text:
+        import campaign
+        rules = campaign.parse_brief(brief_text, args.brief_provider, args.brief_command)
+        if rules.get("warning"):
+            print(f"Brief warning: {rules['warning']}", flush=True)
+    if brief_text and args.batch:
+        ap.error("--brief is not supported with --batch; run sources individually or use Studio.")
     if args.list_styles:
         for name in render_clips.CAPTION_STYLES:
             print(name)
+        return
+    if args.live:
+        if args.url or args.batch or args.project:
+            ap.error("--live cannot be combined with --url, --batch or --project.")
+        if not args.no_preflight:
+            problems = check_environment()
+            if problems:
+                print("PREFLIGHT FAILED - fix these and re-run "
+                      "(or bypass with --no-preflight):", flush=True)
+                for p in problems:
+                    print("  - " + p, flush=True)
+                sys.exit(1)
+        import projects
+        import live
+        try:
+            caption = render_clips.caption_from_args(args)
+        except ValueError as exc:
+            ap.exit(1, f"Caption: {exc}\n")
+        live_options = {key: getattr(args, key) for key in projects.DEFAULT_OPTIONS
+                        if getattr(args, key, None) is not None}
+        live_options["caption"] = caption
+        if live_options.get("brand"):
+            live_options["brand"] = str(Path(live_options["brand"]).resolve())
+        live_explicit_keys = {key for key in projects.DEFAULT_OPTIONS
+                              if flag_given("--" + key.replace("_", "-"))}
+        live_detection = video_types.classify(
+            video_types.signals_from_measurements(source=args.live))
+        live_resolved = video_types.resolve_format(
+            live_detection, live_options.get("video_type"), live_options.get("format"))
+        live_options = video_types.apply_format(
+            live_options, live_resolved["format"], live_explicit_keys)
+        live.run_live(args.live, live_options, Path(args.projects_dir).resolve(),
+                      brief_text=brief_text)
         return
     if not (args.url or args.batch or args.project):
         ap.error("provide a local video, URL, --batch file, or --project directory")
@@ -264,24 +433,32 @@ def main():
     options["caption"] = caption
     if options["min_score"] is None:
         options["min_score"] = 8.0
+    if options["video_type"] is None:
+        options["video_type"] = "auto"
     if options["brand"]:
         options["brand"] = str(Path(options["brand"]).resolve())
+    explicit_keys = {key for key in projects.DEFAULT_OPTIONS
+                     if flag_given("--" + key.replace("_", "-"))}
     interactive = (
         not args.no_input and not args.batch and args.action != "render"
         and not args.search and not args.semantic and sys.stdin.isatty()
     )
+    detection_cb = detection_callback if interactive else None
     ask_score = not flag_given("--min-score")
     ask_length = not flag_given("--preferred-len")
     try:
         if args.batch:
             sources = json.loads(Path(args.batch).read_text(encoding="utf-8-sig"))
             results = projects.run_batch(sources, Path(args.projects_dir).resolve(), options,
-                action=args.action, preview=args.preview, pick=args.clips, resume=args.resume)
+                action=args.action, preview=args.preview, pick=args.clips, resume=args.resume,
+                on_detection=detection_cb, explicit_keys=explicit_keys)
             print(json.dumps(results, indent=2))
             if any(r["status"] == "failed" for r in results):
                 raise SystemExit(1)
             return
         path = Path(args.project or args.workdir).resolve()
+        if brief_text:
+            campaign.save_rules(path, rules)
         prompted = None
         if (path / "project.json").exists():
             state = projects.read_project(path)
@@ -315,7 +492,8 @@ def main():
         printed_summary = False
         if interactive and args.action == "all":
             result = projects.run_project(path, action="prepare", preview=args.preview,
-                                          resume=args.resume)
+                                          resume=args.resume, on_detection=detection_cb,
+                                          explicit_keys=explicit_keys)
             state = projects.read_project(path)
             _print_selection(path, state, args.explain)
             printed_summary = True
@@ -338,10 +516,14 @@ def main():
                           f"--action render")
                     return
             result = projects.run_project(path, action="render", preview=args.preview,
-                                          pick=args.clips, resume=args.resume)
+                                          pick=args.clips, resume=args.resume,
+                                          on_detection=detection_cb,
+                                          explicit_keys=explicit_keys)
         else:
             result = projects.run_project(path, action=args.action, preview=args.preview,
-                                          pick=args.clips, resume=args.resume)
+                                          pick=args.clips, resume=args.resume,
+                                          on_detection=detection_cb,
+                                          explicit_keys=explicit_keys)
         if not printed_summary:
             _print_selection(path, result, args.explain)
         if args.action != "prepare":

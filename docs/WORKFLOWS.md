@@ -3,6 +3,39 @@
 Chopify processes local recordings or supported video URLs into short, captioned
 clips. All transcription, scoring, editing, and rendering run on your computer.
 
+## Cut clips for a campaign brief
+
+Paste the campaign's requirements into the **Campaign brief** box in Studio (or
+use `--brief` / `--brief-file` in the CLI). Chopify asks a locally installed LLM
+agent — Ollama, Claude, Codex, Hermes, or a custom command — to turn the messy
+brief into structured rules saved as `brief_rules.json` in the project or live
+session folder. Clips containing banned phrases are dropped, must-mention topics
+are required, and the remaining candidates are ranked by how well they serve the
+brief. If no agent is installed, chopify falls back to keyword rules and tells
+you so. See [CLI reference](CLI.md#live-settings) for the flags.
+
+## Build a clipping format
+
+After transcription, Chopify detects the video type from local audio, visual,
+transcript and source metadata signals, then picks the matching built-in format
+and prints `Detected: <type> (<confidence>%) · Format: <name>`. The detection and
+chosen format are saved in the project state and in `candidates.json` /
+`selection.json`, and Studio shows them above the queue controls.
+
+If detection is uncertain or the source is unknown, an interactive CLI run asks
+you to **use the suggested format, pick another, or build a new one**. Building
+a new format asks for a name and the recipe fields with defaults filled from the
+detected type, then saves it to `formats/<name>.json`. In Studio, the detection
+banner has a format selector and a **Build new format** button; saved formats
+appear in `/api/config` and `--list-formats`.
+
+To pick a type or format without being asked, pass `--video-type TYPE` or
+`--format NAME` (see [CLI reference](CLI.md#video-types-and-formats)). Explicit
+flags always win over format values. Changing the type or format invalidates the
+discovery and selection caches, so the next `prepare` re-clips the source with
+the new recipe. Batch, `--no-input`, and agent runs never prompt — they use the
+best guess and record it in the selection stats.
+
 ## Review a video in Studio
 
 1. Run `python dashboard.py` and open the printed `127.0.0.1` address.

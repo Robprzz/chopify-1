@@ -16,9 +16,25 @@ import webbrowser
 import branding
 import projects
 import render_clips
+import video_types
 
 HERE = Path(__file__).resolve().parent
 STATIC = HERE / "assets" / "studio"
+
+
+def config_payload(root=None):
+    """Config fields for video types and available clipping formats."""
+    custom, warnings = video_types.load_custom_formats(root)
+    return {
+        "video_types": list(video_types.VIDEO_TYPES),
+        "formats": {**video_types.FORMATS, **custom},
+        "format_warnings": warnings,
+    }
+
+
+def save_format(body, root=None):
+    """Validate and persist a custom clipping format."""
+    return video_types.save_custom_format(body, root=root)
 
 
 def project_detail(root, project_id):
@@ -54,6 +70,9 @@ def project_detail(root, project_id):
         "playable_source": bool(
             not render_from_sections and video
             and Path(video).is_file()),
+        "detection": state.get("detection"),
+        "format": state.get("format"),
+        "format_recipe": state.get("format_recipe"),
     })
     return data
 
@@ -68,6 +87,8 @@ class Studio:
         self.lock = threading.RLock()
         self.futures = {}
         self.processes = set()
+        self.live_sessions = {}
+        self.live_lock = threading.Lock()
         self.closing = False
         for path in self.root.glob("*/project.json"):
             try:
@@ -135,9 +156,44 @@ class Studio:
             state.update(status="failed", error=str(exc))
             projects.save_project(path, state)
 
+    def start_live(self, source, options, brief_text=None):
+        import live
+        from live_capture import resolve_live_source
+        resolved = resolve_live_source(source, options)
+        session = live.LiveSession(resolved, options, self.root, brief_text=brief_text)
+        with self.live_lock:
+            self.live_sessions[session.id] = session
+        thread = threading.Thread(target=session.start,
+                                  name=f"live-{session.id}", daemon=True)
+        thread.start()
+        return session
+
+    def stop_live(self, session_id):
+        with self.live_lock:
+            session = self.live_sessions.get(session_id)
+        if session is None:
+            raise ValueError("Unknown live session.")
+        session.stop()
+        return session
+
+    def live_state(self, session_id):
+        with self.live_lock:
+            session = self.live_sessions.get(session_id)
+        if session is None:
+            raise ValueError("Unknown live session.")
+        return projects.read_json(session.dir / "live_session.json")
+
+    def live_list(self):
+        with self.live_lock:
+            sessions = list(self.live_sessions.values())
+        return [projects.read_json(s.dir / "live_session.json")
+                for s in sessions if (s.dir / "live_session.json").exists()]
+
     def close(self):
         with self.lock:
             self.closing = True
+            for session in list(self.live_sessions.values()):
+                session.stop()
             for child in list(self.processes):
                 child.terminate()
             self.executor.shutdown(wait=False, cancel_futures=True)
@@ -189,7 +245,7 @@ class Handler(BaseHTTPRequestHandler):
                         key: brand[key] for key in branding.CAPTION_FIELDS
                         if brand[key] is not None
                     }
-                return self.send_json({
+                payload = {
                     "token": self.app.token,
                     "defaults": projects.DEFAULT_OPTIONS,
                     "brands": brands,
@@ -205,7 +261,9 @@ class Handler(BaseHTTPRequestHandler):
                         {"words": list(stems), "emoji": emoji}
                         for stems, emoji in render_clips.EMOJI_RULES
                     ],
-                })
+                }
+                payload.update(config_payload(self.app.root))
+                return self.send_json(payload)
             if parts == ["api", "projects"]:
                 return self.send_json({"projects": self.app.list_projects()})
             if len(parts) == 3 and parts[:2] == ["api", "projects"]:
@@ -221,6 +279,20 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("Unknown media path.")
                 file = (path / parts[2] / parts[3]).resolve()
                 if file.parent != path / parts[2] or file.suffix not in {".mp4", ".srt", ".png", ".json"}:
+                    raise ValueError("Invalid media path.")
+                return self.send_file(file)
+            if parts == ["api", "live"]:
+                return self.send_json({"sessions": self.app.live_list()})
+            if len(parts) == 3 and parts[:2] == ["api", "live"]:
+                return self.send_json(self.app.live_state(parts[2]))
+            if (len(parts) == 5 and parts[0] == "media" and parts[1] == "live"
+                    and parts[3] == "clips"):
+                if not re.fullmatch(r"[a-f0-9]{12}", parts[2]):
+                    raise ValueError("Invalid live session ID.")
+                session_dir = self.app.root / "live" / parts[2]
+                file = (session_dir / "clips" / parts[4]).resolve()
+                clips_dir = (session_dir / "clips").resolve()
+                if file.parent != clips_dir or file.suffix not in {".mp4", ".srt", ".png", ".json"}:
                     raise ValueError("Invalid media path.")
                 return self.send_file(file)
             static = {"": "index.html", "app.js": "app.js", "style.css": "style.css"}
@@ -250,6 +322,22 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("Expected a JSON object.")
             parts = unquote(urlsplit(self.path).path).strip("/").split("/")
             with self.app.lock:
+                if parts == ["api", "live"]:
+                    source = body.get("source")
+                    if not isinstance(source, str) or not source.strip():
+                        raise ValueError("Provide a live source URL.")
+                    options = projects.validate_options(body.get("options", {}))
+                    brief_text = body.get("brief")
+                    if brief_text is not None and not isinstance(brief_text, str):
+                        raise ValueError("Brief must be text.")
+                    return self.send_json(
+                        {"id": self.app.start_live(
+                            source.strip(), options, brief_text=brief_text).id}, 201)
+                if len(parts) == 4 and parts[:2] == ["api", "live"] and parts[3] == "stop":
+                    self.app.stop_live(parts[2])
+                    return self.send_json({"ok": True})
+                if parts == ["api", "formats"]:
+                    return self.send_json(save_format(body, root=self.app.root), 201)
                 if parts == ["api", "projects"]:
                     return self.send_json(projects.create_project(self.app.root, body["source"], body.get("options", {})), 201)
                 if parts == ["api", "batch"]:
@@ -257,9 +345,17 @@ class Handler(BaseHTTPRequestHandler):
                     if not isinstance(sources, list) or not 1 <= len(sources) <= 100 or any(not isinstance(s, str) or not s.strip() for s in sources):
                         raise ValueError("Provide 1 to 100 sources.")
                     options = projects.validate_options(body.get("options", {}))
+                    brief_text = body.get("brief")
+                    if brief_text is not None and not isinstance(brief_text, str):
+                        raise ValueError("Brief must be text.")
                     result = []
                     for source in sources:
                         state = projects.create_project(self.app.root, source, options)
+                        if brief_text and brief_text.strip():
+                            import campaign
+                            campaign.save_rules(
+                                projects.project_path(self.app.root, state["id"]),
+                                campaign.parse_brief(brief_text))
                         self.app.enqueue(state["id"], "prepare")
                         result.append(state)
                     return self.send_json({"projects": result}, 201)

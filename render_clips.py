@@ -596,14 +596,20 @@ def caption_from_args(args):
 def render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAULT_STYLE,
            do_tighten=False, loudnorm=False, preview=False, brand=None,
            layout="single", centers=(0.25, 0.75), caption=None,
-           source_offset=0.0):
+           source_offset=0.0, fit="cover", facecam_box=None,
+           facecam_height=0.34):
     from captions import write_srt
     out_dir = (Path(out_dir) if out_dir else default_out()).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     source = Path(source).resolve()
     resolved = resolve_caption(style, brand, caption)
-    if layout not in {"single", "split"} or (layout == "split" and aspect != "9:16"):
-        raise ValueError("Split-screen requires vertical 9:16 output.")
+    if fit not in {"cover", "contain"}:
+        raise ValueError("Fit must be cover or contain.")
+    if layout == "stacked" and fit == "contain":
+        fit = "cover"
+    if layout not in {"single", "split", "stacked"} or (
+            layout in {"split", "stacked"} and aspect != "9:16"):
+        raise ValueError("Split-screen and gaming stacked layouts require vertical 9:16 output.")
     if len(centers) != 2 or any(not math.isfinite(v) or not 0 <= v <= 1 for v in centers):
         raise ValueError("Speaker centers must be between 0 and 1.")
     full_w, full_h, font_size, margin_v = ASPECTS[aspect]
@@ -640,11 +646,28 @@ def render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAUL
               f"{(end - start) - dur:.1f}s removed", flush=True)
         start = 0.0
         local_start = 0.0
-    build_ass(cap_words, start, start + dur, out_dir / "_caption.ass",
-              tw, th, font_size, margin_v, style, brand, caption)
+    if layout == "stacked":
+        box, warning = resolve_facecam_box(source, W, H, workdir, facecam_box)
+        if warning:
+            print(f"  {warning}", flush=True)
+        vf, seam_margin = stacked_graph(W, H, tw, th, facecam_height, box)
+        caption_override = dict(caption or {})
+        caption_override["margin"] = None
+        build_ass(cap_words, start, start + dur, out_dir / "_caption.ass",
+                  tw, th, font_size, seam_margin, style, brand, caption_override)
+    else:
+        build_ass(cap_words, start, start + dur, out_dir / "_caption.ass",
+                  tw, th, font_size, margin_v, style, brand, caption)
 
     needs_track = cw < W * 0.95          # real horizontal crop -> track the speaker
-    if layout == "split":
+    if layout == "stacked":
+        mode = "gaming facecam + gameplay (stacked)"
+    elif fit == "contain":
+        # Keep the entire source frame visible; fill the rest with black bars.
+        vf = (f"scale={tw}:{th}:force_original_aspect_ratio=decrease,"
+              f"pad={tw}:{th}:(ow-iw)/2:(oh-ih)/2,subtitles=_caption.ass")
+        mode = "contain (full frame)"
+    elif layout == "split":
         # Keep every YUV420 panel even-sized. Older libass/ffmpeg builds can
         # crash on odd-height intermediate frames (854px drafts / 2 = 427).
         panel_h = (th // 4) * 2
@@ -675,15 +698,25 @@ def render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAUL
            "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", str(out)]
     if brand and brand.get("logo"):
         width = max(20, round(brand["logo_width"] * tw / 1920))
-        if layout == "single":
-            vf = "[0:v]" + vf
-        graph = (vf + f"[captioned];[1:v]scale={width}:-1[logo];"
-                 "[captioned][logo]overlay=W-w-24:24:eof_action=repeat[v]")
-        pos = cmd.index("-t")
-        cmd[pos:pos] = ["-i", brand["logo"]]
-        cmd[cmd.index("-c:v"):cmd.index("-c:v")] = ["-filter_complex", graph, "-map", "[v]", "-map", "0:a?"]
+        if layout == "stacked":
+            graph = (vf + f";[1:v]scale={width}:-1[logo];"
+                          "[v][logo]overlay=W-w-24:24:eof_action=repeat[out]")
+            cmd[cmd.index("-t"):cmd.index("-t")] = ["-i", brand["logo"]]
+            cmd[cmd.index("-c:v"):cmd.index("-c:v")] = [
+                "-filter_complex", graph, "-map", "[out]", "-map", "0:a?"]
+        else:
+            if layout == "single":
+                vf = "[0:v]" + vf
+            graph = (vf + f"[captioned];[1:v]scale={width}:-1[logo];"
+                     "[captioned][logo]overlay=W-w-24:24:eof_action=repeat[v]")
+            pos = cmd.index("-t")
+            cmd[pos:pos] = ["-i", brand["logo"]]
+            cmd[cmd.index("-c:v"):cmd.index("-c:v")] = ["-filter_complex", graph, "-map", "[v]", "-map", "0:a?"]
     elif layout == "split":
         cmd[cmd.index("-c:v"):cmd.index("-c:v")] = ["-filter_complex", vf + "[v]", "-map", "[v]", "-map", "0:a?"]
+    elif layout == "stacked":
+        cmd[cmd.index("-c:v"):cmd.index("-c:v")] = [
+            "-filter_complex", vf, "-map", "[v]", "-map", "0:a?"]
     else:
         cmd[cmd.index("-c:v"):cmd.index("-c:v")] = ["-vf", vf]
     if loudnorm:
@@ -791,6 +824,76 @@ def main():
         print("  ", s, flush=True)
     if failed:
         raise SystemExit(1)
+
+
+def stacked_graph(W, H, tw, th, facecam_height, box):
+    """Return (filter graph fragment, ASS bottom margin) for facecam + gameplay."""
+    fh = int(round(th * facecam_height)) // 2 * 2
+    gh = th - fh
+    fcw = max(2, int(round(box[2] * W)) // 2 * 2)
+    fch = max(2, int(round(box[3] * H)) // 2 * 2)
+    fcx = min(W - fcw, int(box[0] * W) // 2 * 2)
+    fcy = min(H - fch, int(box[1] * H) // 2 * 2)
+    gcw, gch, gcx, gcy = crop_for(W, H, tw, gh)
+    graph = (f"[0:v]split=2[cam][game];"
+             f"[cam]crop={fcw}:{fch}:{fcx}:{fcy},scale={tw}:{fh}[top];"
+             f"[game]crop={gcw}:{gch}:{gcx}:{gcy},scale={tw}:{gh}[bottom];"
+             f"[top][bottom]vstack=inputs=2[stack];"
+             f"[stack]subtitles=_caption.ass[v]")
+    return graph, th - fh - 12
+
+
+DEFAULT_FACECAM_BOX = (0.0, 0.62, 0.26, 0.30)
+
+
+def clamp_facecam_box(box):
+    x, y, w, h = (max(0.0, min(1.0, float(v))) for v in box)
+    x, y = min(x, 0.95), min(y, 0.95)
+    return (round(x, 6), round(y, 6),
+            round(max(0.05, min(w, 1 - x)), 6),
+            round(max(0.05, min(h, 1 - y)), 6))
+
+
+def _detect_facecam_box(frame_path, W, H, workdir, detector=None):
+    import cv2
+    image = cv2.imread(str(frame_path))
+    if image is None:
+        raise ValueError("Could not read sampled frame")
+    kind, det = detector or _make_detector(workdir)
+    ih, iw = image.shape[:2]
+    if kind == "yunet":
+        det.setInputSize((iw, ih))
+        _, faces = det.detect(image)
+        if faces is None or not len(faces):
+            raise ValueError("No face found")
+        best = max(faces, key=lambda f: f[2] * f[3])
+        x, y, w, h = (float(best[0]), float(best[1]), float(best[2]), float(best[3]))
+    else:
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        faces = det.detectMultiScale(gray, 1.1, 5, minSize=(36, 36))
+        if not len(faces):
+            raise ValueError("No face found")
+        x, y, w, h = (float(v) for v in max(faces, key=lambda f: f[2] * f[3]))
+    pad = 0.25
+    x, y = x - w * pad, y - h * pad
+    w, h = w * (1 + 2 * pad), h * (1 + 2 * pad)
+    return clamp_facecam_box((x / iw, y / ih, w / iw, h / ih)), None
+
+
+def resolve_facecam_box(source, W, H, workdir, box, detector=None):
+    """Return (normalized box, warning). Explicit box wins; detection is best-effort."""
+    if box is not None:
+        return clamp_facecam_box(box), None
+    if source is None:
+        return DEFAULT_FACECAM_BOX, "No source for facecam detection; using default box."
+    try:
+        frame_path = Path(workdir) / "_facecam.jpg"
+        subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", "0.5",
+                        "-i", str(source), "-frames:v", "1", str(frame_path)],
+                       check=True, capture_output=True)
+        return _detect_facecam_box(frame_path, W, H, workdir, detector)
+    except Exception as exc:
+        return DEFAULT_FACECAM_BOX, f"Facecam detection failed ({exc}); using default box."
 
 
 if __name__ == "__main__":

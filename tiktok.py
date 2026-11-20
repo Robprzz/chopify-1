@@ -1,5 +1,6 @@
 """Local, single-account TikTok Login Kit and Content Upload integration."""
 import hashlib
+import http.client
 import json
 import math
 import os
@@ -18,6 +19,29 @@ from pathlib import Path
 import projects
 
 API = "https://open.tiktokapis.com"
+INBOX_INIT = "/v2/post/publish/inbox/video/init/"
+POST_STATUS = "/v2/post/publish/status/fetch/"
+UPLOAD_HOSTS = frozenset({
+    "open-upload.tiktokapis.com",
+    "open-upload-i18n.tiktokapis.com",
+    "upload.us.tiktokapis.com",
+})
+UPLOAD_URL_LIFETIME = 3600
+UPLOAD_URL_ERRORS = {"upload_url_missing", "upload_url_invalid", "upload_host_unexpected"}
+LEGACY_UPLOAD_URL_ERROR = "TikTok no devolvió una dirección oficial de subida."
+INIT_REJECTIONS = {
+    "invalid_param", "spam_risk_too_many_pending_share", "spam_risk_user_banned_from_posting",
+    "url_ownership_unverified", "access_token_invalid", "scope_not_authorized", "rate_limit_exceeded",
+}
+CONTENT_ERROR_CODES = INIT_REJECTIONS | {
+    "ok", "internal_error", "invalid_publish_id", "token_not_authorized_for_specified_publish_id",
+}
+FAIL_REASONS = {
+    "file_format_check_failed", "duration_check_failed", "frame_rate_check_failed",
+    "picture_size_check_failed", "internal", "video_pull_failed", "photo_pull_failed",
+    "publish_cancelled", "auth_removed", "spam_risk_too_many_posts",
+    "spam_risk_user_banned_from_posting", "spam_risk_text", "spam_risk",
+}
 AUTHORIZE = "https://www.tiktok.com/v2/auth/authorize/"
 CALLBACK = "/api/tiktok/callback/"
 SCOPES = ("user.info.basic", "video.upload")
@@ -26,6 +50,7 @@ MAX_SIZE = 4 * 1024**3
 CHUNK_SIZE = 32 * 1024**2
 ID_PATTERN = r"[a-zA-Z0-9_.~-]{1,64}"
 FINAL_STATUSES = {"FAILED", "PUBLISH_COMPLETE"}
+POST_STATUSES = FINAL_STATUSES | {"PROCESSING_UPLOAD", "PROCESSING_DOWNLOAD", "SEND_TO_USER_INBOX"}
 
 
 class TikTokError(ValueError):
@@ -61,6 +86,30 @@ def _error_code(data, default):
     return _safe_code(code, default)
 
 
+def _content_error_code(data, default):
+    code = _error_code(data, default)
+    return code if code in CONTENT_ERROR_CODES else default
+
+
+def _validate_upload_url(url):
+    if url is None or url == "":
+        raise TikTokError("TikTok no incluyó la URL de subida (upload_url).", "upload_url_missing")
+    try:
+        if (not isinstance(url, str) or not re.fullmatch(r"[!-~]{1,256}", url)
+                or re.search(r'["<>#^\x60{|}\\]|%(?![0-9a-fA-F]{2})', url)):
+            raise ValueError
+        address = urllib.parse.urlsplit(url)
+        if (address.scheme != "https" or not address.hostname or not address.path
+                or address.username is not None or address.netloc.endswith(":")
+                or address.port not in (None, 443)):
+            raise ValueError
+    except ValueError:
+        raise TikTokError("TikTok devolvió una URL de subida inválida.", "upload_url_invalid") from None
+    if address.hostname not in UPLOAD_HOSTS:
+        raise TikTokError("TikTok devolvió un dominio de subida no reconocido.",
+                          "upload_host_unexpected")
+
+
 class TikTokAPI:
     def __init__(self, key, secret):
         self.key = key
@@ -72,14 +121,18 @@ class TikTokAPI:
             with self.opener.open(request, timeout=60) as response:
                 return response.status, response.read(128 * 1024)
         except urllib.error.HTTPError as exc:
+            code = f"HTTP_{exc.code}"
+            posting = request.selector in (INBOX_INIT, POST_STATUS)
             with exc:
-                raw = exc.read(128 * 1024)
-            try:
-                code = _error_code(_decode(raw), f"HTTP_{exc.code}")
-            except TikTokError:
-                code = f"HTTP_{exc.code}"
+                if request.get_method() != "PUT" and (not posting or 400 <= exc.code < 500):
+                    try:
+                        raw = exc.read(128 * 1024)
+                        extract_code = _content_error_code if posting else _error_code
+                        code = extract_code(_decode(raw), code)
+                    except (TikTokError, OSError, http.client.HTTPException):
+                        pass
             raise TikTokError(f"TikTok rechazó la solicitud ({code}).", code) from None
-        except (OSError, ValueError):
+        except (OSError, ValueError, http.client.HTTPException):
             raise TikTokError("No se pudo completar la comunicación con TikTok.") from None
 
     def oauth(self, path, **fields):
@@ -104,16 +157,14 @@ class TikTokAPI:
         })
         _, raw = self.send(request)
         data = _decode(raw)
-        code = _error_code(data, "invalid_response")
+        extract_code = _content_error_code if path in (INBOX_INIT, POST_STATUS) else _error_code
+        code = extract_code(data, "invalid_response")
         if code != "ok" or not isinstance(data.get("data"), dict):
             raise TikTokError(f"TikTok rechazó la solicitud ({code}).", code)
         return data["data"]
 
     def upload(self, url, media, size, chunk_size, count):
-        address = urllib.parse.urlsplit(url) if isinstance(url, str) else None
-        if (not address or address.scheme != "https"
-                or address.netloc != "open-upload.tiktokapis.com" or address.fragment):
-            raise TikTokError("TikTok no devolvió una dirección oficial de subida.")
+        _validate_upload_url(url)
         offset = 0
         for index in range(count):
             length = size - offset if index == count - 1 else chunk_size
@@ -366,7 +417,8 @@ class TikTokStudio:
         return self.history / f"{job}.json"
 
     def _public_record(self, record):
-        data = {key: value for key, value in record.items() if key != "owner"}
+        data = {key: value for key, value in record.items()
+                if key not in {"owner", "digest", "upload_not_started"}}
         if not self.sending:
             data["status"] = {"PREPARING": "LOCAL_ERROR", "STARTING": "CHECK_INBOX",
                               "UPLOADING": "CHECK_STATUS"}.get(data["status"], data["status"])
@@ -378,20 +430,42 @@ class TikTokStudio:
         projects.atomic_json(self._history_path(record["id"]), record)
 
     @staticmethod
-    def _record_error(record, message):
+    def _record_error(record, message, code=None):
         record["last_error"] = message
-        record["errors"] = [*record.get("errors", [])[-19:], {"at": time.time(), "message": message}]
+        entry = {"at": time.time(), "message": message}
+        if code:
+            entry["code"] = code
+        record["errors"] = [*record.get("errors", [])[-19:], entry]
 
-    def state(self):
-        with self.lock:
-            entries = []
+    def _account_history(self):
+        if self.account:
             for path in self.history.glob("*.json"):
                 try:
                     row = projects.read_json(path)
-                    if self.account and row["owner"] == self.account["key"]:
-                        entries.append(self._public_record(row))
+                    if row["owner"] == self.account["key"] and isinstance(row.get("status"), str):
+                        yield row
                 except (OSError, ValueError, TypeError, KeyError):
                     continue
+
+    @staticmethod
+    def _can_retry(record):
+        status = record["status"]
+        if status in FINAL_STATUSES or status in {"PREPARING", "LOCAL_ERROR", "INIT_REJECTED"}:
+            return True
+        if status in {"STARTING", "CHECK_INBOX"} and not record.get("publish_id"):
+            # No PUT could have started without a saved publish_id. Let any orphan session expire.
+            updated = record.get("updated")
+            return isinstance(updated, (int, float)) and time.time() - updated >= UPLOAD_URL_LIFETIME
+        if status in {"CHECK_STATUS", "PROCESSING_UPLOAD"}:
+            # Older versions used this exact message only before reading or sending the file.
+            return record.get("upload_not_started", False) or any(
+                error.get("message") == LEGACY_UPLOAD_URL_ERROR for error in record.get("errors", [])
+            )
+        return False
+
+    def state(self):
+        with self.lock:
+            entries = [self._public_record(row) for row in self._account_history()]
             entries.sort(key=lambda row: row.get("created", 0), reverse=True)
             return {
                 "configured": bool(self.api.key and self.api.secret),
@@ -420,11 +494,18 @@ class TikTokStudio:
                 raise TikTokError("Vuelve a revisar este clip con la cuenta de TikTok conectada.")
             if self.sending:
                 raise TikTokError("Ya hay una subida en curso.")
+            for existing in self._account_history():
+                same_clip = (existing["digest"] == review["digest"] if "digest" in existing else
+                             (existing.get("project"), existing.get("filename")) ==
+                             (review["project"], review["filename"]))
+                if same_clip and not self._can_retry(existing):
+                    self.review = None
+                    return self._public_record(existing)
             access = self._access()
             media = self._clip(review["project"], review["filename"])
             record = {
                 "id": job, "owner": review["owner"], "project": review["project"],
-                "filename": review["filename"], "description": description,
+                "filename": review["filename"], "digest": review["digest"], "description": description,
                 "created": time.time(), "status": "PREPARING", "last_error": "",
             }
             self._save(record)
@@ -435,11 +516,17 @@ class TikTokStudio:
             self._transfer(media, review, record, access)
         except (TikTokError, OSError) as exc:
             with self.lock:
+                code = exc.code if isinstance(exc, TikTokError) else None
                 self._record_error(record, str(exc) if isinstance(exc, TikTokError)
-                                   else "Error local al leer o guardar la subida.")
-                record["status"] = ("CHECK_STATUS" if record.get("publish_id")
-                                    else "CHECK_INBOX" if record["status"] == "STARTING"
-                                    else "LOCAL_ERROR")
+                                   else "Error local al leer o guardar la subida.", code)
+                if record.get("publish_id"):
+                    record["status"] = "CHECK_STATUS"
+                    if code in UPLOAD_URL_ERRORS:
+                        record["upload_not_started"] = True
+                elif record["status"] == "STARTING":
+                    record["status"] = "INIT_REJECTED" if code in INIT_REJECTIONS else "CHECK_INBOX"
+                else:
+                    record["status"] = "LOCAL_ERROR"
                 self._save(record)
         finally:
             with self.lock:
@@ -466,13 +553,15 @@ class TikTokStudio:
             with self.lock:
                 record["status"] = "STARTING"
                 self._save(record)
-            result = self.api.authorized("/v2/post/publish/inbox/video/init/", access, {
+            result = self.api.authorized(INBOX_INIT, access, {
                 "source_info": {"source": "FILE_UPLOAD", "video_size": size,
                                 "chunk_size": chunk_size, "total_chunk_count": count},
             })
-            publish_id = _safe_code(result.get("publish_id"), "")
-            if not publish_id:
-                raise TikTokError("TikTok no devolvió un identificador de publicación.")
+            publish_id = result.get("publish_id")
+            if (not isinstance(publish_id, str) or not 0 < len(publish_id) <= 64
+                    or not publish_id.isprintable() or not publish_id.strip()):
+                raise TikTokError("TikTok no devolvió un identificador de publicación válido.",
+                                  "publish_id_invalid")
             with self.lock:
                 record.update(publish_id=publish_id, status="UPLOADING")
                 self._save(record)
@@ -496,17 +585,18 @@ class TikTokStudio:
                 return self._public_record(record)
             record["checked_at"] = time.time()
             try:
-                data = self.api.authorized("/v2/post/publish/status/fetch/", self._access(),
+                data = self.api.authorized(POST_STATUS, self._access(),
                                            {"publish_id": record["publish_id"]})
                 status = _safe_code(data.get("status"), "")
-                if not status:
-                    raise TikTokError("TikTok no devolvió el estado de la publicación.")
+                if status not in POST_STATUSES:
+                    raise TikTokError("TikTok no devolvió un estado de publicación reconocido.")
                 record["status"] = status
                 if status == "FAILED":
-                    self._record_error(record, _safe_code(data.get("fail_reason"), "FAILED"))
+                    reason = _safe_code(data.get("fail_reason"), "")
+                    self._record_error(record, reason if reason in FAIL_REASONS else "FAILED")
                 else:
                     record["last_error"] = ""
             except TikTokError as exc:
-                self._record_error(record, str(exc))
+                self._record_error(record, str(exc), exc.code)
             self._save(record)
             return self._public_record(record)

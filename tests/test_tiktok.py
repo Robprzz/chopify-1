@@ -7,7 +7,8 @@ import subprocess
 import time
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlencode, urlsplit
-from urllib.request import urlopen
+from urllib.request import HTTPSHandler, build_opener, urlopen
+from urllib.response import addinfourl
 
 import pytest
 
@@ -28,6 +29,11 @@ class FakeTikTok:
         self.scopes = "user.info.basic,video.upload,video.publish"
         self.result = "SEND_TO_USER_INBOX"
         self.fail_upload = False
+        self.init_result = {
+            "publish_id": "v_inbox_file~v2.123",
+            "upload_url": "https://open-upload.tiktokapis.com/video/?upload_token=mock",
+        }
+        self.init_error = None
 
     def __call__(self, req):
         self.calls.append(req)
@@ -45,7 +51,7 @@ class FakeTikTok:
         if path == "/v2/oauth/revoke/":
             assert parse_qs(req.data.decode())["token"] == [self.token]
             return 200, b""
-        if path == "/video/":
+        if path in {"/video/", "/upload"}:
             assert req.get_method() == "PUT"
             assert req.get_header("Authorization") is None
             if self.fail_upload:
@@ -57,11 +63,12 @@ class FakeTikTok:
             return api_reply({"user": {"open_id": self.open_id, "display_name": "Cuenta de prueba"}})
         if path == "/v2/post/publish/creator_info/query/":
             return api_reply({"privacy_level_options": ["SELF_ONLY", "MUTUAL_FOLLOW_FRIENDS"]})
-        if path == "/v2/post/publish/inbox/video/init/":
-            return api_reply({"publish_id": "v_inbox_file~v2.123",
-                              "upload_url": "https://open-upload.tiktokapis.com/video/?upload_token=mock"})
-        if path == "/v2/post/publish/status/fetch/":
-            assert json.loads(req.data) == {"publish_id": "v_inbox_file~v2.123"}
+        if path == tiktok.INBOX_INIT:
+            if self.init_error:
+                raise self.init_error
+            return api_reply(self.init_result)
+        if path == tiktok.POST_STATUS:
+            assert json.loads(req.data) == {"publish_id": self.init_result["publish_id"]}
             return api_reply({"status": self.result, "fail_reason": "duration_check_failed"})
         pytest.fail(f"Unexpected request to {path}")
 
@@ -173,6 +180,9 @@ def test_review_approval_upload_inbox_and_persisted_status(fake_studio, monkeypa
     assert post("upload", review_id=review["review_id"], description="Editada", approved=True) == job
     assert len(fake.calls) == before_upload + 2
     assert post("status", id=job["id"])["status"] == "SEND_TO_USER_INBOX"
+    pending_review = post("inspect", project=project, filename=video.name)
+    assert post("upload", review_id=pending_review["review_id"], description="", approved=True)["id"] == job["id"]
+    assert len(fake.calls) == before_upload + 3
     assert post("state")["history"][0]["description"] == "Editada"
     persisted = next(service.history.glob("*.json")).read_text(encoding="utf-8")
     assert all(value not in persisted for value in
@@ -200,7 +210,7 @@ def test_changed_file_and_other_account_cannot_reuse_approval(fake_studio, monke
         post("status", id=job["id"])
 
 
-def test_failed_transfer_can_query_official_error_without_reupload(fake_studio, monkeypatch):
+def test_interrupted_transfer_reuses_history_after_restart(fake_studio, server, monkeypatch):
     service, fake, base, post = fake_studio
     connect(base, post)
     project, video = export(service, monkeypatch)
@@ -209,14 +219,40 @@ def test_failed_transfer_can_query_official_error_without_reupload(fake_studio, 
     job = post("upload", review_id=review["review_id"], description="Descripción", approved=True)
     assert job["status"] == "CHECK_STATUS"
     assert job["publish_id"]
+
+    # Both a new review and a restart can occur after the PUT reached TikTok.
+    renamed = video.with_name("victoria-copia.mp4")
+    renamed.write_bytes(video.read_bytes())
+    restarted = tiktok.TikTokStudio(service.root, service.busy)
+    monkeypatch.setattr(restarted, "api", service.api)
+    monkeypatch.setattr(restarted, "scopes", service.scopes)
+    monkeypatch.setattr(server[0].app, "tiktok", restarted)
+    connect(base, post)
+    before = len(fake.calls)
+    review = post("inspect", project=project, filename=renamed.name)
+    assert post("upload", review_id=review["review_id"], description="", approved=True) == job
+    assert len(fake.calls) == before
+
     fake.result = "FAILED"
     result = post("status", id=job["id"])
     assert result["status"] == "FAILED"
     assert [entry["message"] for entry in result["errors"]] == [
         "Interrupción simulada.", "duration_check_failed"]
+    assert len(fake.calls) == before + 1
+    fake.fail_upload = False
+    review = post("inspect", project=project, filename=renamed.name)
+    retry = post("upload", review_id=review["review_id"], description="", approved=True)
+    assert retry["status"] == "PROCESSING_UPLOAD"
+    assert retry["id"] != job["id"]
+    assert len(fake.calls) == before + 3
 
 
-def test_transfer_uses_sequential_ranges_and_official_host(monkeypatch):
+@pytest.mark.parametrize("url", [
+    "https://open-upload.tiktokapis.com/video/?upload_token=mock%2Btoken&upload_id=123",
+    "https://UPLOAD.US.TIKTOKAPIS.COM:443/video/?upload_id=123&upload_token=mock%2Btoken",
+    "https://open-upload-i18n.tiktokapis.com/upload?upload_token=mock%2Btoken&upload_id=123",
+])
+def test_transfer_preserves_signed_url_and_sequential_ranges(monkeypatch, url):
     api = tiktok.TikTokAPI("", "")
     calls = []
 
@@ -226,12 +262,173 @@ def test_transfer_uses_sequential_ranges_and_official_host(monkeypatch):
 
     monkeypatch.setattr(api, "send", send)
     payload = b"abcdefghijklmn"
-    with pytest.raises(tiktok.TikTokError):
-        api.upload("https://open-upload.tiktokapis.com.evil.example/video/", io.BytesIO(payload), 14, 6, 2)
-    assert calls == []
-    api.upload("https://open-upload.tiktokapis.com/video/", io.BytesIO(payload), 14, 6, 2)
+    api.upload(url, io.BytesIO(payload), 14, 6, 2)
     assert [(req.get_header("Content-range"), req.data) for req in calls] == [
         ("bytes 0-5/14", b"abcdef"), ("bytes 6-13/14", b"ghijklmn")]
+    assert all(req.full_url == url and req.get_header("Authorization") is None for req in calls)
+
+
+@pytest.mark.parametrize("url,code", [
+    (None, "upload_url_missing"),
+    ("", "upload_url_missing"),
+    ({"url": "signed-secret"}, "upload_url_invalid"),
+    ("https://open-upload.tiktokapis.com.evil.example/video/?token=signed-secret", "upload_host_unexpected"),
+    ("https://unknown.tiktokapis.com/video/?token=signed-secret", "upload_host_unexpected"),
+    ("https://127.0.0.1/video/?token=signed-secret", "upload_host_unexpected"),
+    ("http://open-upload.tiktokapis.com/video/", "upload_url_invalid"),
+    ("https://u:signed-secret@open-upload.tiktokapis.com/video/", "upload_url_invalid"),
+    ("https://open-upload.tiktokapis.com:8080/video/", "upload_url_invalid"),
+    ("https://open-upload.tiktokapis.com:bad/video/", "upload_url_invalid"),
+    ("https://[invalid/video/", "upload_url_invalid"),
+    ("https://open-upload.tiktokapis.com/video/#", "upload_url_invalid"),
+    ("https://open-upload.tiktokapis.com/video/?token=%zz", "upload_url_invalid"),
+    ("https://open-upload.tiktokapis.com/vid\neo/", "upload_url_invalid"),
+    ("https://open-upload.tiktokapis.com\\evil.example/video/", "upload_url_invalid"),
+])
+def test_invalid_upload_urls_are_rejected_without_revealing_them(monkeypatch, url, code):
+    api = tiktok.TikTokAPI("", "")
+    monkeypatch.setattr(api, "send", lambda _: pytest.fail("Invalid upload URL reached transport"))
+    with pytest.raises(tiktok.TikTokError) as error:
+        api.upload(url, io.BytesIO(b"abc"), 3, 3, 1)
+    assert error.value.code == code
+    assert not any(text in str(error.value) for text in ("signed-secret", "evil.example", "tiktokapis.com"))
+
+
+@pytest.mark.parametrize("upload_url,code", [
+    (None, "upload_url_missing"),
+    ("https://unknown.tiktokapis.com/video/?token=private-signed-value", "upload_host_unexpected"),
+    ("https://open-upload.tiktokapis.com/video/#private-signed-value", "upload_url_invalid"),
+])
+def test_init_url_diagnostics_keep_publish_id_and_allow_retry_before_any_put(
+    fake_studio, monkeypatch, upload_url, code,
+):
+    service, fake, base, post = fake_studio
+    connect(base, post)
+    project, video = export(service, monkeypatch)
+    review = post("inspect", project=project, filename=video.name)
+    # Treat the identifier as an opaque string and keep it for status lookup.
+    fake.init_result = {"publish_id": "v_inbox_file~v2:opaque"}
+    if upload_url is not None:
+        fake.init_result["upload_url"] = upload_url
+    before = len(fake.calls)
+    job = post("upload", review_id=review["review_id"], description="", approved=True)
+    assert job["publish_id"] == fake.init_result["publish_id"]
+    assert job["status"] == "CHECK_STATUS"
+    assert job["errors"][-1]["code"] == code
+    assert len(fake.calls) == before + 1
+    assert all("private-signed-value" not in data for data in (
+        json.dumps(job), service._history_path(job["id"]).read_text(encoding="utf-8"),
+    ))
+    fake.result = "PROCESSING_UPLOAD"
+    assert post("status", id=job["id"])["status"] == "PROCESSING_UPLOAD"
+    fake.init_result["upload_url"] = "https://open-upload-i18n.tiktokapis.com/upload?upload_token=mock"
+    review = post("inspect", project=project, filename=video.name)
+    new_job = post("upload", review_id=review["review_id"], description="", approved=True)
+    assert new_job["id"] != job["id"]
+    assert new_job["status"] == "PROCESSING_UPLOAD"
+    assert len(fake.calls) == before + 4
+
+
+@pytest.mark.parametrize("init_error,publish_id,status", [
+    (None, None, "CHECK_INBOX"),
+    (None, "a" * 65, "CHECK_INBOX"),
+    (None, "invalid\nidentifier", "CHECK_INBOX"),
+    (tiktok.TikTokError("Interrupción simulada."), None, "CHECK_INBOX"),
+    (tiktok.TikTokError("TikTok rechazó la solicitud (invalid_param).", "invalid_param"),
+     None, "INIT_REJECTED"),
+])
+def test_init_failure_without_publish_id_never_sends_a_put(
+    fake_studio, monkeypatch, init_error, publish_id, status,
+):
+    service, fake, base, post = fake_studio
+    connect(base, post)
+    project, video = export(service, monkeypatch)
+    fake.init_error = init_error
+    fake.init_result["publish_id"] = publish_id
+    review = post("inspect", project=project, filename=video.name)
+    before = len(fake.calls)
+    job = post("upload", review_id=review["review_id"], description="", approved=True)
+    assert job["status"] == status
+    assert "publish_id" not in job
+    assert len(fake.calls) == before + 1
+    if init_error is None:
+        assert job["errors"][-1]["code"] == "publish_id_invalid"
+    if status == "CHECK_INBOX":
+        review = post("inspect", project=project, filename=video.name)
+        assert post("upload", review_id=review["review_id"], description="", approved=True) == job
+        assert len(fake.calls) == before + 1
+        path = service._history_path(job["id"])
+        entry = projects.read_json(path)
+        entry["updated"] -= tiktok.UPLOAD_URL_LIFETIME
+        projects.atomic_json(path, entry)
+    fake.init_error = None
+    fake.init_result["publish_id"] = "v_inbox_file~v2.123"
+    review = post("inspect", project=project, filename=video.name)
+    assert post("upload", review_id=review["review_id"], description="", approved=True)["id"] != job["id"]
+    assert len(fake.calls) == before + 3
+
+
+def test_legacy_upload_rejected_before_put_can_be_retried(fake_studio, monkeypatch):
+    service, fake, base, post = fake_studio
+    connect(base, post)
+    project, video = export(service, monkeypatch)
+    service._save({
+        "id": "a" * 32, "owner": service.account["key"], "project": project,
+        "filename": video.name, "status": "CHECK_STATUS", "publish_id": "v_inbox_file~v2.1",
+        "errors": [{"at": time.time(), "message": "TikTok no devolvió una dirección oficial de subida."}],
+    })
+    fake.init_result["upload_url"] = "https://open-upload-i18n.tiktokapis.com/upload"
+    review = post("inspect", project=project, filename=video.name)
+    assert post("upload", review_id=review["review_id"], description="", approved=True)["status"] == (
+        "PROCESSING_UPLOAD"
+    )
+
+
+@pytest.mark.parametrize("status", [302, 403])
+def test_put_errors_do_not_expose_signed_urls_or_provider_echoes(monkeypatch, status):
+    api = tiktok.TikTokAPI("", "")
+    secret = "mock-secret-echo"
+    url = "https://open-upload-i18n.tiktokapis.com/upload?upload_token=" + secret
+
+    def open_request(req, timeout):
+        raise HTTPError(req.full_url, status, secret, {},
+                        io.BytesIO(json.dumps({"error": {"code": secret}}).encode()))
+
+    monkeypatch.setattr(api.opener, "open", open_request)
+    with pytest.raises(tiktok.TikTokError) as error:
+        api.upload(url, io.BytesIO(b"abc"), 3, 3, 1)
+    assert error.value.code == f"HTTP_{status}"
+    assert secret not in str(error.value)
+
+
+def test_put_does_not_follow_redirects(monkeypatch):
+    api = tiktok.TikTokAPI("", "")
+    url = "https://open-upload-i18n.tiktokapis.com/upload?upload_token=mock"
+    addresses = []
+
+    class RedirectingHTTPS(HTTPSHandler):
+        def https_open(self, req):
+            addresses.append(req.full_url)
+            response = addinfourl(io.BytesIO(), {"Location": "https://evil.example/"}, url, 302)
+            response.msg = "Found"
+            return response
+
+    monkeypatch.setattr(api, "opener", build_opener(tiktok._NoRedirect(), RedirectingHTTPS()))
+    with pytest.raises(tiktok.TikTokError) as error:
+        api.upload(url, io.BytesIO(b"abc"), 3, 3, 1)
+    assert error.value.code == "HTTP_302"
+    assert addresses == [url]
+
+
+def test_content_api_errors_do_not_expose_unknown_provider_codes(monkeypatch):
+    api = tiktok.TikTokAPI("", "")
+    monkeypatch.setattr(api, "send", lambda _: (
+        200, b'{"data": {}, "error": {"code": "mock-secret-echo"}}',
+    ))
+    with pytest.raises(tiktok.TikTokError) as error:
+        api.authorized(tiktok.INBOX_INIT, "mock-access-token")
+    assert error.value.code == "invalid_response"
+    assert "mock-secret-echo" not in str(error.value)
 
 
 @pytest.mark.skipif(not shutil.which("ffmpeg") or not shutil.which("ffprobe"), reason="ffmpeg required")

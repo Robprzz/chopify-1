@@ -10,8 +10,9 @@ const publishingStatuses = {
   PUBLISH_COMPLETE: "TikTok confirma que el clip se publicó",
   FAILED: "TikTok informa que la publicación falló",
   LOCAL_ERROR: "Error local antes de iniciar la subida",
+  INIT_REJECTED: "TikTok rechazó el inicio de la subida",
   CHECK_STATUS: "Subida interrumpida · consulta el estado",
-  CHECK_INBOX: "Resultado de la solicitud incierto · revisa el buzón antes de volver a enviar",
+  CHECK_INBOX: "Resultado de la solicitud incierto · revisa el buzón de TikTok",
 };
 const privacyLabels = {
   PUBLIC_TO_EVERYONE: "Todo el mundo",
@@ -221,7 +222,11 @@ $("#tiktok-form").addEventListener("submit", safe(async (event) => {
       description: $("#tiktok-description").value,
       approved: true,
     });
-    notice(result.last_error || "Subida registrada. Consulta el estado en el historial.", Boolean(result.last_error));
+    if (result.id !== publication.review) {
+      notice("Este clip ya tiene un intento registrado. Revisa el historial o el buzón de TikTok.");
+    } else {
+      notice(result.last_error || "Subida registrada. Consulta el estado en el historial.", Boolean(result.last_error));
+    }
     clearPublicationReview();
     $("#tiktok-clip").value = "";
   } finally {

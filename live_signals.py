@@ -6,9 +6,11 @@ import re
 import socket
 import statistics
 import subprocess
+import tempfile
 import threading
 import time
 from collections import defaultdict, deque
+from pathlib import Path
 
 import numpy as np
 
@@ -150,6 +152,8 @@ class BaseAnalyzer:
         while not stop_event.is_set():
             try:
                 for path in self._new_segments():
+                    if stop_event.is_set():
+                        break
                     index = self.buffer.index_of(path)
                     payload = self._decode(path)
                     self._publish(index, payload)
@@ -230,37 +234,32 @@ class TranscriptAnalyzer(BaseAnalyzer):
         if not enabled:
             self.available = False
         self.words = []
-        self._next = 0.0
+        self.through = 0.0
 
     def _decode(self, path):
-        index = self.buffer.index_of(path)
-        start = self.buffer.index_to_time(index)
-        if start < self._next:
-            return [], start
-        self._next = start + 30.0
-        segments = self.buffer.window(start, start + 30.0)
-        if not segments:
-            return [], start
-        listing = self.buffer.directory / "transcript_list.txt"
-        listing.write_text("".join(f"file '{p.as_posix()}'\n" for p in segments),
-                           encoding="utf-8")
-        wav = self.buffer.directory / "transcript.wav"
-        subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "concat",
-                        "-safe", "0", "-i", str(listing), "-ac", "1",
-                        "-ar", "16000", str(wav)], check=True, capture_output=True)
+        bounds = self.buffer.closed_ranges().get(path)
+        if bounds is None:
+            start = self.buffer.index_to_time(self.buffer.index_of(path))
+            return [], start, start
+        start, end = bounds
         if self.model is None:
             self.model = dt._load_model("small", self.device, "int8")
-        _, words, _, _ = dt._transcribe_media(self.model, wav, offset=start)
-        return words, start
+        with tempfile.TemporaryDirectory(dir=self.buffer.directory) as directory:
+            wav = Path(directory) / "transcript.wav"
+            subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(path), "-ac", "1",
+                            "-ar", "16000", str(wav)], check=True, capture_output=True)
+            _, words, _, _ = dt._transcribe_media(self.model, wav, offset=start)
+        return words, start, end
 
     def _publish(self, index, payload):
-        words, start = payload
+        words, start, end = payload
         self.words.extend(words)
         self.words = [w for w in self.words if w["end"] >= start - 60.0]
-        for i in range(0, 30):
+        for i in range(math.ceil(end - start)):
             t = start + i
             window = [w for w in self.words if t - 10.0 <= w["start"] <= t]
             self.bus.add("transcript", t, transcript_score(window))
+        self.through = end
 
     def run(self, stop_event):
         if not self.enabled:

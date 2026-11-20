@@ -146,14 +146,16 @@
             <span>HLS / RTMP URL OR LIVE PAGE</span>
           </div>
           <label for="live-source">Stream URL</label>
-          <input id="live-source" required placeholder="https://twitch.tv/channel or https://.../live.m3u8" />
+          <input id="live-source" required placeholder="Active YouTube, Twitch, Kick or direct HLS/RTMP URL" />
           <label for="live-brief">Campaign brief (optional)</label>
           <textarea id="live-brief" rows="4"
             placeholder="Paste requirements; chopify will only save clips that match."></textarea>
           <button id="live-start" type="submit" class="primary">Start live session</button>
+          <div id="live-start-error" role="alert" hidden></div>
         </form>
         <button id="live-stop" hidden>Stop session</button>
-        <div id="live-status" class="muted">Not running.</div>
+        <div id="live-status" class="muted" role="status">Not running.</div>
+        <div id="live-error" role="alert" hidden></div>
         <div id="live-health" class="muted"></div>
         <div id="live-score"></div>
         <div id="live-clips"></div>

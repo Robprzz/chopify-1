@@ -1,6 +1,7 @@
 """Live clipping session orchestration and CLI entry point."""
 from __future__ import annotations
 
+import subprocess
 import threading
 import time
 import uuid
@@ -48,6 +49,7 @@ class LiveSession:
         self.errors = []
         self.last_trigger = None
         self._stop = threading.Event()
+        self._capture_lock = threading.Lock()
         self._on_log = None
         self.rules = None
         if brief_text:
@@ -79,7 +81,7 @@ class LiveSession:
     def _save(self):
         projects.atomic_json(self.dir / "live_session.json", {
             "id": self.id,
-            "source": {"url": self.source.url, "kind": self.source.kind,
+            "source": {"kind": self.source.kind,
                        "platform": self.source.platform,
                        "resolved_by": self.source.resolved_by},
             "status": self.status,
@@ -96,23 +98,33 @@ class LiveSession:
 
     def _capture_alive(self):
         segments = sorted((self.dir / "buffer").glob("segment*.ts"))
-        if not segments:
-            self.health["last_segment_age"] = 999.0
-            return False
-        self.health["last_segment_age"] = round(
-            time.time() - max(p.stat().st_mtime for p in segments), 1)
         alive = self.buffer is not None and self.buffer.alive
         self.health["ffmpeg_alive"] = alive
+        if not segments:
+            self.health["last_segment_age"] = 999.0
+            return alive and time.time() - self.buffer.started_at < 20
+        self.health["last_segment_age"] = round(
+            time.time() - max(p.stat().st_mtime for p in segments), 1)
         return alive and self.health["last_segment_age"] < 20
+
+    def _start_capture(self):
+        with self._capture_lock:
+            if self._stop.is_set():
+                return
+            self.buffer = live_capture.SegmentBuffer(
+                self.dir / "buffer", self.source.url, self.options, headers=self.source.headers)
+            self.buffer.start()
 
     def _restart_capture(self):
         delay = self._restart_delays[min(self.health["restarts"], 2)]
         self.health["restarts"] += 1
         self.health["state"] = "degraded"
         self._log(f"Capture stalled; restarting in {delay}s ({next_action(self.health)}).")
-        if self.buffer is not None:
-            self.buffer.stop()
-        time.sleep(delay)
+        with self._capture_lock:
+            if self.buffer is not None:
+                self.buffer.stop()
+        if self._stop.wait(delay):
+            return
         if self.source.page_url and self.health["restarts"] >= 1:
             try:
                 self.source = self.source.refresh(self.options)
@@ -121,10 +133,12 @@ class LiveSession:
             except Exception as exc:
                 self.health["warnings"].append(f"Refresh failed: {exc}")
         try:
-            self.buffer = live_capture.SegmentBuffer(
-                self.dir / "buffer", self.source.url, self.options).start()
-        except Exception as exc:
-            self.health["warnings"].append(f"Restart failed: {exc}")
+            for path in self.buffer.segments():
+                path.unlink(missing_ok=True)
+            (self.buffer.directory / "segments.csv").unlink(missing_ok=True)
+            self._start_capture()
+        except OSError:
+            self.health["warnings"].append("Could not restart FFmpeg. Check the capture log or output folder.")
 
     def _allowed(self, score, now):
         if score < self.options["live_threshold"]:
@@ -151,75 +165,97 @@ class LiveSession:
 
     def start(self):
         self._log(RIGHTS_NOTICE)
-        self._log(f"Watching {self.source.url} via {self.source.resolved_by}")
-        self.buffer = live_capture.SegmentBuffer(
-            self.dir / "buffer", self.source.url, self.options).start()
-        self.status = "running"
-        self._save()
-        self._loop()
+        self._log(f"Watching {self.source.platform} via {self.source.resolved_by}")
+        try:
+            self._start_capture()
+            if not self._stop.is_set():
+                self.status = "running"
+                self._save()
+                self._loop()
+        except OSError:
+            self._fail("Could not start or continue live capture. Check FFmpeg and write access to the Studio projects folder.")
+        finally:
+            with self._capture_lock:
+                if self.buffer is not None:
+                    self.buffer.stop()
         return self
+
+    def _fail(self, message):
+        self.health.update(state="failed", ffmpeg_alive=False)
+        self.status = "failed"
+        self.stopped_at = time.time()
+        self.errors.append(message)
+        self._log(message)
+        self._save()
 
     def _loop(self):
         probe = None
+        pending = None
+        render_ready_at = None
         while not self._stop.is_set():
             if (self.dir / "stop").exists():
                 self._log("Stop requested by agent; shutting down.")
                 self.stop()
                 return
-            time.sleep(1.0)
+            if self._stop.wait(1.0):
+                break
             self.stream_time = time.time() - self.buffer.started_at
+            capture_alive = self._capture_alive()
             self.bus.prune(self.stream_time)
             if probe is None:
                 try:
-                    probe = self.buffer.probe()
-                    if not probe.get("has_video") or not probe.get("width"):
-                        probe = None
-                except (FileNotFoundError, OSError):
-                    continue
-                self._log(f"Source {probe['width']}x{probe['height']} "
-                          f"audio={probe['has_audio']}")
+                    candidate = self.buffer.probe()
+                    if candidate.get("has_video") and candidate.get("width"):
+                        probe = candidate
+                        self._log(f"Source {probe['width']}x{probe['height']} audio={probe['has_audio']}")
+                except (OSError, subprocess.SubprocessError, ValueError):
+                    pass
             for thread, analyzer in self.analyzers:
                 if not thread.is_alive() and analyzer.error and analyzer.error not in self.errors:
                     self.errors.append(analyzer.error)
                     self._log(f"{analyzer.name} disabled: {analyzer.error}")
             if not self._analyzers_started and probe is not None:
-                from download_and_transcribe import _load_model
-                model = None
-                if not self.options["live_no_transcript"]:
-                    model = _load_model("small", self.options["device"], "int8")
                 self.analyzers = live_signals.start_analyzers(
                     self.buffer, self.bus, self.options, self.source.platform,
-                    _channel(self.source.url), model)
+                    _channel(self.source.page_url or self.source.url))
                 self._analyzers_started = True
             result = self.detector.evaluate(self.bus, self.stream_time)
             self.recent_scores.append(result["score"])
             self.recent_scores = self.recent_scores[-60:]
-            if probe is not None and self._allowed(result["score"], self.stream_time):
-                if self.options.get("live_skip_ads") and any(
-                        getattr(a, "ad_like", False) for _, a in self.analyzers):
-                    self._log("ad-like frame; clip suppressed")
-                else:
-                    transcript = next(
-                        (analyzer for _, analyzer in self.analyzers
-                         if isinstance(analyzer, live_signals.TranscriptAnalyzer)), None)
-                    if self.rules and not self._brief_allows(transcript, self.stream_time):
-                        self._log("Brief rules not met; skipping clip.")
-                    else:
-                        self.last_trigger = self.stream_time
-                        self._log(f"Hype detected: score={result['score']}")
-                        record = self.writer.write(
-                            live_clips.Trigger(self.last_trigger, result["score"], result["signals"]),
-                            self.options, probe,
-                            list(transcript.words) if transcript else [],
-                            self.buffer.window(
-                                max(0.0, self.last_trigger - self.options["live_buffer"]),
-                                self.last_trigger + self.options["live_tail"]))
+            transcript = next((analyzer for _, analyzer in self.analyzers
+                               if isinstance(analyzer, live_signals.TranscriptAnalyzer)), None)
+            if pending:
+                ranges = self.buffer.closed_ranges()
+                end = max((right for _, right in ranges.values()), default=0)
+                if ranges and (end >= pending.time + self.options["live_tail"] or not capture_alive):
+                    if render_ready_at is None:
+                        render_ready_at = time.monotonic()
+                    caption_end = min(end, pending.time + self.options["live_tail"])
+                    if (not transcript or not transcript.available or not probe["has_audio"]
+                            or transcript.through >= caption_end or time.monotonic() - render_ready_at >= 5):
+                        record = self.writer.write(pending, self.options, probe,
+                                                   list(transcript.words) if transcript else [],
+                                                   list(ranges), ranges=ranges)
                         self.records.append(record)
+                        pending = render_ready_at = None
                         if record.error:
                             self.errors.append(record.error)
                             self._log(f"Clip failed: {record.error}")
                         else:
                             self._log(f"Clip saved: {record.id}")
+            elif probe is not None and self.buffer.ready_segments() and self._allowed(result["score"], self.stream_time):
+                if self.options.get("live_skip_ads") and any(
+                        getattr(a, "ad_like", False) for _, a in self.analyzers):
+                    self._log("ad-like frame; clip suppressed")
+                else:
+                    if self.rules and not self._brief_allows(transcript, self.stream_time):
+                        self._log("Brief rules not met; skipping clip.")
+                    else:
+                        ranges = self.buffer.closed_ranges()
+                        if ranges:
+                            self.last_trigger = min(self.stream_time, max(right for _, right in ranges.values()))
+                            self._log(f"Hype detected: score={result['score']}")
+                            pending = live_clips.Trigger(self.last_trigger, result["score"], result["signals"])
             self._save()
             if self.buffer is not None and self.source.page_url and (
                     time.time() - self._last_refresh > 600):
@@ -231,13 +267,23 @@ class LiveSession:
                     self._log("Stream token refreshed on schedule.")
                 except Exception as exc:
                     self.health["warnings"].append(f"Refresh failed: {exc}")
-            if not self._capture_alive():
-                if self.health["restarts"] >= 3:
-                    self.health["state"] = "failed"
-                    self.status = "failed"
-                    self.stopped_at = time.time()
-                    self._log(f"Capture failed: {next_action(self.health)}")
+            if not capture_alive:
+                if pending and self.buffer.closed_ranges():
+                    continue
+                if self.buffer.process is not None and self.buffer.process.poll() == 0 and self.buffer.ready_segments():
+                    if self.stream_time < 6 and not self.records:
+                        continue
+                    self.stop()
                     break
+                if self.health["restarts"] >= 3:
+                    self._fail("FFmpeg could not capture playable live video. Check that the stream is still active and see buffer/ffmpeg.log.")
+                    break
+                pending = None
+                render_ready_at = None
+                probe = None
+                self._analyzers_started = False
+                self.last_trigger = None
+                self.bus = live_signals.SignalBus(retention=self.options["live_buffer"])
                 self._restart_capture()
             else:
                 self.health["state"] = "ok"
@@ -245,11 +291,13 @@ class LiveSession:
 
     def stop(self):
         self._stop.set()
+        with self._capture_lock:
+            if self.buffer is not None:
+                self.buffer.stop()
         for thread, _ in self.analyzers:
             thread.join(timeout=2.0)
-        if self.buffer is not None:
-            self.buffer.stop()
-        self.status = "stopped"
+        if self.status != "failed":
+            self.status = "stopped"
         self.stopped_at = time.time()
         self._save()
 

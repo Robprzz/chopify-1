@@ -1,8 +1,7 @@
 # Live clipping
 
 Chopify can watch a live stream and automatically save hype moments as finished
-clips. Everything runs locally; footage is never uploaded and no paid API is
-required.
+clips. Capture, transcription, and rendering run locally and require no paid API.
 
 ## Start
 
@@ -12,8 +11,16 @@ chopify --live "https://www.twitch.tv/channel" \
   --aspect 9:16 --style default
 ```
 
-A direct `https://.../live.m3u8` or `rtmp://...` URL is used as-is. A page URL is
-resolved to its HLS stream with yt-dlp. Press Ctrl+C to stop the session.
+A direct `https://.../live.m3u8` or `rtmp://...` URL is used as-is. For a live
+page, Chopify runs yt-dlp from the same Python environment as Studio and prefers
+a playable HLS format with video and audio in one stream. FFmpeg and FFprobe
+must be available on PATH. Press Ctrl+C to stop a CLI session.
+
+| Source | Verification |
+| --- | --- |
+| Twitch | An active channel resolved to HLS. Studio returned HTTP 201 without a project and captured a completed 1920×1080 segment with audio. |
+| Kick | An active channel resolved to HLS. Studio returned HTTP 201 without a project and captured completed 1920×1080 segments with audio. An offline channel returned a specific offline error. |
+| YouTube | The active-page format and resolver response are covered by automated tests. The supplied video ID `2dt0yxm4RUE` could not be verified remotely because the test environment's HTTPS proxy returned 403. |
 
 Each session writes `projects/live/<id>/live_session.json`, a rolling `buffer/`
 of 4-second segments, and finished clips in `clips/`. The buffer is capped by
@@ -73,9 +80,24 @@ adds black bars instead of cropping.
 
 ## Studio
 
-Open Studio, choose **Live clipping**, paste a URL, and start the session. The
-score, stream time, clip count, and clip feed update while the session runs.
-The loopback binding, host check, and request token still apply.
+Open Studio, choose **Live clipping**, paste a URL, and start the session. Studio
+creates a standalone session without preparing a project or a transcript. The
+score, stream time, clip count, and clip feed update while it runs. Startup
+reports missing tools, offline broadcasts, denied access, and resolution
+timeouts in the Live form. For capture failures, the session shows the error
+and FFmpeg records details locally in `buffer/ffmpeg.log`.
+
+Studio renders vertical 9:16 clips and uses closed segments for the export and
+rolling captions. It gives transcription a short window to catch up, so clips
+can have partial or empty captions if speech inference falls behind, is
+unavailable, or there is no speech. The SRT is saved alongside the MP4.
+
+Completed clips appear in **Publicaciones** as `Live · <session ID>` and can be
+previewed there. The existing TikTok approval flow applies if you choose to send
+one. The HTTP and Chromium regression uses a local HLS fixture, actual FFmpeg
+capture and rendering, and simulated detection and speech inference. It
+checks the vertical preview, SRT, and completed clip listing without calling
+TikTok. The full suite passed with 504 tests.
 
 ## Rights
 

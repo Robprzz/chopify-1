@@ -17,6 +17,7 @@ from fractions import Fraction
 from pathlib import Path
 
 import projects
+import live_clips
 
 API = "https://open.tiktokapis.com"
 INBOX_INIT = "/v2/post/publish/inbox/video/init/"
@@ -346,6 +347,15 @@ class TikTokStudio:
             return {"options": [item for item in options if isinstance(item, str) and item in PRIVACY]}
 
     def _clip(self, project, filename):
+        if isinstance(project, str) and project.startswith("live/"):
+            try:
+                media = live_clips.live_clip_path(self.root, project[5:], filename)
+                state = projects.read_json(media.parent.parent / "live_session.json")
+                if media.suffix == ".mp4" and filename in live_clips.finished_names(state) and media.is_file():
+                    return media
+            except (OSError, ValueError, TypeError, KeyError, AttributeError):
+                pass
+            raise TikTokError("Selecciona un MP4 terminado de una sesión Live de Studio.")
         path = projects.project_path(self.root, project).resolve()
         clips = path / "clips"
         if (path.parent != self.root or clips.resolve() != clips or self.busy(project)
@@ -374,7 +384,7 @@ class TikTokStudio:
                 except TikTokError:
                     continue
                 result.append({"project": project_id, "project_name": name, "filename": clip.name})
-        return result
+        return [*result, *live_clips.live_exports(self.root)]
 
     @staticmethod
     def _description(path):

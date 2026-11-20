@@ -95,14 +95,14 @@ class FakeBuffer:
 class FakeStop:
     """Allows exactly one loop iteration, so no real sleep occurs."""
     def __init__(self):
-        self.calls = 0
+        self.stopped = False
 
     def is_set(self):
-        self.calls += 1
-        return self.calls > 1
+        return self.stopped
 
     def wait(self, seconds):
-        return False
+        self.stopped = True
+        return True
 
 
 def test_audio_analyzer_publishes_energy(monkeypatch):

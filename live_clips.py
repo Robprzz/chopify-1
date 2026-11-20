@@ -1,12 +1,52 @@
 """Turn a hype trigger into a finished chopify clip artifact set."""
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import ingest
+import projects
 import render_clips
+
+
+def live_clips_dir(root, session_id):
+    if not re.fullmatch(r"[a-f0-9]{12}", session_id):
+        raise ValueError("Invalid live session ID.")
+    clips = Path(root).resolve() / "live" / session_id / "clips"
+    if clips.resolve() != clips:
+        raise ValueError("Invalid live clips folder.")
+    return clips
+
+
+def live_clip_path(root, session_id, filename):
+    clips = live_clips_dir(root, session_id)
+    path = clips / filename
+    if (path.parent != clips or "/" in filename or "\\" in filename
+            or path.suffix not in {".mp4", ".srt", ".png", ".json"} or path.resolve() != path):
+        raise ValueError("Invalid live clip path.")
+    return path
+
+
+def finished_names(state):
+    return {Path(record["files"]["mp4"]).name for record in state.get("triggers", [])
+            if not record.get("error") and record.get("files", {}).get("mp4")}
+
+
+def live_exports(root):
+    for manifest in sorted((root / "live").glob("*/live_session.json")):
+        session_id = manifest.parent.name
+        try:
+            live_clips_dir(root, session_id)
+            state = projects.read_json(manifest)
+            for name in sorted(finished_names(state)):
+                path = live_clip_path(root, session_id, name)
+                if path.suffix == ".mp4" and path.is_file():
+                    yield {"project": f"live/{session_id}", "project_name": f"Live · {session_id}",
+                           "filename": name}
+        except (OSError, TypeError, ValueError, KeyError, AttributeError):
+            continue
 
 
 @dataclass
@@ -50,7 +90,7 @@ def remap_words(words, start, end):
             continue
         item = dict(word)
         item["start"] = float(word["start"]) - start
-        item["end"] = float(word["end"]) - start
+        item["end"] = min(end, float(word["end"])) - start
         result.append(item)
     return result
 
@@ -81,19 +121,22 @@ class LiveClipWriter:
         self.clips_dir.mkdir(parents=True, exist_ok=True)
         self.windows_dir.mkdir(parents=True, exist_ok=True)
 
-    def write(self, trigger, options, probe, words, segments, renderer=None):
+    def write(self, trigger, options, probe, words, segments, renderer=None, ranges=None):
         """Render one clip; return a ClipRecord (with .error on failure)."""
         render_fn = renderer or render_clips.render
         start, end = plan_window(
             trigger.time, options["live_buffer"], options["live_pre_roll"],
             options["live_tail"], options["min_len"], options["max_len"],
-            trigger.time + options["live_tail"])
-        record = ClipRecord(uuid.uuid4().hex[:12], start, end,
-                            trigger.score, trigger.signals)
+            max(right for _, right in ranges.values()) if ranges else trigger.time + options["live_tail"])
+        if ranges:
+            segments = [path for path in segments if ranges[path][0] < end and ranges[path][1] > start]
+        offset = ranges[segments[0]][0] if ranges and segments else start
+        start = max(start, offset)
+        record = ClipRecord(uuid.uuid4().hex[:12], start, end, trigger.score, trigger.signals)
         try:
             window = stitch(segments, self.windows_dir / f"{record.id}.mp4")
-            seg = {"start": 0.0, "end": round(end - start, 3)}
-            render_fn(seg, remap_words(words, start, end), window,
+            seg = {"id": record.id, "start": round(start - offset, 3), "end": round(end - offset, 3)}
+            render_fn(seg, remap_words(words, offset, end), window,
                       probe["width"], probe["height"], str(self.session_dir),
                       options["aspect"], out_dir=str(self.clips_dir),
                       style=options["style"], do_tighten=options["tighten"],
@@ -103,7 +146,7 @@ class LiveClipWriter:
                       facecam_box=options["facecam_box"],
                       facecam_height=options["facecam_height"])
             record.files = {"window": str(window)}
-            for path in sorted(self.clips_dir.glob(f"*{record.id}*")):
+            for path in sorted(self.clips_dir.glob(f"{record.id}-*")):
                 record.files[path.suffix.lstrip(".") or "file"] = str(path)
         except Exception as exc:
             record.error = f"{type(exc).__name__}: {exc}"

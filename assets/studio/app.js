@@ -1006,15 +1006,23 @@ $("#live-form").addEventListener(
     event.preventDefault();
     const source = $("#live-source").value.trim();
     const brief = ($("#live-brief")?.value || "").trim();
-    const result = await api("/api/live", {
-      source,
-      options: { aspect: "9:16" },
-      brief,
-    });
-    state.liveId = result.id;
-    $("#live-stop").hidden = false;
-    notice("Live session started. Hype moments will be saved automatically.");
-    await refreshLive();
+    const start = $("#live-start");
+    if (start.disabled) return;
+    start.disabled = true;
+    const previousStatus = $("#live-status").textContent;
+    $("#live-status").textContent = "Resolving live stream…";
+    $("#live-start-error").hidden = true;
+    try {
+      const result = await api("/api/live", { source, options: { aspect: "9:16" }, brief });
+      state.liveId = result.id;
+      await refreshLive();
+    } catch (error) {
+      $("#live-status").textContent = previousStatus;
+      $("#live-start-error").textContent = error.message;
+      $("#live-start-error").hidden = false;
+    } finally {
+      start.disabled = false;
+    }
   }),
 );
 
@@ -1022,8 +1030,6 @@ $("#live-stop").addEventListener(
   "click",
   safe(async () => {
     await api(`/api/live/${state.liveId}/stop`, {});
-    state.liveId = null;
-    $("#live-stop").hidden = true;
     await refreshLive();
   }),
 );
@@ -1040,6 +1046,11 @@ async function refreshLive() {
   const detail = state.liveId
     ? await api(`/api/live/${state.liveId}`)
     : null;
+  $("#live-stop").hidden = !["starting", "running"].includes(detail?.status);
+  if (detail) {
+    $("#live-error").textContent = detail.errors?.at(-1) || "";
+    $("#live-error").hidden = !$("#live-error").textContent;
+  }
   $("#live-status").textContent = detail
     ? `${detail.status} · ${Math.round(detail.stream_time)}s · ${detail.triggers.length} clips`
     : sessions.length

@@ -169,14 +169,17 @@ class Studio:
 
     def start_live(self, source, options, brief_text=None):
         import live
-        from live_capture import resolve_live_source
+        from live_capture import check_capture_tools, resolve_live_source
+        check_capture_tools()
         resolved = resolve_live_source(source, options)
         session = live.LiveSession(resolved, options, self.root, brief_text=brief_text)
-        with self.live_lock:
-            self.live_sessions[session.id] = session
-        thread = threading.Thread(target=session.start,
-                                  name=f"live-{session.id}", daemon=True)
-        thread.start()
+        with self.lock:
+            if self.closing:
+                raise ValueError("Studio is closing. Restart it before starting a live session.")
+            session._save()
+            with self.live_lock:
+                self.live_sessions[session.id] = session
+            threading.Thread(target=session.start, name=f"live-{session.id}", daemon=True).start()
         return session
 
     def stop_live(self, session_id):
@@ -298,6 +301,9 @@ class Handler(BaseHTTPRequestHandler):
                 data = project_detail(self.app.root, parts[2])
                 data["busy"] = self.app.busy(parts[2])
                 return self.send_json(data)
+            if len(parts) == 5 and parts[:2] == ["media", "live"] and parts[3] == "clips":
+                from live_clips import live_clip_path
+                return self.send_file(live_clip_path(self.app.root, parts[2], parts[4]))
             if parts and parts[0] == "media" and len(parts) >= 3:
                 path = projects.project_path(self.app.root, parts[1]).resolve()
                 if parts[2:] == ["source"]:
@@ -313,16 +319,6 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"sessions": self.app.live_list()})
             if len(parts) == 3 and parts[:2] == ["api", "live"]:
                 return self.send_json(self.app.live_state(parts[2]))
-            if (len(parts) == 5 and parts[0] == "media" and parts[1] == "live"
-                    and parts[3] == "clips"):
-                if not re.fullmatch(r"[a-f0-9]{12}", parts[2]):
-                    raise ValueError("Invalid live session ID.")
-                session_dir = self.app.root / "live" / parts[2]
-                file = (session_dir / "clips" / parts[4]).resolve()
-                clips_dir = (session_dir / "clips").resolve()
-                if file.parent != clips_dir or file.suffix not in {".mp4", ".srt", ".png", ".json"}:
-                    raise ValueError("Invalid media path.")
-                return self.send_file(file)
             asset = self.server.static_files.get("/".join(parts))
             if asset:
                 return self.send_content(*asset)
@@ -350,18 +346,20 @@ class Handler(BaseHTTPRequestHandler):
             parts = unquote(urlsplit(self.path).path).strip("/").split("/")
             if len(parts) == 3 and parts[:2] == ["api", "tiktok"]:
                 return self.tiktok_action(parts[2], body)
+            if parts == ["api", "live"]:
+                source = body.get("source")
+                if not isinstance(source, str) or not source.strip():
+                    raise ValueError("Provide a live source URL.")
+                options = projects.validate_options(body.get("options", {}))
+                brief_text = body.get("brief")
+                if brief_text is not None and not isinstance(brief_text, str):
+                    raise ValueError("Brief must be text.")
+                try:
+                    session = self.app.start_live(source.strip(), options, brief_text=brief_text)
+                except OSError:
+                    return self.send_json({"error": "Could not save the live session. Check access to the Studio projects folder."}, 500)
+                return self.send_json({"id": session.id}, 201)
             with self.app.lock:
-                if parts == ["api", "live"]:
-                    source = body.get("source")
-                    if not isinstance(source, str) or not source.strip():
-                        raise ValueError("Provide a live source URL.")
-                    options = projects.validate_options(body.get("options", {}))
-                    brief_text = body.get("brief")
-                    if brief_text is not None and not isinstance(brief_text, str):
-                        raise ValueError("Brief must be text.")
-                    return self.send_json(
-                        {"id": self.app.start_live(
-                            source.strip(), options, brief_text=brief_text).id}, 201)
                 if len(parts) == 4 and parts[:2] == ["api", "live"] and parts[3] == "stop":
                     self.app.stop_live(parts[2])
                     return self.send_json({"ok": True})

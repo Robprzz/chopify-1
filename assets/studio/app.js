@@ -714,7 +714,7 @@ function renderOutputs(detail) {
                   f.name,
                 ),
             );
-          return `<article class="output-card"><video controls preload="none" src="${encodeURI(file.url)}"></video><div class="output-info"><p>${escapeHTML(file.kind === "previews" ? "DRAFT · " : "EXPORT · ")}${escapeHTML(stem)}</p><div class="output-links"><a href="${encodeURI(file.url)}" download>MP4 ↓</a>${related.map((f) => `<a href="${encodeURI(f.url)}" download>${f.name.endsWith(".srt") ? "SRT" : f.name.endsWith(".png") ? "POSTER" : "METADATA"} ↓</a>`).join("")}</div></div></article>`;
+          return `<article class="output-card"><video controls preload="none" src="${encodeURI(file.url)}"></video><div class="output-info"><p>${escapeHTML(file.kind === "previews" ? "DRAFT · " : "EXPORT · ")}${escapeHTML(stem)}</p><div class="output-links"><a href="${encodeURI(file.url)}" download>MP4 ↓</a>${related.map((f) => `<a href="${encodeURI(f.url)}" download>${f.name.endsWith(".srt") ? "SRT" : f.name.endsWith(".png") ? "POSTER" : "METADATA"} ↓</a>`).join("")}${file.kind === "clips" ? `<button type="button" data-editorial-file="${escapeHTML(file.name)}">AI Engine</button>` : ""}</div></div></article>`;
         })
         .join("")
     : '<p class="muted">Choose candidates and make a preview or export.</p>';
@@ -1076,6 +1076,11 @@ async function refreshLive() {
       link.href = `/media/live/${state.liveId}/clips/${encodeURIComponent(name)}`;
       link.textContent = " play";
       row.append(link);
+      const editor = document.createElement("button");
+      editor.type = "button";
+      editor.dataset.editorialFile = name;
+      editor.textContent = "AI Engine";
+      row.append(editor);
     }
     clips.append(row);
   }

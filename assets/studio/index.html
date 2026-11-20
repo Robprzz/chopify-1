@@ -10,6 +10,7 @@
     <script src="/app.js" defer></script>
     <script src="/publications.js" defer></script>
     <script src="/automation.js" defer></script>
+    <script src="/editorial.js" defer></script>
     <script src="/watermark.js" defer></script>
   </head>
   <body>
@@ -187,6 +188,7 @@
           <div class="panel-title"><h2>Revisar un clip</h2></div>
           <label for="tiktok-clip">Exportación MP4</label>
           <select id="tiktok-clip" required><option value="">Elige un clip</option></select>
+          <button id="tiktok-editorial" type="button">Abrir en AI Engine</button>
           <div id="tiktok-review" class="publication-review" hidden>
             <video id="tiktok-preview" controls preload="metadata" playsinline aria-label="Vista previa del clip"></video>
             <div>
@@ -246,13 +248,13 @@
       <section id="automation-view" class="view" lang="es" hidden>
         <div class="intro">
           <h1>Automation</h1>
-          <p>Guarda las preferencias de producción para las siguientes fases de Automation.</p>
+          <p>Configura la producción local y revisa propuestas editoriales para tus clips.</p>
         </div>
         <form id="automation-form" class="panel input-panel" autocomplete="off">
           <div class="panel-title"><h2>Configuración</h2></div>
           <fieldset id="automation-fields" class="automation-fields" disabled aria-label="Preferencias de producción">
             <label class="check"><input type="checkbox" name="live_clipping" /> Recibir clips de Live clipping</label>
-            <label class="check"><input type="checkbox" name="ai_captions" /> Generar textos de publicación con IA</label>
+            <label class="check"><input type="checkbox" name="ai_captions" /> Generar captions automáticamente para nuevas exportaciones</label>
             <label class="check"><input type="checkbox" name="subtitle_correction" /> Corregir subtítulos</label>
             <label class="check"><input type="checkbox" name="force_vertical_format" /> Forzar exportación vertical</label>
             <div class="form-grid">
@@ -275,6 +277,57 @@
           <p id="automation-status" role="status"></p>
           <p id="automation-error" role="alert" hidden></p>
         </form>
+        <section class="panel input-panel editorial-panel" aria-labelledby="editorial-heading">
+          <div class="panel-title"><h2 id="editorial-heading">AI Engine</h2></div>
+          <p id="editorial-ollama" role="status">Buscando Ollama…</p>
+          <p id="editorial-install" class="muted" hidden>Instala Ollama, abre el servicio local y descarga el modelo que prefieras con <code>ollama pull qwen3:4b</code> u <code>ollama pull qwen3:8b</code>. Puedes generar propuestas con reglas locales mientras tanto.</p>
+          <p id="editorial-metrics" class="muted"></p>
+          <p id="editorial-error" role="alert" hidden></p>
+          <div class="publication-actions">
+            <button id="editorial-connect" type="button">Comprobar conexión y modelos</button>
+            <button id="editorial-test" type="button">Ejecutar prueba de generación</button>
+          </div>
+          <form id="editorial-config">
+            <div class="form-grid">
+              <label>Modelo de Ollama<select id="editorial-model"><option value="">Reglas locales</option></select></label>
+              <label>Tiempo máximo (s)<input id="editorial-timeout" type="number" min="5" max="180" value="60" required /></label>
+              <label>Plataforma predeterminada<select id="editorial-default-platform">
+                <option value="tiktok">TikTok</option><option value="facebook">Facebook Reels</option><option value="youtube">YouTube Shorts</option>
+              </select></label>
+            </div>
+            <details class="editorial-details">
+              <summary>Pesos y perfiles editoriales</summary>
+              <div id="editorial-weights" class="form-grid"></div>
+              <div class="form-grid">
+                <label>Editar perfil<select id="editorial-profile">
+                  <option value="tiktok">TikTok</option><option value="facebook">Facebook Reels</option><option value="youtube">YouTube Shorts</option>
+                </select></label>
+                <label>Límite editorial del título<input id="editorial-title-limit" type="number" min="20" max="160" required /></label>
+                <label>Límite editorial del caption<input id="editorial-caption-limit" type="number" min="30" max="650" required /></label>
+                <label>Máximo de hashtags<input id="editorial-tag-limit" type="number" min="0" max="8" required /></label>
+              </div>
+              <label>Instrucciones editoriales del perfil<textarea id="editorial-instructions" maxlength="500" rows="2"></textarea></label>
+            </details>
+            <button type="submit" id="editorial-save-config">Guardar configuración de AI Engine</button>
+          </form>
+        </section>
+        <section class="panel input-panel editorial-panel">
+          <div class="panel-title"><h2>Propuestas editoriales</h2></div>
+          <div class="form-grid">
+            <label>Clip terminado<select id="editorial-clip"><option value="">Todos los clips</option></select></label>
+            <label>Perfil de generación<select id="editorial-platform">
+              <option value="tiktok">TikTok</option><option value="facebook">Facebook Reels</option><option value="youtube">YouTube Shorts</option>
+            </select></label>
+          </div>
+          <div class="publication-actions">
+            <button id="editorial-generate" type="button" class="primary">Generar propuestas</button>
+            <button id="editorial-regenerate" type="button">Regenerar</button>
+            <button id="editorial-cancel" type="button" hidden>Cancelar procesamiento</button>
+          </div>
+          <label>Historial editorial<select id="editorial-history"><option value="">Sin resultados</option></select></label>
+          <button id="editorial-older" type="button" hidden>Ver versiones anteriores</button>
+          <div id="editorial-result" aria-live="polite"></div>
+        </section>
       </section>
       <section id="project-view" class="view" hidden>
         <div class="project-heading">

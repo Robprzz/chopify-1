@@ -52,6 +52,7 @@ class LiveSession:
         self._capture_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._on_log = None
+        self.on_clip = None
         self.rules = None
         if brief_text:
             import campaign
@@ -208,6 +209,7 @@ class LiveSession:
         pending = None
         render_ready_at = None
         while not self._stop.is_set():
+            finished = None
             if (self.dir / "stop").exists():
                 self._log("Stop requested by agent; shutting down.")
                 self.stop()
@@ -258,6 +260,7 @@ class LiveSession:
                             self._log(f"Clip failed: {record.error}")
                         else:
                             self._log(f"Clip saved: {record.id}")
+                            finished = record.files.get("mp4")
             elif probe is not None and self.buffer.ready_segments() and self._allowed(result["score"], self.stream_time):
                 if self.options.get("live_skip_ads") and any(
                         getattr(a, "ad_like", False) for _, a in self.analyzers):
@@ -272,6 +275,8 @@ class LiveSession:
                             self._log(f"Hype detected: score={result['score']}")
                             pending = live_clips.Trigger(self.last_trigger, result["score"], result["signals"])
             self._save()
+            if finished and self.on_clip:
+                self.on_clip(finished)
             if self.buffer is not None and self.source.page_url and (
                     time.time() - self._last_refresh > 600):
                 self._last_refresh = time.time()

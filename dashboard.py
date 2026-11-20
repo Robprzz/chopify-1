@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import secrets
 import socket
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -17,6 +18,9 @@ import webbrowser
 
 import automation
 import branding
+import editorial
+import editorial_providers
+import editorial_store
 import projects
 import render_clips
 import tiktok
@@ -32,6 +36,7 @@ STATIC_FILES = {
     "publications.js": ("publications.js", "text/javascript; charset=utf-8"),
     "automation.js": ("automation.js", "text/javascript; charset=utf-8"),
     "watermark.js": ("watermark.js", "text/javascript; charset=utf-8"),
+    "editorial.js": ("editorial.js", "text/javascript; charset=utf-8"),
     "style.css": ("style.css", "text/css; charset=utf-8"),
 }
 
@@ -103,6 +108,7 @@ class Studio:
         self.tiktok = tiktok.TikTokStudio(self.root, self.busy)
         self.automation_settings = automation.SettingsStore(self.root)
         self.watermark = watermark.Store(self.root)
+        self.editorial = editorial.Engine(self.automation_settings, self.tiktok._clip)
         self.processes = set()
         self.live_sessions = {}
         self.live_lock = threading.Lock()
@@ -143,7 +149,20 @@ class Studio:
             state = projects.read_project(path)
             state.update(status="queued", stage=action, error=None)
             projects.save_project(path, state)
-            self.futures[project_id] = self.executor.submit(self._run, path, action, preview, pick)
+            future = self.executor.submit(self._run, path, action, preview, pick)
+            self.futures[project_id] = future
+            if action != "prepare" and not preview:
+                future.add_done_callback(lambda _: self._editorial_exports(project_id, path))
+
+    def _editorial_exports(self, project_id, path):
+        try:
+            state = projects.read_project(path)
+        except (OSError, ValueError):
+            return
+        if state["status"] != "complete" and state.get("stage") != "render incomplete":
+            return
+        for output in state.get("last_outputs", []):
+            self.editorial.auto(project_id, Path(output).name)
 
     def _run(self, path, action, preview, pick):
         cmd = [sys.executable, str(HERE / "chopify.py"), "--project", str(path),
@@ -179,6 +198,7 @@ class Studio:
         check_capture_tools()
         resolved = resolve_live_source(source, options)
         session = live.LiveSession(resolved, options, self.root, brief_text=brief_text)
+        session.on_clip = lambda path: self.editorial.auto(f"live/{session.id}", Path(path).name)
         with self.lock:
             if self.closing:
                 raise ValueError("Studio is closing. Restart it before starting a live session.")
@@ -222,6 +242,7 @@ class Studio:
             for child in list(self.processes):
                 child.terminate()
             self.executor.shutdown(wait=False, cancel_futures=True)
+        self.editorial.close()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -305,6 +326,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"projects": self.app.list_projects()})
             if parts == ["api", "automation", "settings"]:
                 return self.automation_settings_action()
+            if len(parts) == 3 and parts[:2] == ["api", "editorial"]:
+                return self.editorial_action(parts[2], query=parse_qs(location.query, max_num_fields=4))
             if parts == ["api", "watermark"]:
                 return self.send_json(self.app.watermark.read())
             if len(parts) == 2 and parts[0] == "watermark-image":
@@ -362,6 +385,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.tiktok_action(parts[2], body)
             if parts == ["api", "automation", "settings"]:
                 return self.automation_settings_action(body)
+            if len(parts) == 3 and parts[:2] == ["api", "editorial"]:
+                return self.editorial_action(parts[2], body)
             if parts == ["api", "live"]:
                 source = body.get("source")
                 if not isinstance(source, str) or not source.strip():
@@ -458,6 +483,54 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({"error": str(exc)}, 409)
         except automation.SettingsUnavailable as exc:
             return self.send_json({"error": str(exc)}, 503)
+
+    def editorial_action(self, action, body=None, query=None):
+        engine = self.app.editorial
+
+        def identifier(value):
+            if type(value) is not int or not 1 <= value <= 2**63 - 1:
+                raise ValueError("Identificador editorial inválido.")
+            return value
+
+        try:
+            if body is None:
+                if action == "clips":
+                    return self.send_json({"clips": self.app.tiktok.exports()})
+                engine.ensure()
+                if action == "status":
+                    clip = query.get("clip", [None])[0]
+                    before = query.get("before")
+                    before = identifier(int(before[0])) if before else None
+                    return self.send_json({
+                        **engine.store.history(clip, before), "config": engine.store.config(),
+                        "ollama": engine.model_status, "address": editorial_providers.OLLAMA_URL,
+                        "auto_error": engine.last_auto_error, "auto_pending": engine.events.qsize(),
+                    })
+                if action == "result":
+                    return self.send_json(engine.store.detail(identifier(int(query.get("id", ["0"])[0]))))
+            else:
+                if action == "models":
+                    return self.send_json(engine.refresh_models(force=True))
+                if action == "config":
+                    return self.send_json(engine.save_config(body.get("settings"), body.get("revision")))
+                if action in ("generate", "test"):
+                    return self.send_json(engine.submit(
+                        body.get("project"), body.get("filename"), body.get("platform"),
+                        body.get("force", action == "test"), test=action == "test"), 202)
+                engine.ensure()
+                if action == "cancel":
+                    return self.send_json(engine.cancel(identifier(body.get("job_id"))))
+                if action == "edit":
+                    return self.send_json(engine.store.edit(
+                        identifier(body.get("job_id")), body.get("style"), body.get("fields"),
+                        body.get("revision"), body.get("select", False)))
+        except editorial_store.Conflict as exc:
+            return self.send_json({"error": str(exc)}, 409)
+        except editorial_store.QueueFull as exc:
+            return self.send_json({"error": str(exc)}, 429)
+        except sqlite3.Error:
+            return self.send_json({"error": "La base de datos editorial no está disponible."}, 503)
+        return self.send_json({"error": "Acción editorial desconocida."}, 404)
 
     def tiktok_action(self, action, body):
         service = self.app.tiktok

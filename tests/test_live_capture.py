@@ -56,6 +56,51 @@ def test_resolve_rejects_finished_broadcast():
         live_capture.resolve_live_source("https://youtu.be/123", {}, runner=lambda *a, **k: result)
 
 
+@pytest.mark.parametrize("codec", [{}, {"acodec": None}, {"acodec": "unknown"}, {"acodec": "mp4a.40.2"}])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_youtube_234_with_incomplete_codecs(codec, reverse):
+    video = {"format_id": "311", "vcodec": "avc1.4D4020", "acodec": "none",
+             "protocol": "m3u8_native", "url": "https://video.example/v.m3u8"}
+    audio = {"format_id": "234", "vcodec": "none", **codec, "protocol": "m3u8_native",
+             "url": "https://audio.example/a.m3u8",
+             "http_headers": {"Referer": "https://audio.example"}}
+    tracks = [audio, video] if reverse else [video, audio]
+    probes = []
+
+    def run(cmd, timeout):
+        if cmd[0] == "ffprobe":
+            probes.append(cmd[-1])
+            assert timeout == 10
+            assert cmd[cmd.index("-headers") + 1] == "Referer: https://audio.example\r\n"
+            return subprocess.CompletedProcess(cmd, 0, '{"streams":[{"codec_type":"audio"}]}')
+        return subprocess.CompletedProcess(cmd, 0, json.dumps({"requested_formats": tracks}))
+
+    resolved = live_capture.resolve_live_source("https://www.youtube.com/live/2dt0yxm4RUE", {}, runner=run)
+    assert (resolved.url, resolved.audio_url) == (video["url"], audio["url"])
+    assert probes == ([] if codec == {"acodec": "mp4a.40.2"} else [audio["url"]])
+
+
+@pytest.mark.parametrize(("streams", "error"), [
+    ([], "unsupported set"), (["audio", "video"], "conflicts with"),
+    (["video"], "conflicts with"), (None, "FFprobe could not verify"),
+])
+def test_ambiguous_track_requires_matching_probe(streams, error):
+    def run(cmd, timeout):
+        if cmd[0] == "ffprobe":
+            if streams is None:
+                raise subprocess.TimeoutExpired(cmd, timeout)
+            return subprocess.CompletedProcess(cmd, 0, json.dumps({
+                "streams": [{"codec_type": kind} for kind in streams]}))
+        return subprocess.CompletedProcess(cmd, 0, json.dumps({"requested_formats": [
+            {"vcodec": "avc1", "acodec": "none", "url": "https://example.test/v"},
+            {"vcodec": "none", "url": "https://example.test/a?token=private-value"},
+        ]}))
+
+    with pytest.raises(ValueError, match=error) as exc:
+        live_capture.resolve_live_source("https://youtu.be/id", {}, runner=run)
+    assert "private-value" not in str(exc.value)
+
+
 @pytest.mark.parametrize("height, expected", [(720, "311"), (1080, "312")])
 def test_ytdlp_selects_independent_hls_at_requested_height(tmp_path, height, expected):
     pytest.importorskip("yt_dlp")

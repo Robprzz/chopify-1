@@ -183,10 +183,11 @@ def test_live_clip_reaches_publications_in_chromium(server, chromium_page, monke
                 return real_runner(cmd, **kwargs)
             assert "[height<=1080]" in cmd[cmd.index("-f") + 1]
             return subprocess.CompletedProcess(cmd, 0, json.dumps({"is_live": True, "requested_formats": [
-                {"url": media_base + "/video/index.m3u8", "protocol": "m3u8_native", "vcodec": "avc1",
+                {"url": media_base + "/video/index.m3u8", "protocol": "m3u8_native", "vcodec": "avc1.4D4020",
+                 "format_id": "311",
                  "acodec": "none", "http_headers": {"X-Live-Track": "video"}},
                 {"url": media_base + "/audio/index.m3u8", "protocol": "m3u8_native", "vcodec": "none",
-                 "acodec": "aac", "http_headers": {"X-Live-Track": "audio"}},
+                 "format_id": "234", "http_headers": {"X-Live-Track": "audio"}},
             ]}))
 
         monkeypatch.setattr(live_capture.ingest, "_run", extract_or_run)

@@ -115,6 +115,37 @@ def _media_headers(info, overrides):
                          and isinstance(value, str) and not re.search(r"[\x00-\x08\x0a-\x1f\x7f]", value))]
 
 
+def _codec_present(value):
+    if not isinstance(value, str) or value.strip().lower() in {"", "unknown", "n/a", "und", "null"}:
+        return None
+    return value.strip().lower() != "none"
+
+
+def _track_kind(track, headers, runner):
+    video = _codec_present(track.get("vcodec"))
+    audio = _codec_present(track.get("acodec"))
+    if video is None or audio is None:
+        url = _media_url(track.get("url"))
+        cmd = ["ffprobe", "-v", "error", "-rw_timeout", "5000000", "-probesize", "2000000",
+               "-analyzeduration", "3000000", "-protocol_whitelist", "http,https,tcp,tls,crypto"]
+        input_headers = _media_headers(track, headers)
+        if input_headers:
+            cmd += ["-headers", "".join(line + "\r\n" for line in input_headers)]
+        cmd += ["-show_entries", "stream=codec_type:stream_disposition=attached_pic", "-of", "json", "-i", url]
+        try:
+            streams = json.loads(runner(cmd, timeout=10).stdout)["streams"]
+            kinds = {stream["codec_type"] for stream in streams
+                     if not stream.get("disposition", {}).get("attached_pic")}
+        except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError):
+            raise ValueError("FFprobe could not verify the selected live track. Check that the stream is still live and retry.") from None
+        measured = ("video" in kinds, "audio" in kinds)
+        if any(known is not None and known != actual for known, actual in zip((video, audio), measured)):
+            raise ValueError("FFprobe found a live track that conflicts with the selected format.")
+        video, audio = measured
+    return {(True, False): "video", (False, True): "audio",
+            (True, True): "combined", (False, False): "invalid"}[video, audio]
+
+
 def resolve_live_source(url, options, runner=None):
     """Return a LiveSource; direct manifests pass through, pages use yt-dlp."""
     if not isinstance(url, str) or not url.strip() or len(url) > 2000:
@@ -159,11 +190,10 @@ def resolve_live_source(url, options, runner=None):
     if tracks is not None:
         if not isinstance(tracks, list) or len(tracks) != 2 or not all(isinstance(track, dict) for track in tracks):
             raise ValueError("yt-dlp returned an unsupported set of live formats. Expected one video track and one audio track.")
-        videos = [track for track in tracks if track.get("vcodec") not in (None, "none") and track.get("acodec") == "none"]
-        audios = [track for track in tracks if track.get("vcodec") == "none" and track.get("acodec") not in (None, "none")]
-        if len(videos) != 1 or len(audios) != 1:
+        classified = {_track_kind(track, headers, runner): track for track in tracks}
+        if classified.keys() != {"audio", "video"}:
             raise ValueError("yt-dlp returned an unsupported set of live formats. Expected one video track and one audio track.")
-        video, audio = videos[0], audios[0]
+        video, audio = classified["video"], classified["audio"]
     resolved = _media_url(video.get("url"))
     protocol = str(video.get("protocol") or "").lower()
     kind = "hls" if "m3u8" in resolved or "hls" in protocol else "http"

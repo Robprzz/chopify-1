@@ -73,6 +73,45 @@ def test_next_action():
     assert live.next_action({"state": "ok"}) == "Watching"
 
 
+def test_live_reconnect_closes_old_buffer_and_opens_both_refreshed_inputs(tmp_path, monkeypatch):
+    import live_capture
+
+    page = "https://www.youtube.com/live/2dt0yxm4RUE"
+    fresh = live_capture.LiveSource("https://v/new", "hls", "youtube", "yt-dlp",
+                                    ["Referer: video"], page, "https://a/new", ["Referer: audio"])
+    old = live_capture.LiveSource("https://v/old", "hls", "youtube", "yt-dlp",
+                                  [], page, "https://a/old")
+    session = live.LiveSession(old, {}, tmp_path)
+    session._restart_delays = (0, 0, 0)
+    monkeypatch.setattr(live_capture, "resolve_live_source", lambda *_: fresh)
+    opened = []
+    stopped = []
+
+    class Buffer:
+        capture_problem = segment_problem = None
+
+        def __init__(self, directory, url, options, **kwargs):
+            self.directory = directory
+            self.url = url
+            self.inputs = kwargs
+
+        def start(self):
+            opened.append((self.url, self.inputs["audio_url"], self.inputs["headers"], self.inputs["audio_headers"]))
+
+        def stop(self):
+            stopped.append(self.url)
+
+        def segments(self):
+            return []
+
+    monkeypatch.setattr(live_capture, "SegmentBuffer", Buffer)
+    session._start_capture()
+    session._restart_capture()
+    assert stopped == ["https://v/old"]
+    assert opened[-1] == ("https://v/new", "https://a/new", ["Referer: video"], ["Referer: audio"])
+    assert session.health["refreshes"] == 1
+
+
 def test_live_session_accepts_explicit_id(tmp_path):
     from live_capture import LiveSource
     source = LiveSource("https://x/l.m3u8", "hls", "generic", "passthrough", [])

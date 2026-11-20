@@ -31,6 +31,18 @@ Each session writes `projects/live/<id>/live_session.json`, a rolling `buffer/`
 of 4-second segments, and finished clips in `clips/`. The buffer is capped by
 `--live-buffer` (seconds) and `--live-buffer-max-mb` (megabytes).
 
+## Track verification
+
+For separate audio and video selections, Studio looks for one input of each
+type in `requested_formats`. When a codec is missing or unknown, an FFprobe
+check with a 10-second timeout verifies the input using that track's HTTP
+headers. This covers YouTube HLS audio format 234 with an omitted `acodec`.
+Combinations with ambiguous or conflicting stream types are rejected. The
+check is repeated for newly resolved inputs on reconnect when necessary.
+The YouTube page `2dt0yxm4RUE` returned an access error from the development
+environment. Local HLS with the same metadata shape covers capture, A/V sync,
+rendering, and Publications.
+
 ## Reliability
 
 A page URL is re-resolved with yt-dlp every 10 minutes for the next reconnect

@@ -73,7 +73,7 @@ class LiveSession:
         self._scale_capture = False
         self.buffer = None
         self.analyzers = []
-        self.writer = live_clips.LiveClipWriter(self.dir)
+        self.writer = live_clips.LiveClipWriter(self.dir, root=root)
         self.detector = live_signals.HypeDetector()
         self.bus = live_signals.SignalBus(retention=self.options["live_buffer"])
 

@@ -232,6 +232,10 @@ main { margin-left: var(--rail-width); min-height: 100vh; }
 .check { display: flex; align-items: center; gap: 10px; font-size: 13px; font-weight: 500; color: var(--ink); }
 .check input { flex: none; }
 .automation-fields { display: grid; gap: 14px; border: 0; margin: 0; padding: 0; min-width: 0; }
+.watermark-image-row { display: flex; align-items: center; gap: 12px; }
+.watermark-image-row img { width: 80px; height: 48px; object-fit: contain; background: var(--line-soft); }
+.watermark-stage { position: relative; width: min(100%, 360px); aspect-ratio: 16 / 9; background: var(--line-soft); }
+.watermark-stage img { position: absolute; }
 select { appearance: none; background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%); background-position: calc(100% - 17px) 20px, calc(100% - 12px) 20px; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; }
 
 /* Job plate --------------------------------------------------------------- */

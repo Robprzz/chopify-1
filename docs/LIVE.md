@@ -114,7 +114,10 @@ can have partial or empty captions if speech inference falls behind, is
 unavailable, or there is no speech. The SRT is saved alongside the MP4.
 
 Completed clips appear in **Publicaciones** as `Live · <session ID>` and can be
-previewed there. The existing TikTok approval flow applies if you choose to send
+previewed there. Live clips use the workspace watermark when it is enabled.
+[Configure and verify the watermark](WATERMARK.md)
+
+The existing TikTok approval flow applies if you choose to send
 one. The HTTP and Chromium regression uses a local HLS fixture, actual FFmpeg
 capture and rendering, and simulated detection and speech inference. It
 checks the previews, SRT, and completed clip listing without calling TikTok.

@@ -51,6 +51,7 @@ Chopify is an open-source Python app with a local browser dashboard and a CLI. I
 | **Caption Studio** | Choose from 13 caption looks, then tune font, size, colors, outline, shadow, cue length, position, box background, and word motion. A live overlay follows the source; automatic emphasis and emoji are optional. |
 | **Caption editor and SRT export** | Fix transcription mistakes before rendering. Burnt captions and SRT files share the same timeline, including tightened cuts. |
 | **Reusable brand presets** | Save a caption look and optional logo in JSON. A named preset, brand preset, and project override layer in that order. |
+| **Export watermark** | Import a transparent PNG, preview its placement, and burn it into conventional and Live clips. [Watermark setup and verification](docs/WATERMARK.md) |
 | **Semantic clip search** | Search for a concept such as “handling rejection” using optional local Ollama embeddings, even if those exact words are absent. |
 | **Podcast split-screen** | Stack two adjustable horizontal crops in a vertical clip for fixed-camera two-person footage. |
 | **Clip selection and review** | Absolute 0–10 scoring returns every clip at 8.0+ by default, with an engine-chosen length, optional local LLM reranking, keyword or semantic search, editable times, and fast draft previews. |

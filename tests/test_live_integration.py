@@ -195,6 +195,18 @@ def test_live_clip_reaches_publications_in_chromium(server, chromium_page, monke
     thread.start()
     app, base = server
     page, expect = chromium_page
+    if split:
+        import base64
+        import cv2
+        import numpy as np
+        import watermark
+
+        pixels = np.full((20, 40, 4), (0, 255, 0, 255), dtype=np.uint8)
+        ok, png = cv2.imencode(".png", pixels)
+        assert ok
+        watermark.Store(app.app.root).save(
+            {**watermark.DEFAULTS, "enabled": True, "position": "top-left"},
+            base64.b64encode(png).decode("ascii"))
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
     try:
@@ -239,8 +251,17 @@ def test_live_clip_reaches_publications_in_chromium(server, chromium_page, monke
             assert captured
             assert all(set(probe_streams(segment)) == {"video", "audio"} for segment in captured)
             clip = exports / mp4.rsplit("/", 1)[-1]
+            color = subprocess.check_output([
+                "ffmpeg", "-v", "error", "-i", str(clip), "-vf", "crop=4:4:60:50,format=rgb24",
+                "-frames:v", "1", "-threads", "1", "-f", "rawvideo", "-",
+            ], timeout=15)
+            assert color[1] > 200 and color[0] < 20 and color[2] < 20
+            assert set(probe_streams(clip)) == {"video", "audio"}
             assert marker_skew(captured[0]) < 0.075
             assert marker_skew(clip) < 0.075
+            page.request.post(base + f"/api/live/{session}/stop",
+                              headers={"X-Chopify-Token": app.app.token}, data={})
+            assert not buffer.alive
         assert not errors
     finally:
         httpd.shutdown()

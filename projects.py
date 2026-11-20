@@ -16,6 +16,7 @@ import ingest
 import sections
 import branding
 import video_types
+import watermark
 from captions import update_transcript
 
 LIVE_DEFAULTS = {
@@ -295,6 +296,7 @@ def validate_segments(segments, duration):
 def run_project(path, action="all", preview=False, pick=None, resume=True,
                 progress=None, on_detection=None, explicit_keys=None):
     """Prepare candidates or render saved candidates; checkpoint every successful clip."""
+    workspace = Path(path).parent
     path = Path(path).resolve()
     state = read_project(path)
     options = validate_options(state["options"])
@@ -535,6 +537,8 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
             segments = score_clips.pick_segments(segments, pick)
             out = path / ("previews" if preview else "clips")
             out.mkdir(exist_ok=True)
+            mark = watermark.Store(workspace).for_render()
+            mark_identity = [mark.settings] if mark else []
             brand = branding.load_brand(options["brand"]) if options["brand"] else None
             logo_identity = file_identity(brand["logo"]) if brand and brand["logo"] else None
             render_from_sections = bool(
@@ -575,7 +579,7 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
                         sections.SECTION_VERSION])
                 key = digest([segment, data["words"], file_identity(source),
                               options, brand, logo_identity, preview,
-                              source_offset, section_key])
+                              source_offset, section_key, *mark_identity])
                 cached = state["renders"].get(key)
                 expected_suffixes = [".mp4", ".srt"] if preview else [".mp4", ".srt", ".png", ".meta.json"]
                 if resume and cached and all(Path(cached).with_suffix(ext).is_file() for ext in expected_suffixes):
@@ -611,7 +615,7 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
                                 segment, data["words"],
                                 file_identity(source), options, brand,
                                 logo_identity, preview, source_offset,
-                                section_key])
+                                section_key, *mark_identity])
                         except (Exception, SystemExit) as exc:
                             failed_sections[group_index] = str(exc)
                             render_errors.append(
@@ -625,7 +629,7 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
                         options["aspect"], out_dir=out, style=options["style"],
                         do_tighten=options["tighten"], loudnorm=options["loudnorm"], preview=preview,
                         brand=brand, layout=options["layout"], centers=options["centers"],
-                        caption=options["caption"], source_offset=source_offset)
+                        caption=options["caption"], source_offset=source_offset, mark=mark)
                 except (Exception, SystemExit) as exc:
                     if not render_from_sections:
                         raise

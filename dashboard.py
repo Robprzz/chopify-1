@@ -21,6 +21,7 @@ import projects
 import render_clips
 import tiktok
 import video_types
+import watermark
 
 HERE = Path(__file__).resolve().parent
 STATIC = HERE / "assets" / "studio"
@@ -30,6 +31,7 @@ STATIC_FILES = {
     "app.js": ("app.js", "text/javascript; charset=utf-8"),
     "publications.js": ("publications.js", "text/javascript; charset=utf-8"),
     "automation.js": ("automation.js", "text/javascript; charset=utf-8"),
+    "watermark.js": ("watermark.js", "text/javascript; charset=utf-8"),
     "style.css": ("style.css", "text/css; charset=utf-8"),
 }
 
@@ -100,6 +102,7 @@ class Studio:
         self.futures = {}
         self.tiktok = tiktok.TikTokStudio(self.root, self.busy)
         self.automation_settings = automation.SettingsStore(self.root)
+        self.watermark = watermark.Store(self.root)
         self.processes = set()
         self.live_sessions = {}
         self.live_lock = threading.Lock()
@@ -302,6 +305,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"projects": self.app.list_projects()})
             if parts == ["api", "automation", "settings"]:
                 return self.automation_settings_action()
+            if parts == ["api", "watermark"]:
+                return self.send_json(self.app.watermark.read())
+            if len(parts) == 2 and parts[0] == "watermark-image":
+                if not re.fullmatch(r"[a-f0-9]{64}", parts[1]):
+                    raise ValueError("Identificador de marca de agua no válido.")
+                return self.send_content(self.app.watermark.preview(parts[1]), "image/png")
             if len(parts) == 3 and parts[:2] == ["api", "projects"]:
                 data = project_detail(self.app.root, parts[2])
                 data["busy"] = self.app.busy(parts[2])
@@ -367,6 +376,10 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json({"error": "Could not save the live session. Check access to the Studio projects folder."}, 500)
                 return self.send_json({"id": session.id}, 201)
             with self.app.lock:
+                if parts == ["api", "watermark"]:
+                    if "settings" not in body or body.keys() - {"settings", "image_data"}:
+                        raise ValueError("Envía los ajustes y el PNG de marca de agua.")
+                    return self.send_json(self.app.watermark.save(body["settings"], body.get("image_data")))
                 if len(parts) == 4 and parts[:2] == ["api", "live"] and parts[3] == "stop":
                     self.app.stop_live(parts[2])
                     return self.send_json({"ok": True})

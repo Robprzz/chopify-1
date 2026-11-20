@@ -23,10 +23,13 @@ import json
 import argparse
 import subprocess
 import math
+import tempfile
+import uuid
 from pathlib import Path
 
 import branding
 import tighten  # local module: filler/silence removal
+import watermark
 
 # aspect -> (target_w, target_h, caption_font_size, caption_margin_v)
 ASPECTS = {
@@ -597,7 +600,7 @@ def render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAUL
            do_tighten=False, loudnorm=False, preview=False, brand=None,
            layout="single", centers=(0.25, 0.75), caption=None,
            source_offset=0.0, fit="cover", facecam_box=None,
-           facecam_height=0.34):
+           facecam_height=0.34, mark=None):
     from captions import write_srt
     out_dir = (Path(out_dir) if out_dir else default_out()).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -692,11 +695,27 @@ def render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAUL
     suffix = ".preview" if preview else ""
     prefix = sanitize(str(seg["id"])) + "-" if seg.get("id") else ""
     out = out_dir / (prefix + sanitize(seg.get("hook", "clip")) + suffix + ".mp4")
+    if mark and out.exists():
+        out = out.with_name(f"{out.stem}-{uuid.uuid4().hex[:8]}{out.suffix}")
     cmd = ["ffmpeg", "-y", "-ss", f"{local_start:.3f}", "-i", str(render_src),
            "-t", f"{dur:.3f}",
            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
            "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", str(out)]
-    if brand and brand.get("logo"):
+    if mark:
+        cmd.insert(1, "-nostdin")
+        w, h, x, y = mark.geometry(tw, th)
+        if layout == "stacked":
+            base = vf.removesuffix("subtitles=_caption.ass[v]") + "null[base]"
+        else:
+            base = ("" if vf.startswith("[0:v]") else "[0:v]") + vf.removesuffix(",subtitles=_caption.ass") + "[base]"
+        graph = (base + f";[1:v]format=rgba,scale={w}:{h},setsar=1,"
+                 f"colorchannelmixer=aa={mark.settings['opacity'] / 100:.2f}[mark];"
+                 f"[base][mark]overlay=x={x}:y={y}:eof_action=repeat:format=auto,"
+                 "subtitles=_caption.ass[v]")
+        cmd[cmd.index("-t"):cmd.index("-t")] = ["-f", "image2", "-pattern_type", "none", "-i", str(mark.image)]
+        cmd[cmd.index("-c:v"):cmd.index("-c:v")] = [
+            "-filter_complex_threads", "1", "-filter_complex", graph, "-map", "[v]", "-map", "0:a?"]
+    elif brand and brand.get("logo"):
         width = max(20, round(brand["logo_width"] * tw / 1920))
         if layout == "stacked":
             graph = (vf + f";[1:v]scale={width}:-1[logo];"
@@ -723,7 +742,17 @@ def render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAUL
         cmd[cmd.index("-c:v"):cmd.index("-c:v")] = [
             "-af", "loudnorm=I=-14:TP=-1.5:LRA=11"]
     print(">", " ".join(cmd), flush=True)
-    subprocess.run(cmd, check=True, cwd=str(out_dir))
+    if mark:
+        with tempfile.TemporaryDirectory(prefix=".watermark-render-", dir=out_dir) as staging:
+            temporary = Path(staging) / "video.mp4"
+            try:
+                subprocess.run([*cmd[:-1], str(temporary)], check=True, cwd=str(out_dir),
+                               timeout=max(60, min(7200, dur * 12 + 60)))
+                temporary.replace(out)
+            except (OSError, subprocess.SubprocessError):
+                raise watermark.WatermarkError("FFmpeg no pudo incorporar la marca de agua al MP4. Comprueba la imagen PNG y los filtros de FFmpeg.") from None
+    else:
+        subprocess.run(cmd, check=True, cwd=str(out_dir))
     write_srt(cap_words, start, start + dur, out.with_suffix(".srt"),
               group_size=resolved["words_per_cue"])
 

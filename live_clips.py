@@ -6,9 +6,11 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import branding
 import ingest
 import projects
 import render_clips
+import watermark
 
 
 def live_clips_dir(root, session_id):
@@ -114,8 +116,9 @@ def stitch(paths, destination, runner=None):
 
 
 class LiveClipWriter:
-    def __init__(self, session_dir):
+    def __init__(self, session_dir, root=None):
         self.session_dir = Path(session_dir)
+        self.watermark = watermark.Store(root) if root is not None else None
         self.clips_dir = self.session_dir / "clips"
         self.windows_dir = self.session_dir / "windows"
         self.clips_dir.mkdir(parents=True, exist_ok=True)
@@ -134,17 +137,19 @@ class LiveClipWriter:
         start = max(start, offset)
         record = ClipRecord(uuid.uuid4().hex[:12], start, end, trigger.score, trigger.signals)
         try:
+            mark = self.watermark.for_render() if self.watermark else None
+            brand = branding.load_brand(options["brand"]) if options["brand"] else None
             window = stitch(segments, self.windows_dir / f"{record.id}.mp4")
             seg = {"id": record.id, "start": round(start - offset, 3), "end": round(end - offset, 3)}
             render_fn(seg, remap_words(words, offset, end), window,
                       probe["width"], probe["height"], str(self.session_dir),
                       options["aspect"], out_dir=str(self.clips_dir),
                       style=options["style"], do_tighten=options["tighten"],
-                      loudnorm=options["loudnorm"], brand=options["brand"],
+                      loudnorm=options["loudnorm"], brand=brand,
                       layout=options["layout"], centers=options["centers"],
                       caption=options["caption"], fit=options["fit"],
                       facecam_box=options["facecam_box"],
-                      facecam_height=options["facecam_height"])
+                      facecam_height=options["facecam_height"], mark=mark)
             record.files = {"window": str(window)}
             for path in sorted(self.clips_dir.glob(f"{record.id}-*")):
                 record.files[path.suffix.lstrip(".") or "file"] = str(path)

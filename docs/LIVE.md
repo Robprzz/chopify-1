@@ -6,21 +6,26 @@ clips. Capture, transcription, and rendering run locally and require no paid API
 ## Start
 
 ```bash
-chopify --live "https://www.twitch.tv/channel" \
+chopify --live "https://www.twitch.tv/channel" --live-max-height 720 \
   --live-threshold 8 --live-pre-roll 30 --live-tail 5 \
   --aspect 9:16 --style default
 ```
 
-A direct `https://.../live.m3u8` or `rtmp://...` URL is used as-is. For a live
-page, Chopify runs yt-dlp from the same Python environment as Studio and prefers
-a playable HLS format with video and audio in one stream. FFmpeg and FFprobe
-must be available on PATH. Press Ctrl+C to stop a CLI session.
+A direct `https://.../live.m3u8` or `rtmp://...` URL goes straight to FFmpeg.
+For a live page, Chopify runs yt-dlp from the same Python environment as Studio,
+prefers HLS, and accepts either a combined format or separate video and audio
+renditions. Each rendition uses its own HTTP headers. **Maximum source
+resolution** defaults to 720p and offers 1080p. If a provider sends video above
+the limit, Studio restarts capture with downscaling. **Export format** controls
+the shape of the finished clip independently of the capture limit. FFmpeg and
+FFprobe must be on PATH. Separate input synchronization uses FFmpeg's
+[`-isync` option](https://ffmpeg.org/ffmpeg.html). Press Ctrl+C to stop a CLI session.
 
 | Source | Verification |
 | --- | --- |
-| Twitch | An active channel resolved to HLS. Studio returned HTTP 201 without a project and captured a completed 1920×1080 segment with audio. |
-| Kick | An active channel resolved to HLS. Studio returned HTTP 201 without a project and captured completed 1920×1080 segments with audio. An offline channel returned a specific offline error. |
-| YouTube | The active-page format and resolver response are covered by automated tests. The supplied video ID `2dt0yxm4RUE` could not be verified remotely because the test environment's HTTPS proxy returned 403. |
+| Twitch | An active channel resolved to combined HLS and captured 1280×720 with audio at the default limit. |
+| Kick | An active channel was captured at 1920×1080 on the previous revision. The channels checked for this update were offline and returned the offline diagnostic. |
+| YouTube | Local tests reproduce format selection for video IDs `311` and `312` paired with audio `234`. The supplied broadcast `2dt0yxm4RUE` could not be verified remotely because the test environment's HTTPS proxy returned 403. |
 
 Each session writes `projects/live/<id>/live_session.json`, a rolling `buffer/`
 of 4-second segments, and finished clips in `clips/`. The buffer is capped by
@@ -28,8 +33,11 @@ of 4-second segments, and finished clips in `clips/`. The buffer is capped by
 
 ## Reliability
 
-A page URL is re-resolved with yt-dlp every 10 minutes and whenever the capture
-process exits, so expiring stream tokens are refreshed automatically. If no new
+A page URL is re-resolved with yt-dlp every 10 minutes for the next reconnect
+and whenever the capture process restarts. Separate audio and video are refreshed
+together. Capture uses the source timestamps and checks that both tracks are
+present and aligned before releasing a segment to the clipper. Partial segments
+at the edge of the stream may be discarded. If no new
 segment arrives for 20 seconds, Chopify waits with backoff (1, 2, then 4 seconds)
 and restarts capture while keeping the session id, brief rules, and saved clips.
 After three failed restarts the session is marked `failed` with a plain reason.
@@ -85,10 +93,11 @@ creates a standalone session without preparing a project or a transcript. The
 score, stream time, clip count, and clip feed update while it runs. Startup
 reports missing tools, offline broadcasts, denied access, and resolution
 timeouts in the Live form. For capture failures, the session shows the error
-and FFmpeg records details locally in `buffer/ffmpeg.log`.
+and FFmpeg diagnostics are reduced to categories in `buffer/ffmpeg.log`. The
+capture log excludes raw FFmpeg output, signed URLs, and HTTP header values.
 
-Studio renders vertical 9:16 clips and uses closed segments for the export and
-rolling captions. It gives transcription a short window to catch up, so clips
+Studio renders the chosen export shape (16:9, 9:16, or 1:1) and uses closed
+segments for the export and rolling captions. It gives transcription a short window to catch up, so clips
 can have partial or empty captions if speech inference falls behind, is
 unavailable, or there is no speech. The SRT is saved alongside the MP4.
 
@@ -96,8 +105,27 @@ Completed clips appear in **Publicaciones** as `Live · <session ID>` and can be
 previewed there. The existing TikTok approval flow applies if you choose to send
 one. The HTTP and Chromium regression uses a local HLS fixture, actual FFmpeg
 capture and rendering, and simulated detection and speech inference. It
-checks the vertical preview, SRT, and completed clip listing without calling
-TikTok. The full suite passed with 504 tests.
+checks the previews, SRT, and completed clip listing without calling TikTok.
+The independent-HLS test also checks the two authenticated-by-header requests
+and measures the difference between a synthetic flash and tone in both the
+captured segment and finished clip. Both measurements stayed under 75 ms.
+The full suite passed with 516 tests.
+
+### Optional JavaScript runtime for YouTube on Windows
+
+Studio shows yt-dlp's missing-runtime diagnostic when emitted by the extractor.
+If YouTube formats are missing and that warning appears, install Deno 2.3.0 or
+later and yt-dlp's EJS dependencies. Deno is enabled by default when yt-dlp can
+find it on PATH. Restart PowerShell after installing it so Studio can see it.
+[yt-dlp EJS requirements](https://github.com/yt-dlp/yt-dlp/wiki/EJS) · [Deno installation](https://docs.deno.com/runtime/getting_started/installation/)
+
+```powershell
+winget install --id DenoLand.Deno --exact
+# In a new PowerShell at the repository root
+deno --version
+.\.venv\Scripts\python.exe -m pip install -U "yt-dlp[default]"
+.\.venv\Scripts\python.exe dashboard.py
+```
 
 ## Rights
 

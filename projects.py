@@ -22,7 +22,7 @@ LIVE_DEFAULTS = {
     "live_buffer": 300, "live_buffer_max_mb": 512, "live_pre_roll": 30,
     "live_tail": 5, "live_window": 10, "live_threshold": 8.0,
     "live_cooldown": 60, "live_max_clips": 10, "live_no_chat": False,
-    "live_no_transcript": False, "live_headers": [], "live_skip_ads": False,
+    "live_no_transcript": False, "live_headers": [], "live_skip_ads": False, "live_max_height": 720,
 }
 
 DEFAULT_OPTIONS = {"aspect": "16:9", "fit": "cover", "style": "default", "tighten": False,
@@ -133,6 +133,8 @@ def validate_options(options):
     for key, (low, high) in live_int_ranges.items():
         if isinstance(result[key], bool) or not isinstance(result[key], int) or not low <= result[key] <= high:
             raise ValueError(f"{key} must be an integer from {low} to {high}.")
+    if type(result["live_max_height"]) is not int or result["live_max_height"] not in (720, 1080):
+        raise ValueError("Live capture resolution must be 720p or 1080p.")
     if (isinstance(result["live_threshold"], bool)
             or not isinstance(result["live_threshold"], (int, float))
             or not math.isfinite(result["live_threshold"])

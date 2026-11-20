@@ -1,3 +1,5 @@
+import threading
+
 import pytest
 
 import live
@@ -6,6 +8,7 @@ import live
 def _bare_session(tmp_path):
     from live_capture import LiveSource
     session = live.LiveSession.__new__(live.LiveSession)
+    session._state_lock = threading.Lock()
     session.id = "abcdef123456"
     session.dir = tmp_path
     session.options = {"live_threshold": 8.0, "live_cooldown": 60,

@@ -206,6 +206,7 @@ def _fake_live_session(tmp_path, source, options):
     import projects
     from live_capture import LiveSource
     session = live.LiveSession.__new__(live.LiveSession)
+    session._state_lock = threading.Lock()
     session.id = "abcdef123456"
     session.dir = tmp_path
     session.source = LiveSource(source, "hls", "generic", "passthrough", [])

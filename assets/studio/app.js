@@ -1013,7 +1013,8 @@ $("#live-form").addEventListener(
     $("#live-status").textContent = "Resolving live stream…";
     $("#live-start-error").hidden = true;
     try {
-      const result = await api("/api/live", { source, options: { aspect: "9:16" }, brief });
+      const options = { aspect: $("#live-aspect").value, live_max_height: Number($("#live-max-height").value) };
+      const result = await api("/api/live", { source, options, brief });
       state.liveId = result.id;
       await refreshLive();
     } catch (error) {
@@ -1048,7 +1049,7 @@ async function refreshLive() {
     : null;
   $("#live-stop").hidden = !["starting", "running"].includes(detail?.status);
   if (detail) {
-    $("#live-error").textContent = detail.errors?.at(-1) || "";
+    $("#live-error").textContent = detail.errors?.at(-1) || detail.health?.warnings?.at(-1) || "";
     $("#live-error").hidden = !$("#live-error").textContent;
   }
   $("#live-status").textContent = detail

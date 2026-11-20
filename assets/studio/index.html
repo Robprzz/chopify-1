@@ -147,6 +147,14 @@
           </div>
           <label for="live-source">Stream URL</label>
           <input id="live-source" required placeholder="Active YouTube, Twitch, Kick or direct HLS/RTMP URL" />
+          <div class="form-grid">
+            <label>Maximum source resolution
+              <select id="live-max-height"><option value="720">720p</option><option value="1080">1080p</option></select>
+            </label>
+            <label>Export format
+              <select id="live-aspect"><option>16:9</option><option>9:16</option><option>1:1</option></select>
+            </label>
+          </div>
           <label for="live-brief">Campaign brief (optional)</label>
           <textarea id="live-brief" rows="4"
             placeholder="Paste requirements; chopify will only save clips that match."></textarea>

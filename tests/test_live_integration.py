@@ -1,4 +1,5 @@
 """Offline integration test: a local HLS fixture drives the live pipeline."""
+import json
 import shutil
 import subprocess
 import threading
@@ -17,6 +18,34 @@ pytestmark = pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg not i
 class QuietHandler(SimpleHTTPRequestHandler):
     def log_message(self, format, *args):
         pass
+
+
+def probe_streams(path):
+    result = subprocess.check_output([
+        "ffprobe", "-v", "error", "-show_entries",
+        "stream=codec_type,start_time,duration,avg_frame_rate", "-of", "json", str(path),
+    ])
+    return {stream["codec_type"]: stream for stream in json.loads(result)["streams"]}
+
+
+def marker_skew(path):
+    from fractions import Fraction
+
+    import numpy as np
+
+    tracks = probe_streams(path)
+    video = subprocess.check_output([
+        "ffmpeg", "-v", "error", "-i", str(path), "-an", "-vf", "scale=8:8,format=gray",
+        "-threads", "1", "-f", "rawvideo", "-",
+    ])
+    audio = subprocess.check_output([
+        "ffmpeg", "-v", "error", "-i", str(path), "-vn", "-ac", "1", "-ar", "48000", "-f", "s16le", "-",
+    ])
+    flash = np.flatnonzero(np.frombuffer(video, dtype=np.uint8).reshape(-1, 64).mean(axis=1) > 110)[0]
+    tone = np.flatnonzero(np.abs(np.frombuffer(audio, dtype="<i2")) > 10000)[0]
+    visual = float(tracks["video"]["start_time"]) + flash / float(Fraction(tracks["video"]["avg_frame_rate"]))
+    audible = float(tracks["audio"]["start_time"]) + tone / 48000
+    return abs(visual - audible)
 
 
 def test_live_pipeline_against_local_hls(tmp_path):
@@ -75,11 +104,46 @@ def test_live_start_explains_missing_resolver(server, chromium_page, monkeypatch
     expect(page.locator("#live-status")).to_have_text("Not running.")
 
 
-def test_live_clip_reaches_publications_in_chromium(server, chromium_page, monkeypatch, tmp_path):
+def test_live_capture_downscales_when_source_exceeds_selected_limit(tmp_path):
+    import live
+    from fixtures.make_hls_fixture import make_fixture
+    from live_capture import resolve_live_source
+
+    manifest = make_fixture(tmp_path / "stream", seconds=6, size="480x736")
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), partial(QuietHandler, directory=str(manifest.parent)))
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    options = {"live_max_height": 720, "live_no_chat": True, "live_no_transcript": True, "live_threshold": 10}
+    source = resolve_live_source(f"http://127.0.0.1:{httpd.server_port}/index.m3u8", options)
+    session = live.LiveSession(source, options, tmp_path)
+    worker = threading.Thread(target=session.start, daemon=True)
+    worker.start()
+    try:
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            buffer = session.buffer
+            if buffer and buffer.scale_capture and buffer.ready_segments():
+                assert buffer.probe()["height"] == 720
+                assert buffer.probe()["has_audio"]
+                break
+            time.sleep(0.2)
+        else:
+            pytest.fail(f"No downscaled capture: {session.health['warnings']}, {session.errors}")
+    finally:
+        session.stop()
+        worker.join(timeout=8)
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=5)
+
+
+@pytest.mark.parametrize("split", [False, True], ids=["combined", "independent"])
+def test_live_clip_reaches_publications_in_chromium(server, chromium_page, monkeypatch, tmp_path, split):
     import download_and_transcribe
+    import live_capture
     import live_signals
     import projects
-    from fixtures.make_hls_fixture import make_fixture
+    from fixtures.make_hls_fixture import make_fixture, make_split_fixture
 
     # Real capture, render, media and preview. Replace only the trigger and speech inference.
     monkeypatch.setattr(live_signals.HypeDetector, "evaluate",
@@ -88,8 +152,44 @@ def test_live_clip_reaches_publications_in_chromium(server, chromium_page, monke
     monkeypatch.setattr(download_and_transcribe, "_transcribe_media", lambda model, media, offset: (
         [], [{"word": "victoria", "start": offset + 0.2, "end": offset + 0.8}], None, None,
     ))
-    manifest = make_fixture(tmp_path / "stream", seconds=14)
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), partial(QuietHandler, directory=str(manifest.parent)))
+    stream = tmp_path / "stream"
+    tracks_seen = set()
+
+    class FixtureHandler(QuietHandler):
+        def do_GET(self):
+            if split:
+                track = self.path.split("/")[1]
+                if self.headers.get("X-Live-Track") != track:
+                    return self.send_error(403)
+                tracks_seen.add(track)
+            return super().do_GET()
+
+    if split:
+        make_split_fixture(stream)
+        first_video = probe_streams(stream / "video" / "index0.ts")["video"]
+        first_audio = probe_streams(stream / "audio" / "index0.ts")["audio"]
+        assert float(first_video["start_time"]) - float(first_audio["start_time"]) == pytest.approx(0.16, abs=0.005)
+    else:
+        make_fixture(stream, seconds=14)
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), partial(FixtureHandler, directory=str(stream)))
+    media_base = f"http://127.0.0.1:{httpd.server_port}"
+    url = media_base + "/index.m3u8"
+    if split:
+        real_runner = live_capture.ingest._run
+        url = "https://www.youtube.com/live/2dt0yxm4RUE"
+
+        def extract_or_run(cmd, **kwargs):
+            if cmd[1:3] != ["-m", "yt_dlp"]:
+                return real_runner(cmd, **kwargs)
+            assert "[height<=1080]" in cmd[cmd.index("-f") + 1]
+            return subprocess.CompletedProcess(cmd, 0, json.dumps({"is_live": True, "requested_formats": [
+                {"url": media_base + "/video/index.m3u8", "protocol": "m3u8_native", "vcodec": "avc1",
+                 "acodec": "none", "http_headers": {"X-Live-Track": "video"}},
+                {"url": media_base + "/audio/index.m3u8", "protocol": "m3u8_native", "vcodec": "none",
+                 "acodec": "aac", "http_headers": {"X-Live-Track": "audio"}},
+            ]}))
+
+        monkeypatch.setattr(live_capture.ingest, "_run", extract_or_run)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     app, base = server
@@ -99,7 +199,11 @@ def test_live_clip_reaches_publications_in_chromium(server, chromium_page, monke
     try:
         page.goto(base)
         page.get_by_role("button", name="Live clipping").click()
-        page.locator("#live-source").fill(f"http://127.0.0.1:{httpd.server_port}/index.m3u8")
+        page.locator("#live-source").fill(url)
+        page.locator("#live-aspect").select_option("1:1" if split else "9:16")
+        expect(page.locator("#live-max-height")).to_have_value("720")
+        if split:
+            page.locator("#live-max-height").select_option("1080")
         with page.expect_response(lambda response: response.request.method == "POST"
                                   and response.url == base + "/api/live") as reply:
             page.get_by_role("button", name="Start live session").click()
@@ -122,10 +226,20 @@ def test_live_clip_reaches_publications_in_chromium(server, chromium_page, monke
         select = page.locator("#tiktok-clip")
         expect(select.locator("option")).to_have_count(2)
         select.select_option("0")
-        expect(page.locator("#tiktok-media-info")).to_contain_text("1080 × 1920", timeout=10000)
+        expect(page.locator("#tiktok-media-info")).to_contain_text(
+            "1080 × 1080" if split else "1080 × 1920", timeout=10000)
         expect(page.locator("#tiktok-preview")).to_have_attribute("src", mp4)
         saved = projects.read_json(app.app.root / "live" / session / "live_session.json")
         assert saved["triggers"][0]["files"]["mp4"].endswith(mp4.rsplit("/", 1)[-1])
+        if split:
+            assert tracks_seen == {"video", "audio"}
+            buffer = app.app.live_sessions[session].buffer
+            captured = buffer.ready_segments()
+            assert captured
+            assert all(set(probe_streams(segment)) == {"video", "audio"} for segment in captured)
+            clip = exports / mp4.rsplit("/", 1)[-1]
+            assert marker_skew(captured[0]) < 0.075
+            assert marker_skew(clip) < 0.075
         assert not errors
     finally:
         httpd.shutdown()

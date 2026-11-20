@@ -50,6 +50,7 @@ class LiveSession:
         self.last_trigger = None
         self._stop = threading.Event()
         self._capture_lock = threading.Lock()
+        self._state_lock = threading.Lock()
         self._on_log = None
         self.rules = None
         if brief_text:
@@ -64,9 +65,12 @@ class LiveSession:
             "brief_provider": (self.rules or {}).get("provider", "none"),
             "brief_source": (self.rules or {}).get("source", "none"),
         }
+        if self.source.warning:
+            self.health["warnings"].append(self.source.warning)
         self._last_refresh = time.time()
         self._restart_delays = (1, 2, 4)
         self._analyzers_started = False
+        self._scale_capture = False
         self.buffer = None
         self.analyzers = []
         self.writer = live_clips.LiveClipWriter(self.dir)
@@ -79,24 +83,29 @@ class LiveSession:
             self._on_log(message)
 
     def _save(self):
-        projects.atomic_json(self.dir / "live_session.json", {
-            "id": self.id,
-            "source": {"kind": self.source.kind,
-                       "platform": self.source.platform,
-                       "resolved_by": self.source.resolved_by},
-            "status": self.status,
-            "started_at": self.started_at,
-            "stopped_at": self.stopped_at,
-            "stream_time": round(self.stream_time, 2),
-            "recent_scores": self.recent_scores,
-            "triggers": [r.__dict__ for r in self.records],
-            "errors": self.errors,
-            "health": getattr(self, "health", {}),
-            "detection": getattr(self, "detection", None),
-            "format": getattr(self, "format", None),
-        })
+        with self._state_lock:
+            projects.atomic_json(self.dir / "live_session.json", {
+                "id": self.id,
+                "source": {"kind": self.source.kind,
+                           "platform": self.source.platform,
+                           "resolved_by": self.source.resolved_by},
+                "status": self.status,
+                "started_at": self.started_at,
+                "stopped_at": self.stopped_at,
+                "stream_time": round(self.stream_time, 2),
+                "recent_scores": self.recent_scores,
+                "triggers": [r.__dict__ for r in self.records],
+                "errors": self.errors,
+                "health": getattr(self, "health", {}),
+                "detection": getattr(self, "detection", None),
+                "format": getattr(self, "format", None),
+            })
 
     def _capture_alive(self):
+        if self.buffer is not None:
+            self.buffer.ready_segments()
+            if self.buffer.segment_problem:
+                return False
         segments = sorted((self.dir / "buffer").glob("segment*.ts"))
         alive = self.buffer is not None and self.buffer.alive
         self.health["ffmpeg_alive"] = alive
@@ -112,26 +121,32 @@ class LiveSession:
             if self._stop.is_set():
                 return
             self.buffer = live_capture.SegmentBuffer(
-                self.dir / "buffer", self.source.url, self.options, headers=self.source.headers)
+                self.dir / "buffer", self.source.url, self.options, headers=self.source.headers,
+                audio_url=self.source.audio_url, audio_headers=self.source.audio_headers,
+                scale_capture=self._scale_capture)
             self.buffer.start()
 
-    def _restart_capture(self):
+    def _restart_capture(self, *, refresh=True):
         delay = self._restart_delays[min(self.health["restarts"], 2)]
         self.health["restarts"] += 1
         self.health["state"] = "degraded"
+        problem = self.buffer.segment_problem or self.buffer.capture_problem
+        if problem and problem not in self.health["warnings"]:
+            self.health["warnings"].append(problem)
         self._log(f"Capture stalled; restarting in {delay}s ({next_action(self.health)}).")
         with self._capture_lock:
             if self.buffer is not None:
                 self.buffer.stop()
         if self._stop.wait(delay):
             return
-        if self.source.page_url and self.health["restarts"] >= 1:
+        if refresh and self.source.page_url:
             try:
                 self.source = self.source.refresh(self.options)
                 self.health["refreshes"] += 1
-                self._log("Stream token refreshed.")
-            except Exception as exc:
-                self.health["warnings"].append(f"Refresh failed: {exc}")
+                self._last_refresh = time.time()
+                self._log("Stream inputs refreshed.")
+            except ValueError as exc:
+                self.health["warnings"].append(str(exc))
         try:
             for path in self.buffer.segments():
                 path.unlink(missing_ok=True)
@@ -264,19 +279,20 @@ class LiveSession:
                     refreshed = self.source.refresh(self.options)
                     self.source = refreshed
                     self.health["refreshes"] += 1
-                    self._log("Stream token refreshed on schedule.")
-                except Exception as exc:
-                    self.health["warnings"].append(f"Refresh failed: {exc}")
+                    self._log("Stream inputs refreshed for the next reconnect.")
+                except ValueError as exc:
+                    self.health["warnings"].append(str(exc))
             if not capture_alive:
                 if pending and self.buffer.closed_ranges():
                     continue
-                if self.buffer.process is not None and self.buffer.process.poll() == 0 and self.buffer.ready_segments():
+                if (not self.buffer.segment_problem and self.buffer.process is not None
+                        and self.buffer.process.poll() == 0 and self.buffer.ready_segments()):
                     if self.stream_time < 6 and not self.records:
                         continue
                     self.stop()
                     break
                 if self.health["restarts"] >= 3:
-                    self._fail("FFmpeg could not capture playable live video. Check that the stream is still active and see buffer/ffmpeg.log.")
+                    self._fail(self.buffer.segment_problem or self.buffer.capture_problem or live_capture.CAPTURE_ERROR)
                     break
                 pending = None
                 render_ready_at = None
@@ -284,7 +300,12 @@ class LiveSession:
                 self._analyzers_started = False
                 self.last_trigger = None
                 self.bus = live_signals.SignalBus(retention=self.options["live_buffer"])
-                self._restart_capture()
+                scaling = self.buffer.segment_problem == live_capture.HEIGHT_ERROR and not self._scale_capture
+                if scaling:
+                    self._scale_capture = True
+                self._restart_capture(refresh=not scaling)
+                if scaling:
+                    self.health["warnings"].append(live_capture.SCALING_WARNING)
             else:
                 self.health["state"] = "ok"
         self._save()

@@ -1,0 +1,44 @@
+# Publicaciones de TikTok desde Studio
+
+Studio prepara un clip y lo envía al buzón de la cuenta autorizada mediante **Content Posting API → Upload**. TikTok notifica al creador para que revise el borrador, pegue la descripción, elija la privacidad y complete la publicación en su aplicación. Cada envío exige consentimiento en Studio. Abrir la sección, conectar la cuenta o reproducir un vídeo solo prepara el flujo.
+
+TikTok excluye de **Direct Post** las utilidades destinadas a las cuentas que administra un usuario o su equipo. Los clientes elegibles requieren auditoría para levantar las restricciones de publicación pública. Esta integración utiliza `video.upload` y deja la decisión final en TikTok. Un sandbox permite probar con cuentas autorizadas y excluye contenido público a través de la API. [Reglas de uso](https://developers.tiktok.com/docs/en/content-sharing-guidelines) · [Subida al buzón](https://developers.tiktok.com/docs/en/content-posting-api-reference-upload-video) · [Sandbox](https://developers.tiktok.com/docs/en/add-a-sandbox)
+
+## Auditoría de las exportaciones
+
+- **MP4 y vista previa.** `render_clips.py` exporta H.264 y AAC con `faststart`. Publicaciones selecciona los MP4 finales de `clips/` de los proyectos de Studio y usa las mismas rutas de reproducción local con rangos HTTP. Los archivos de `previews/` son borradores de edición de Chopify.
+- **Formato y subtítulos.** El ajuste `9:16` produce 1080 × 1920. El render ya admite los recortes, layouts y estilos de subtítulos de Studio. Los subtítulos quedan incrustados en el vídeo y el SRT se conserva como archivo independiente. TikTok recibe el MP4. Studio comprueba el medio con ffprobe y muestra las dimensiones y la duración antes del envío.
+- **Título y hashtags.** La ficha `.meta.json` existente proporciona un título derivado del gancho y hashtags genéricos. Publicaciones usa esa información como sugerencia editable, omitiendo `#shorts` y `#reels`. El endpoint de buzón recibe el archivo pero carece de un campo de descripción. Studio conserva el texto local y permite copiarlo desde la revisión o el historial.
+
+## Registrar la aplicación y conectar la cuenta
+
+1. Entra en **TikTok for Developers → Manage apps → Connect an app**. Completa los datos del producto, registra la plataforma **Desktop** y proporciona los datos y URL de tu aplicación que solicite el portal. Emplea URL propias para los campos que requieran verificación. [Registro de aplicaciones](https://developers.tiktok.com/docs/en/getting-started-create-an-app)
+2. Crea un **Sandbox** en el selector junto al nombre de la aplicación. En ese entorno, agrega **Login Kit** y **Content Posting API**. Habilita **Upload** (`video.upload`) y el acceso a perfil básico (`user.info.basic`). Deja Direct Post desactivado para este flujo. Aplica los cambios. [Configuración de Sandbox](https://developers.tiktok.com/docs/en/add-a-sandbox) · [Guía de Upload](https://developers.tiktok.com/docs/en/content-posting-api-get-started-upload-content)
+3. En **Login Kit → Desktop**, registra exactamente `http://127.0.0.1:8765/api/tiktok/callback/`. Conserva la barra final. Si eliges otro puerto con `--port`, registra la URI correspondiente. En **Sandbox settings → Target users → Add account**, inicia sesión en TikTok con la cuenta propia de prueba y confirma que aparece en la lista del sandbox. [OAuth Desktop](https://developers.tiktok.com/docs/en/login-kit-desktop)
+4. Copia el **Client key** y el **Client secret** del entorno sandbox. En PowerShell, desde el repositorio instalado, configura las credenciales en esa sesión y arranca Studio.
+
+   ```powershell
+   $env:CHOPIFY_TIKTOK_CLIENT_KEY = Read-Host "Client key del sandbox"
+   $secret = Read-Host "Client secret del sandbox" -AsSecureString
+   $env:CHOPIFY_TIKTOK_CLIENT_SECRET = [System.Net.NetworkCredential]::new("", $secret).Password
+   Remove-Variable secret
+   .\.venv\Scripts\python.exe dashboard.py
+   ```
+
+   Al cerrar Studio, cierra esa sesión de PowerShell o limpia las variables con `Remove-Item Env:CHOPIFY_TIKTOK_CLIENT_KEY, Env:CHOPIFY_TIKTOK_CLIENT_SECRET`. OAuth, la renovación y la revocación se ejecutan en el proceso local de Studio. Los tokens se mantienen en memoria y tendrás que volver a conectar tras reiniciar. Guarda las credenciales fuera del repositorio. [Gestión de tokens OAuth](https://developers.tiktok.com/docs/en/oauth-user-access-token-management)
+5. Abre **Publicaciones → Conectar TikTok**, autoriza en la página oficial y comprueba el nombre de cuenta tras el retorno a Studio. Usa **Desconectar** para revocar la conexión. Si la revocación falla por un problema de red, vuelve a intentarlo o revoca la app desde TikTok.
+
+### Opciones de privacidad
+
+El flujo de buzón permite elegir la privacidad en TikTok. El endpoint oficial **Query Creator Info** exige el permiso `video.publish`, distinto del permiso de subida. Si TikTok ha concedido ese permiso a una integración elegible, inicia Studio con `CHOPIFY_TIKTOK_CREATOR_INFO=1` y vuelve a conectar para consultar las opciones. Studio usa esa consulta solo para mostrarlas. El flujo de buzón funciona con `video.upload`. [Query Creator Info](https://developers.tiktok.com/docs/en/content-posting-api-reference-query-creator-info)
+
+## Primera prueba privada
+
+1. Elige un clip propio o autorizado. En Studio, exporta un MP4 final, preferiblemente **9:16**, sin marcas promocionales añadidas. En **Publicaciones**, selecciona el clip, reproduce la vista previa, verifica la cuenta y edita la descripción.
+2. Cuando apruebes **ese clip** para **esa cuenta**, marca la confirmación y pulsa **Enviar al buzón de TikTok**. El envío utiliza `FILE_UPLOAD` con fragmentos secuenciales y el historial registra el `publish_id`. [Transferencia de medios](https://developers.tiktok.com/docs/en/content-posting-api-media-transfer-guide)
+3. Pulsa **Consultar estado**. Cuando TikTok informe `SEND_TO_USER_INBOX`, abre la notificación en TikTok, pega la descripción copiada y selecciona **Solo tú** si está disponible. Completa manualmente la publicación privada en TikTok y consulta de nuevo el historial de Studio. `PUBLISH_COMPLETE` indica que TikTok confirmó la publicación. [Estados oficiales](https://developers.tiktok.com/docs/en/content-posting-api-reference-get-video-status)
+4. Si un envío queda en estado incierto, consulta el historial o el buzón antes de crear otro. Studio conserva los diagnósticos por cuenta en `.tiktok-publications/` dentro del directorio local de proyectos. El historial contiene el texto, el archivo referenciado y el identificador de seguimiento, con los tokens y las URL firmadas fuera de los registros.
+
+## Validación
+
+La suite completa pasó con 461 pruebas. Las pruebas de TikTok ejercitan las rutas HTTP de Studio con el transporte oficial simulado. Cubren PKCE, retorno OAuth, renovación, revocación, permisos de privacidad, aprobación explícita, detección de cambios en el archivo, subida por rangos, estados e historial. Se genera localmente un MP4 vertical para verificar ffprobe. Una prueba de interfaz en Chromium recorrió conexión, vista previa, consentimiento, subida simulada, consulta y desconexión. El primer envío real al sandbox y su publicación privada en TikTok quedan pendientes de autorización y verificación.

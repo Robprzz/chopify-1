@@ -375,3 +375,59 @@ select { appearance: none; background-image: linear-gradient(45deg, transparent 
 }
 .detection-banner[hidden] { display: none; }
 .detection-banner select, .detection-banner button { min-height: 44px; }
+
+.publication-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .75rem;
+}
+#publications-view > .panel {
+  padding: clamp(1rem, 3vw, 1.5rem);
+  margin-bottom: 1rem;
+}
+#publications-view h1 {
+  margin: 0;
+  font-size: clamp(1.5rem, 4vw, 2rem);
+}
+#tiktok-clip, #tiktok-description {
+  margin-block: .45rem .75rem;
+}
+.publication-review {
+  display: grid;
+  grid-template-columns: minmax(160px, 300px) minmax(0, 1fr);
+  gap: 1.2rem;
+  margin-top: 1rem;
+}
+.publication-review[hidden] {
+  display: none;
+}
+.publication-review video {
+  display: block;
+  width: 100%;
+  max-height: 55vh;
+  background: #111;
+  object-fit: contain;
+}
+.publication-consent {
+  display: flex;
+  align-items: baseline;
+  gap: .6rem;
+}
+.publication-consent input {
+  width: auto;
+}
+.publication-entry {
+  border-top: 1px solid #3a4547;
+  padding: .85rem 0;
+}
+.publication-entry p {
+  margin-block: .35rem;
+}
+.publication-entry button {
+  margin-left: .75rem;
+}
+@media (max-width: 680px) {
+  .publication-review {
+    grid-template-columns: 1fr;
+  }
+}

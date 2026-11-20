@@ -2,7 +2,7 @@
 
 # Chopify
 
-**Turn long videos into scored, captioned shorts — locally, free, with no uploads or watermarks.**
+**Turn long videos into scored, captioned shorts with local processing.**
 
 <p align="center">
   <img src="assets/demo.gif" alt="A Chopify clip with word-by-word burned-in captions" width="720">
@@ -29,7 +29,7 @@
   <img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python 3.11+">
 </p>
 
-Chopify is an open-source Python app with a local browser dashboard and a CLI. Import a recording or a video URL, find moments, correct captions, review drafts, and export MP4 clips with SRT subtitles. No subscription, API key, cloud upload, or watermark. The [live site](https://mehbul.github.io/chopify/) is a product tour; the app itself runs on your computer.
+Chopify is an open-source Python app with a local browser dashboard and a CLI. Import a recording or a video URL, find moments, correct captions, review drafts, and export MP4 clips with SRT subtitles. Local clipping is free and works without API credentials. Studio also offers an optional TikTok inbox workflow with your own TikTok developer credentials. [TikTok setup and testing](docs/TIKTOK.md) · [Product tour](https://mehbul.github.io/chopify/)
 
 [Workflow guide](docs/WORKFLOWS.md) · [CLI reference](docs/CLI.md) · [Agent/API reference](docs/AGENT-API.md) · [Live clipping](docs/LIVE.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [Changelog](CHANGELOG.md)
 

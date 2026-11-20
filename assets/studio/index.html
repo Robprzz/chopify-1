@@ -8,6 +8,7 @@
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/style.css" />
     <script src="/app.js" defer></script>
+    <script src="/publications.js" defer></script>
   </head>
   <body>
     <aside class="rail">
@@ -17,10 +18,11 @@
         ></a
       >
       <div class="local">
-        <span class="dot"></span> Files stay on this computer
+        <span class="dot"></span> Local workspace
       </div>
       <button id="new-project" class="primary wide">＋ New project</button>
       <button id="show-live" class="wide">● Live clipping</button>
+      <button id="show-publications" class="wide" lang="es">Publicaciones</button>
       <div class="rail-heading">
         YOUR PROJECTS <span id="project-count">0</span>
       </div>
@@ -29,7 +31,7 @@
       </nav>
       <div class="rail-footer">
         Local files · ffmpeg · Whisper<br /><span
-          >No upload, no subscription</span
+          >No subscription</span
         >
       </div>
     </aside>
@@ -155,6 +157,40 @@
         <div id="live-health" class="muted"></div>
         <div id="live-score"></div>
         <div id="live-clips"></div>
+      </section>
+      <section id="publications-view" class="view" lang="es" hidden>
+        <div class="panel">
+          <div class="panel-title"><h1>Publicaciones</h1><span>TikTok</span></div>
+          <p id="tiktok-account" role="status">Sin cuenta conectada</p>
+          <div class="publication-actions">
+            <button id="tiktok-connect" type="button" disabled>Conectar TikTok</button>
+            <button id="tiktok-disconnect" type="button" hidden>Desconectar</button>
+            <button id="tiktok-privacy-check" type="button" hidden>Consultar privacidad de la cuenta</button>
+          </div>
+          <p id="tiktok-privacy" class="muted" aria-live="polite">Elige la privacidad al finalizar en TikTok.</p>
+        </div>
+        <form id="tiktok-form" class="panel" autocomplete="off">
+          <div class="panel-title"><h2>Revisar un clip</h2></div>
+          <label for="tiktok-clip">Exportación MP4</label>
+          <select id="tiktok-clip" required><option value="">Elige un clip</option></select>
+          <div id="tiktok-review" class="publication-review" hidden>
+            <video id="tiktok-preview" controls preload="metadata" playsinline aria-label="Vista previa del clip"></video>
+            <div>
+              <p id="tiktok-media-info" class="muted"></p>
+              <label for="tiktok-description">Descripción para TikTok</label>
+              <textarea id="tiktok-description" maxlength="2200" rows="4"></textarea>
+              <button id="tiktok-copy" type="button">Copiar descripción</button>
+              <p class="muted">Pega la descripción al terminar la edición en TikTok.</p>
+              <label class="publication-consent"><input id="tiktok-consent" type="checkbox" required /> Tengo permiso para compartir este clip y apruebo enviarlo al buzón de la cuenta conectada.</label>
+              <button id="tiktok-send" type="submit" class="primary" disabled>Enviar al buzón de TikTok</button>
+              <p class="muted">Abre la notificación en TikTok para revisar, elegir la privacidad y publicar.</p>
+            </div>
+          </div>
+        </form>
+        <section class="panel">
+          <div class="panel-title"><h2>Historial</h2></div>
+          <div id="tiktok-history" aria-live="polite"></div>
+        </section>
       </section>
       <section id="project-view" class="view" hidden>
         <div class="project-heading">

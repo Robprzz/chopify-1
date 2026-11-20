@@ -10,12 +10,13 @@ import secrets
 import subprocess
 import sys
 import threading
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 import webbrowser
 
 import branding
 import projects
 import render_clips
+import tiktok
 import video_types
 
 HERE = Path(__file__).resolve().parent
@@ -86,6 +87,7 @@ class Studio:
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="chopify")
         self.lock = threading.RLock()
         self.futures = {}
+        self.tiktok = tiktok.TikTokStudio(self.root, self.busy)
         self.processes = set()
         self.live_sessions = {}
         self.live_lock = threading.Lock()
@@ -231,7 +233,16 @@ class Handler(BaseHTTPRequestHandler):
         if not self.valid_host():
             return self.send_json({"error": "Use the 127.0.0.1 Studio address."}, 403)
         try:
-            parts = unquote(urlsplit(self.path).path).strip("/").split("/")
+            location = urlsplit(self.path)
+            if location.path == tiktok.CALLBACK:
+                values = parse_qs(location.query, max_num_fields=16)
+                self.app.tiktok.callback(values, self.server.server_port)
+                self.send_response(303)
+                self.send_header("Location", "/#publicaciones")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            parts = unquote(location.path).strip("/").split("/")
             if parts == ["api", "config"]:
                 brands = sorted(p.stem for p in (self.app.root / "brands").glob("*.json"))
                 caption_brands = {}
@@ -295,7 +306,8 @@ class Handler(BaseHTTPRequestHandler):
                 if file.parent != clips_dir or file.suffix not in {".mp4", ".srt", ".png", ".json"}:
                     raise ValueError("Invalid media path.")
                 return self.send_file(file)
-            static = {"": "index.html", "app.js": "app.js", "style.css": "style.css"}
+            static = {"": "index.html", "app.js": "app.js", "style.css": "style.css",
+                      "publications.js": "publications.js"}
             filename = "/".join(parts)
             if filename in static:
                 return self.send_file(STATIC / static[filename])
@@ -321,6 +333,8 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(body, dict):
                 raise ValueError("Expected a JSON object.")
             parts = unquote(urlsplit(self.path).path).strip("/").split("/")
+            if len(parts) == 3 and parts[:2] == ["api", "tiktok"]:
+                return self.tiktok_action(parts[2], body)
             with self.app.lock:
                 if parts == ["api", "live"]:
                     source = body.get("source")
@@ -398,6 +412,25 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"error": "Project or transcript not found. Prepare the project first."}, 404)
         except (ValueError, KeyError, TypeError, OSError) as exc:
             self.send_json({"error": str(exc)}, 400)
+
+    def tiktok_action(self, action, body):
+        service = self.app.tiktok
+        if action == "state":
+            return self.send_json({**service.state(), "clips": service.exports()})
+        if action == "connect":
+            return self.send_json(service.connect(self.server.server_port))
+        if action == "disconnect":
+            return self.send_json(service.disconnect())
+        if action == "privacy":
+            return self.send_json(service.privacy())
+        if action == "inspect":
+            return self.send_json(service.inspect(body["project"], body["filename"]))
+        if action == "upload":
+            result = service.submit(body["review_id"], body["description"], body.get("approved"))
+            return self.send_json(result)
+        if action == "status":
+            return self.send_json(service.refresh(body["id"]))
+        return self.send_json({"error": "Unknown TikTok action."}, 404)
 
     def send_file(self, path):
         if not path.is_file():

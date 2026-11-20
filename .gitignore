@@ -15,6 +15,7 @@ __pycache__/
 # chopify outputs
 clips/
 projects/
+.tiktok-publications/
 _site/
 .pytest_cache/
 

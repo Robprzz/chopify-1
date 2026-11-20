@@ -387,6 +387,7 @@ async function selectProject(id) {
   state.pendingPreview = null;
   $("#new-view").hidden = true;
   $("#live-view").hidden = true;
+  $("#publications-view").hidden = true;
   $("#project-view").hidden = false;
   const detail = await api(`/api/projects/${id}`);
   if (state.id !== id) return;
@@ -752,6 +753,7 @@ $("#new-project").addEventListener("click", () => {
   state.id = null;
   $("#new-view").hidden = false;
   $("#live-view").hidden = true;
+  $("#publications-view").hidden = true;
   $("#project-view").hidden = true;
   $("#sources").focus();
   refreshProjects().catch((e) => notice(e.message, true));
@@ -992,6 +994,7 @@ function showLive() {
   state.id = null;
   $("#new-view").hidden = true;
   $("#project-view").hidden = true;
+  $("#publications-view").hidden = true;
   $("#live-view").hidden = false;
   refreshLive().catch((e) => notice(e.message, true));
 }
@@ -1216,6 +1219,7 @@ setInterval(async () => {
 safe(async () => {
   await config();
   await refreshProjects();
+  window.dispatchEvent(new Event("studio-ready"));
 })();
 
 /* Signal Desk: one authored motion — a hairline pulse for the current job. */

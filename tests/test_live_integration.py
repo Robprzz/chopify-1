@@ -259,6 +259,13 @@ def test_live_clip_reaches_publications_in_chromium(server, chromium_page, monke
             assert set(probe_streams(clip)) == {"video", "audio"}
             assert marker_skew(captured[0]) < 0.075
             assert marker_skew(clip) < 0.075
+            page.wait_for_function(
+                """async clip => {
+                    const response = await fetch('/api/editorial/status?clip=' + encodeURIComponent(clip));
+                    const data = await response.json();
+                    return data.jobs.some(job => job.state === 'done' && job.provider === 'rules');
+                }""", arg=f"live/{session}/{clip.name}", timeout=10000,
+            )
             page.request.post(base + f"/api/live/{session}/stop",
                               headers={"X-Chopify-Token": app.app.token}, data={})
             assert not buffer.alive

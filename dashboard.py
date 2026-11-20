@@ -1,12 +1,14 @@
 """Chopify Studio: loopback browser UI with a serial, resumable project queue."""
 import argparse
 from concurrent.futures import ThreadPoolExecutor
+import errno
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import mimetypes
 from pathlib import Path
 import re
 import secrets
+import socket
 import subprocess
 import sys
 import threading
@@ -195,8 +197,13 @@ class Studio:
     def live_list(self):
         with self.live_lock:
             sessions = list(self.live_sessions.values())
-        return [projects.read_json(s.dir / "live_session.json")
-                for s in sessions if (s.dir / "live_session.json").exists()]
+        result = []
+        for session in sessions:
+            try:
+                result.append(projects.read_json(session.dir / "live_session.json"))
+            except FileNotFoundError:
+                continue
+        return result
 
     def close(self):
         with self.lock:
@@ -227,8 +234,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def send_json(self, data, status=200):
         body = json.dumps(data, ensure_ascii=False, allow_nan=False).encode()
+        self.send_content(body, "application/json; charset=utf-8", status)
+
+    def send_content(self, body, content_type, status=200):
         self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -313,10 +323,9 @@ class Handler(BaseHTTPRequestHandler):
                 if file.parent != clips_dir or file.suffix not in {".mp4", ".srt", ".png", ".json"}:
                     raise ValueError("Invalid media path.")
                 return self.send_file(file)
-            asset = STATIC_FILES.get("/".join(parts))
+            asset = self.server.static_files.get("/".join(parts))
             if asset:
-                filename, content_type = asset
-                return self.send_file(STATIC / filename, content_type=content_type)
+                return self.send_content(*asset)
             self.send_json({"error": "Not found."}, 404)
         except (BrokenPipeError, ConnectionResetError):
             pass
@@ -438,7 +447,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(service.refresh(body["id"]))
         return self.send_json({"error": "Unknown TikTok action."}, 404)
 
-    def send_file(self, path, *, content_type=None):
+    def send_file(self, path):
         if not path.is_file():
             raise FileNotFoundError(path)
         size = path.stat().st_size
@@ -454,8 +463,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"error": "Range outside file."}, 416)
             status = 206
         self.send_response(status)
-        self.send_header("Content-Type", content_type or mimetypes.guess_type(path.name)[0]
-                         or "application/octet-stream")
+        self.send_header("Content-Type", mimetypes.guess_type(path.name)[0] or "application/octet-stream")
         self.send_header("Accept-Ranges", "bytes")
         self.send_header("Content-Length", str(max(0, end - start + 1)))
         if status == 206:
@@ -475,8 +483,34 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
 
+def load_static_files():
+    """Keep the interface paired with the running backend across checkout updates."""
+    assets = {}
+    for route, (filename, content_type) in STATIC_FILES.items():
+        path = STATIC / filename
+        try:
+            data = path.read_bytes()
+        except OSError:
+            data = b""
+        if not data:
+            raise RuntimeError(f"Cannot load Studio asset {path}. Update the complete checkout and restart Studio.")
+        assets[route] = (data, content_type)
+    return assets
+
+
+class StudioServer(ThreadingHTTPServer):
+    def server_bind(self):
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            # Winsock can otherwise let two servers listen on the same port.
+            self.allow_reuse_address = False
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
 def make_server(root="projects", port=8765):
-    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    static_files = load_static_files()
+    server = StudioServer(("127.0.0.1", port), Handler)
+    server.static_files = static_files
     server.app = Studio(root)
     return server
 
@@ -487,9 +521,16 @@ def main():
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--no-browser", action="store_true")
     args = parser.parse_args()
-    server = make_server(args.projects_dir, args.port)
+    try:
+        server = make_server(args.projects_dir, args.port)
+    except RuntimeError as exc:
+        parser.exit(1, f"{exc}\n")
+    except OSError as exc:
+        if exc.errno != errno.EADDRINUSE and getattr(exc, "winerror", None) not in {10013, 10048}:
+            raise
+        parser.exit(1, f"Cannot bind Studio to port {args.port}. Stop any previous Studio process and check whether the port is already in use.\n")
     url = f"http://127.0.0.1:{server.server_port}"
-    print(f"Chopify Studio: {url}\nProjects: {server.app.root}\nPress Ctrl+C to stop.", flush=True)
+    print(f"Chopify Studio: {url}\nCheckout: {HERE}\nProjects: {server.app.root}\nPress Ctrl+C to stop.", flush=True)
     if not args.no_browser:
         webbrowser.open(url)
     try:

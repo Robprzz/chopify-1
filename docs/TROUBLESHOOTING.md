@@ -20,6 +20,29 @@ Keep `python dashboard.py` running. Use its exact `http://127.0.0.1:PORT` addres
 `localhost` and network IPs are intentionally rejected. If the port is busy,
 use `--port 8766`. Reload after restarting because the session token changes.
 
+## Publicaciones does not open or Studio routes return 404
+
+If the console shows a 404 for `/publications.js` or `/api/live`, close the
+terminal running the old Studio process with Ctrl+C. In the checkout you plan
+to start, verify the repository and branch before updating it. The one-command
+installer defaults to the upstream repository, which can be a separate checkout.
+
+```powershell
+git remote get-url origin
+git branch --show-current
+Test-Path .\assets\studio\publications.js
+.\.venv\Scripts\python.exe dashboard.py
+```
+
+Use the checkout path printed by Studio to confirm you started the intended
+copy. From a second PowerShell window, verify both responses. They should both
+return HTTP 200, with `text/javascript` and `application/json` respectively.
+
+```powershell
+Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8765/publications.js
+Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8765/api/live
+```
+
 ## Local file is not found
 
 Use an absolute path to a supported video on this computer. Relative CLI paths

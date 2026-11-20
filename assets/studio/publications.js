@@ -140,7 +140,6 @@ async function showPublications() {
   await refreshPublications();
 }
 
-$("#show-publications").addEventListener("click", safe(showPublications));
 window.addEventListener("studio-ready", () => {
   if (location.hash === "#publicaciones") safe(showPublications)();
 });

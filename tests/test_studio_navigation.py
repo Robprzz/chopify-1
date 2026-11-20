@@ -8,8 +8,22 @@ import dashboard
 from test_dashboard import server  # noqa: F401
 
 
-def test_publications_opens_with_incorrect_system_mime_types(server, monkeypatch):
+@pytest.fixture
+def chromium_page():
     playwright = pytest.importorskip("playwright.sync_api")
+    with playwright.sync_playwright() as driver:
+        bundled = Path(driver.chromium.executable_path)
+        chromium = str(bundled) if bundled.is_file() else shutil.which("chromium")
+        if not chromium:
+            pytest.skip("Install Chromium with python -m playwright install chromium")
+        browser = driver.chromium.launch(executable_path=chromium)
+        try:
+            yield browser.new_page(), playwright.expect
+        finally:
+            browser.close()
+
+
+def test_publications_opens_with_incorrect_system_mime_types(server, monkeypatch, chromium_page):
     guess_type = dashboard.mimetypes.guess_type
 
     def system_mime(name):
@@ -22,32 +36,40 @@ def test_publications_opens_with_incorrect_system_mime_types(server, monkeypatch
     httpd, base = server
     monkeypatch.setattr(httpd.app.tiktok.api, "key", "")
     monkeypatch.setattr(httpd.app.tiktok.api, "secret", "")
-    with playwright.sync_playwright() as driver:
-        bundled = Path(driver.chromium.executable_path)
-        chromium = str(bundled) if bundled.is_file() else shutil.which("chromium")
-        if not chromium:
-            pytest.skip("Install Chromium with python -m playwright install chromium")
-        browser = driver.chromium.launch(executable_path=chromium)
-        try:
-            page = browser.new_page()
-            errors = []
-            page.on("pageerror", lambda error: errors.append(str(error)))
-            page.on("console", lambda message: errors.append(message.text)
-                    if message.type == "error" else None)
-            page.goto(base)
-            # Clear the startup race so the test exercises the authenticated state request.
-            page.wait_for_function("typeof state === 'undefined' || Boolean(state.token)")
-            page.get_by_role("button", name="Publicaciones").click()
-            try:
-                playwright.expect(page.locator("#publications-view")).to_be_visible(timeout=4000)
-            except AssertionError as exc:
-                raise AssertionError(f"{exc}\nChromium errors: {errors}") from exc
-            playwright.expect(page.get_by_role("heading", name="Publicaciones")).to_be_visible()
-            playwright.expect(page.locator("#tiktok-account")).to_contain_text("TikTok requiere")
-            playwright.expect(page.locator("#new-view")).to_be_hidden()
-            page.get_by_role("button", name="New project").click()
-            playwright.expect(page.locator("#new-view")).to_be_visible()
-            playwright.expect(page.locator("#publications-view")).to_be_hidden()
-            assert not errors, errors
-        finally:
-            browser.close()
+    page, expect = chromium_page
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.on("console", lambda message: errors.append(message.text)
+            if message.type == "error" else None)
+    with page.expect_response(base + "/publications.js") as script:
+        page.goto(base)
+    assert script.value.status == 200
+    assert script.value.headers["content-type"] == "text/javascript; charset=utf-8"
+    with page.expect_response(base + "/api/tiktok/state") as tiktok:
+        page.get_by_role("button", name="Publicaciones").click()
+    assert tiktok.value.status == 200
+    expect(page.get_by_role("heading", name="Publicaciones")).to_be_visible()
+    expect(page.locator("#tiktok-account")).to_contain_text("TikTok requiere")
+    expect(page.locator("#new-view")).to_be_hidden()
+
+    with page.expect_response(base + "/api/live") as live:
+        page.locator("#show-live").click()
+    assert live.value.status == 200
+    assert live.value.json() == {"sessions": []}
+    expect(page.locator("#live-view")).to_be_visible()
+    expect(page.locator("#publications-view")).to_be_hidden()
+    page.get_by_role("button", name="New project").click()
+    expect(page.locator("#new-view")).to_be_visible()
+    assert not errors, errors
+
+
+def test_publications_explains_missing_script(server, monkeypatch, chromium_page):
+    httpd, base = server
+    # Reproduce a running older backend that does not serve the new script.
+    monkeypatch.delitem(httpd.static_files, "publications.js")
+    page, expect = chromium_page
+    with page.expect_response(base + "/publications.js") as script:
+        page.goto(base)
+    assert script.value.status == 404
+    page.get_by_role("button", name="Publicaciones").click()
+    expect(page.locator("#notice")).to_contain_text("inicia dashboard.py desde la copia actualizada")

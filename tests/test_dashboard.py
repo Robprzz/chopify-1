@@ -1,6 +1,9 @@
 """Exercise actual HTTP routes, mutation protection and saved project editing."""
 import json
+import shutil
+import socket
 import threading
+from types import SimpleNamespace
 import urllib.error
 import urllib.request
 
@@ -67,6 +70,83 @@ def test_config_exposes_caption_presets_and_defaults(server):
     assert config["caption_aspects"]["9:16"]["font_size"] == 96
     assert "money" in config["caption_power_words"] or "secret" in config["caption_power_words"]
     assert any(rule["emoji"] == "💰" for rule in config["caption_emoji_rules"])
+
+
+def test_publications_and_live_routes_serve_expected_bodies(server):
+    import dashboard
+
+    httpd, base = server
+    with urllib.request.urlopen(base + "/publications.js") as response:
+        assert response.status == 200
+        assert response.headers.get_content_type() == "text/javascript"
+        assert response.headers["X-Content-Type-Options"] == "nosniff"
+        assert response.read() == (dashboard.STATIC / "publications.js").read_bytes()
+    with urllib.request.urlopen(base + "/api/live") as response:
+        assert response.status == 200
+        assert response.headers.get_content_type() == "application/json"
+        assert json.load(response) == {"sessions": []}
+    tiktok = request(base, "/api/tiktok/state", {}, httpd.app.token)
+    assert tiktok["history"] == tiktok["clips"] == []
+
+
+def test_live_list_skips_session_file_removed_during_read(server, tmp_path, monkeypatch):
+    import projects
+
+    httpd, base = server
+    state_file = tmp_path / "live_session.json"
+    state_file.write_text("{}", encoding="utf-8")
+    httpd.app.live_sessions["removed"] = SimpleNamespace(dir=tmp_path, stop=lambda: None)
+    read_json = projects.read_json
+
+    def remove_before_read(path):
+        if path == state_file:
+            path.unlink()
+        return read_json(path)
+
+    monkeypatch.setattr(projects, "read_json", remove_before_read)
+    assert request(base, "/api/live") == {"sessions": []}
+
+
+def test_studio_serves_startup_assets_until_restarted(tmp_path, monkeypatch, request):
+    import dashboard
+
+    assets = tmp_path / "studio"
+    shutil.copytree(dashboard.STATIC, assets)
+    monkeypatch.setattr(dashboard, "STATIC", assets)
+    _, base = request.getfixturevalue("server")
+    original_index = (assets / "index.html").read_bytes()
+    original_script = (assets / "publications.js").read_bytes()
+
+    # Files may be replaced or removed by a checkout update during a session.
+    (assets / "index.html").write_text("New checkout")
+    (assets / "publications.js").unlink()
+    with urllib.request.urlopen(base) as response:
+        assert response.read() == original_index
+    with urllib.request.urlopen(base + "/publications.js") as response:
+        assert response.status == 200
+        assert response.read() == original_script
+
+
+def test_studio_reports_missing_publications_script_before_listening(tmp_path, monkeypatch):
+    import dashboard
+
+    assets = tmp_path / "studio"
+    shutil.copytree(dashboard.STATIC, assets)
+    monkeypatch.setattr(dashboard, "STATIC", assets)
+    (assets / "publications.js").unlink()
+
+    with pytest.raises(RuntimeError, match=r"publications\.js.*complete checkout"):
+        dashboard.make_server(tmp_path / "projects", port=0)
+
+
+def test_studio_rejects_a_second_server_on_the_same_port(server, tmp_path):
+    import dashboard
+
+    httpd, _ = server
+    if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+        assert httpd.socket.getsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE) == 1
+    with pytest.raises(OSError):
+        dashboard.make_server(tmp_path / "other", port=httpd.server_port)
 
 
 def test_caption_style_saves_to_project_and_rejects_invalid(server):

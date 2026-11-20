@@ -1216,11 +1216,19 @@ setInterval(async () => {
     polling = false;
   }
 }, 2000);
+const studioConfig = config();
 safe(async () => {
-  await config();
+  await studioConfig;
   await refreshProjects();
   window.dispatchEvent(new Event("studio-ready"));
 })();
+$("#show-publications").addEventListener("click", safe(async () => {
+  if (typeof showPublications !== "function") {
+    throw new Error("Publicaciones no pudo cargar. Cierra el servidor anterior e inicia dashboard.py desde la copia actualizada.");
+  }
+  await studioConfig;
+  await showPublications();
+}));
 
 /* Signal Desk: one authored motion — a hairline pulse for the current job. */
 (() => {

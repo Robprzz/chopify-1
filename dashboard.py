@@ -21,6 +21,13 @@ import video_types
 
 HERE = Path(__file__).resolve().parent
 STATIC = HERE / "assets" / "studio"
+# Studio assets must not depend on the host's MIME mappings (including the Windows registry).
+STATIC_FILES = {
+    "": ("index.html", "text/html; charset=utf-8"),
+    "app.js": ("app.js", "text/javascript; charset=utf-8"),
+    "publications.js": ("publications.js", "text/javascript; charset=utf-8"),
+    "style.css": ("style.css", "text/css; charset=utf-8"),
+}
 
 
 def config_payload(root=None):
@@ -306,11 +313,10 @@ class Handler(BaseHTTPRequestHandler):
                 if file.parent != clips_dir or file.suffix not in {".mp4", ".srt", ".png", ".json"}:
                     raise ValueError("Invalid media path.")
                 return self.send_file(file)
-            static = {"": "index.html", "app.js": "app.js", "style.css": "style.css",
-                      "publications.js": "publications.js"}
-            filename = "/".join(parts)
-            if filename in static:
-                return self.send_file(STATIC / static[filename])
+            asset = STATIC_FILES.get("/".join(parts))
+            if asset:
+                filename, content_type = asset
+                return self.send_file(STATIC / filename, content_type=content_type)
             self.send_json({"error": "Not found."}, 404)
         except (BrokenPipeError, ConnectionResetError):
             pass
@@ -432,7 +438,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(service.refresh(body["id"]))
         return self.send_json({"error": "Unknown TikTok action."}, 404)
 
-    def send_file(self, path):
+    def send_file(self, path, *, content_type=None):
         if not path.is_file():
             raise FileNotFoundError(path)
         size = path.stat().st_size
@@ -448,7 +454,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"error": "Range outside file."}, 416)
             status = 206
         self.send_response(status)
-        self.send_header("Content-Type", mimetypes.guess_type(path.name)[0] or "application/octet-stream")
+        self.send_header("Content-Type", content_type or mimetypes.guess_type(path.name)[0]
+                         or "application/octet-stream")
         self.send_header("Accept-Ranges", "bytes")
         self.send_header("Content-Length", str(max(0, end - start + 1)))
         if status == 206:

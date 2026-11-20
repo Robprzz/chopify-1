@@ -2,14 +2,11 @@ name: Documentation site
 
 on:
   push:
-    branches: [main]
+    branches: [feature/anqora-media-studio-v2]
     paths: ['docs/**', 'tools/build_site.py', 'README.md', 'llms.txt', 'assets/demo.gif', 'assets/social-preview.png', '.github/workflows/pages.yml']
   workflow_dispatch:
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write
+permissions: {}
 
 concurrency:
   group: pages
@@ -17,21 +14,28 @@ concurrency:
 
 jobs:
   build:
+    if: github.ref == 'refs/heads/feature/anqora-media-studio-v2'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       - name: Build public documentation
         run: python tools/build_site.py --out _site
-      - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

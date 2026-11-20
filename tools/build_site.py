@@ -6,6 +6,8 @@ import shutil
 ROOT = Path(__file__).resolve().parents[1]
 FILES = {"SKILL.md": "skill.md",
          "docs/index.html": "index.html", "docs/site.css": "site.css",
+         "docs/privacy-policy.html": "privacy-policy.html",
+         "docs/terms-of-service.html": "terms-of-service.html",
          "docs/sitemap.xml": "sitemap.xml", "docs/robots.txt": "robots.txt",
          "docs/product.json": "product.json", "docs/LIVE.md": "live.md",
          "llms.txt": "llms.txt",

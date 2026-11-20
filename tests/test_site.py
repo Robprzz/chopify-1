@@ -14,9 +14,18 @@ class Page(HTMLParser):
         self.in_schema = False
         self.canonical = None
         self.assets = []
+        self.links = set()
+        self.language = None
+        self.effective_date = None
 
     def handle_starttag(self, tag, attributes):
         attrs = dict(attributes)
+        if tag == "html":
+            self.language = attrs.get("lang")
+        if tag == "time":
+            self.effective_date = attrs.get("datetime")
+        if tag == "a":
+            self.links.add(attrs.get("href"))
         if tag == "script" and attrs.get("type") == "application/ld+json":
             self.in_schema = True
         if tag == "link" and attrs.get("rel") == "canonical":
@@ -60,3 +69,20 @@ def test_build_refuses_to_publish_unrelated_output_files(tmp_path):
     (out / "private-transcript.json").write_text('{"secret":"private"}')
     with pytest.raises(ValueError, match="unrelated"):
         build(out)
+
+
+def test_legal_pages_are_linked_and_included_in_public_bundle(tmp_path):
+    out = build(tmp_path / "site")
+    names = {"privacy-policy.html", "terms-of-service.html"}
+    home = Page()
+    home.feed((out / "index.html").read_text(encoding="utf-8"))
+    assert names <= home.links
+    for name in names:
+        source = (out / name).read_text(encoding="utf-8")
+        page = Page()
+        page.feed(source)
+        assert page.language == "en"
+        assert page.effective_date
+        assert names <= page.links
+        assert "<h2>Contact</h2>" in source
+        assert page.assets and all((out / file).is_file() for file in page.assets)

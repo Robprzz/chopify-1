@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="How Chopify Studio processes local video projects, connects to TikTok, and handles publication history." />
+    <title>Privacy Policy | Chopify Studio</title>
+    <link rel="stylesheet" href="site.css" />
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+    <header>
+      <a class="logo" href="./"><span>c/</span> chopify</a>
+      <nav aria-label="Legal navigation">
+        <a href="privacy-policy.html" aria-current="page">Privacy Policy</a>
+        <a href="terms-of-service.html">Terms of Service</a>
+      </nav>
+    </header>
+    <main id="main" class="legal-page">
+      <h1>Privacy Policy</h1>
+      <p class="legal-date">Effective <time datetime="2026-11-19">November 19, 2026</time></p>
+      <p>This policy describes how Chopify Studio handles information when you create clips, connect a TikTok account, or visit this documentation site.</p>
+
+      <h2>Video processing and local project data</h2>
+      <p>Studio runs on your computer. It reads the media you select, transcribes speech with faster-whisper, analyzes audio and video for possible clips, and renders the clips you choose with FFmpeg. Local project files can include source paths or URLs, downloaded media, transcripts with timestamps, editing settings, analysis results, previews, exported videos, subtitle files, thumbnails, and job logs. A live session can also read public Twitch chat when chat capture is enabled and use it to derive activity signals.</p>
+      <p>Importing a URL or opening a live stream makes requests to the relevant source platform. The first use of a transcription model may download model files from Hugging Face. Optional Ollama features send text to the configured Ollama endpoint, which defaults to your computer. If you use campaign briefs, Studio may pass the brief and relevant transcript excerpts to the available or configured agent, such as Ollama, Claude, Codex, or Hermes. Whether that agent sends the text to a remote service depends on the agent and its settings.</p>
+
+      <h2>Connecting a TikTok account</h2>
+      <p>When you choose to connect, TikTok handles sign-in and consent on its own site. Studio receives an authorization code through a loopback address on your computer and exchanges it with TikTok for access and refresh tokens. Studio reads TikTok developer credentials from your local environment for token exchange, renewal, and revocation. It uses the access token for authorized requests and can use the refresh token to renew an expiring session. Studio keeps these tokens in process memory. Restarting Studio requires a new connection.</p>
+      <ul>
+        <li><code>user.info.basic</code> lets Studio read the TikTok account’s app-specific identifier and display name to identify the connected account.</li>
+        <li><code>video.upload</code> lets Studio send an approved clip to the account’s TikTok inbox and ask TikTok for the upload or publication status.</li>
+        <li><code>video.publish</code> is optional and requested only when the creator-information setting is enabled. Studio uses it to query available privacy options when TikTok grants the permission. The inbox workflow leaves the privacy selection and final publication to you in TikTok.</li>
+      </ul>
+
+      <h2>What Studio sends to TikTok</h2>
+      <p>When you explicitly approve an upload, Studio sends the selected MP4 and upload information, such as the file size. Video, audio, and any captions already rendered into that MP4 travel with the file. The inbox upload request carries the MP4. Your editable description stays in Studio unless you copy it and enter it in TikTok. The project transcript and separate SRT file are outside that upload. TikTok handles uploads, drafts, and posts under its own policies. <a href="https://www.tiktok.com/legal/page/row/privacy-policy/en">TikTok Privacy Policy</a></p>
+
+      <h2>Publication history, storage, and disconnection</h2>
+      <p>Studio saves publication records in the <code>.tiktok-publications</code> subfolder of your local projects directory. Entries can include the project and file identifiers, description, timestamps, a key derived from the TikTok account identifier and app key, TikTok’s publication identifier, status, and errors. Studio uses the account key to show the history for the corresponding connected account. Access and refresh tokens and signed upload URLs are kept out of the history.</p>
+      <p>Use <strong>Disconnect</strong> in Studio to request revocation from TikTok and clear the local session. If revocation cannot be completed, you can revoke the app from your TikTok account settings. Disconnecting leaves local project files and publication records on disk. Studio sets no automatic expiry for publication-history records. You can manage or remove the local files from your computer. For drafts or posts already sent to TikTok, use TikTok’s controls.</p>
+
+      <h2>Documentation site</h2>
+      <p>GitHub Pages hosts this site. GitHub logs visitor IP addresses for security as described in its documentation. The legal pages contain static text and a stylesheet and have no analytics scripts or forms. <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">GitHub Privacy Statement</a></p>
+
+      <h2>Contact</h2>
+      <p>The app operator’s legal name and dedicated privacy contact are pending confirmation. The <a href="https://github.com/Robprzz/chopify-1">Chopify Studio repository</a> identifies the project and its maintainer. Keep credentials and private project material out of public repository activity.</p>
+    </main>
+  </body>
+</html>

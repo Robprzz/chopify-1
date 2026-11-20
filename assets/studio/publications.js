@@ -134,10 +134,7 @@ async function refreshPublications() {
 
 async function showPublications() {
   state.id = null;
-  $("#new-view").hidden = true;
-  $("#project-view").hidden = true;
-  $("#live-view").hidden = true;
-  $("#publications-view").hidden = false;
+  switchView("publications-view");
   await refreshPublications();
 }
 

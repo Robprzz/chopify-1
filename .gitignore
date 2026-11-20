@@ -16,6 +16,7 @@ __pycache__/
 clips/
 projects/
 .tiktok-publications/
+.chopify-automation.sqlite3*
 _site/
 .pytest_cache/
 

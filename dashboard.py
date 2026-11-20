@@ -15,6 +15,7 @@ import threading
 from urllib.parse import parse_qs, unquote, urlsplit
 import webbrowser
 
+import automation
 import branding
 import projects
 import render_clips
@@ -28,6 +29,7 @@ STATIC_FILES = {
     "": ("index.html", "text/html; charset=utf-8"),
     "app.js": ("app.js", "text/javascript; charset=utf-8"),
     "publications.js": ("publications.js", "text/javascript; charset=utf-8"),
+    "automation.js": ("automation.js", "text/javascript; charset=utf-8"),
     "style.css": ("style.css", "text/css; charset=utf-8"),
 }
 
@@ -97,6 +99,7 @@ class Studio:
         self.lock = threading.RLock()
         self.futures = {}
         self.tiktok = tiktok.TikTokStudio(self.root, self.busy)
+        self.automation_settings = automation.SettingsStore(self.root)
         self.processes = set()
         self.live_sessions = {}
         self.live_lock = threading.Lock()
@@ -297,6 +300,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(payload)
             if parts == ["api", "projects"]:
                 return self.send_json({"projects": self.app.list_projects()})
+            if parts == ["api", "automation", "settings"]:
+                return self.automation_settings_action()
             if len(parts) == 3 and parts[:2] == ["api", "projects"]:
                 data = project_detail(self.app.root, parts[2])
                 data["busy"] = self.app.busy(parts[2])
@@ -346,6 +351,8 @@ class Handler(BaseHTTPRequestHandler):
             parts = unquote(urlsplit(self.path).path).strip("/").split("/")
             if len(parts) == 3 and parts[:2] == ["api", "tiktok"]:
                 return self.tiktok_action(parts[2], body)
+            if parts == ["api", "automation", "settings"]:
+                return self.automation_settings_action(body)
             if parts == ["api", "live"]:
                 source = body.get("source")
                 if not isinstance(source, str) or not source.strip():
@@ -425,6 +432,19 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"error": "Project or transcript not found. Prepare the project first."}, 404)
         except (ValueError, KeyError, TypeError, OSError) as exc:
             self.send_json({"error": str(exc)}, 400)
+
+    def automation_settings_action(self, body=None):
+        store = self.app.automation_settings
+        try:
+            if body is None:
+                return self.send_json(store.read())
+            if body.keys() != {"settings", "revision"}:
+                raise ValueError("Envía los ajustes y la revisión de Automation.")
+            return self.send_json(store.save(body["settings"], body["revision"]))
+        except automation.SettingsConflict as exc:
+            return self.send_json({"error": str(exc)}, 409)
+        except automation.SettingsUnavailable as exc:
+            return self.send_json({"error": str(exc)}, 503)
 
     def tiktok_action(self, action, body):
         service = self.app.tiktok

@@ -3,4 +3,6 @@ yt-dlp
 faster-whisper
 opencv-python
 numpy
+# Windows Python needs the IANA timezone database for Automation.
+tzdata; sys_platform == "win32"
 # Captions are burnt in via ffmpeg's ASS engine (no extra package needed).

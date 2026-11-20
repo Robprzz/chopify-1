@@ -38,6 +38,7 @@ Chopify is an open-source Python app with a local browser dashboard and a CLI. I
 | Feature | How it helps |
 | --- | --- |
 | **Local browser dashboard** | Queue videos, watch job progress, review candidates, edit words and timestamps, and download exports. |
+| **Automation preferences** | Save local production preferences, review thresholds, and the publication time zone in Studio. [Phase 1 and architecture](docs/AUTOMATION.md) |
 | **Local video input** | Use MP4, MOV, MKV, WebM, M4V, or AVI recordings directly, or download a yt-dlp-supported URL. |
 | **Live clipping** | Watch an HLS/RTMP stream, detect hype from audio, visual motion, transcript, and chat, and auto-save finished captioned clips from the CLI or Studio. Use `--fit contain` for full-frame gameplay clips. |
 | **Gaming facecam layout** | `--layout stacked` puts the streamer's facecam above gameplay in 9:16 with captions at the seam — the Shorts/Reels gaming look — for batch and live clips. |
@@ -99,6 +100,8 @@ Studio opens at **http://127.0.0.1:8765**. Paste a local video path or URL, then
 ```
 
 The dashboard has no extra web framework or JavaScript installation step. It binds to loopback and is intended for one trusted user on the same computer, not as a public server.
+
+Open **Automation** to save the approved production settings. Phase 1 stores them per projects folder and keeps them across Studio restarts. [Automation setup and planned integrations](docs/AUTOMATION.md)
 
 YouTube downloads may also require Deno: `winget install DenoLand.Deno`. A preflight check reports missing Python packages and encoders. Restart your terminal after installing tools so PATH changes take effect.
 

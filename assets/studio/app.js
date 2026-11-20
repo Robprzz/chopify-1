@@ -34,6 +34,11 @@ const projectName = (source) =>
   /^https?:/.test(source)
     ? source.replace(/^https?:\/\//, "").slice(0, 65)
     : basename(source);
+function switchView(id) {
+  for (const view of document.querySelectorAll("main > section.view")) {
+    view.hidden = view.id !== id;
+  }
+}
 function notice(message, error = false) {
   clearTimeout(state.noticeTimer);
   const box = $("#notice");
@@ -385,10 +390,7 @@ async function selectProject(id) {
   state.captionKey = "";
   state.previewFile = null;
   state.pendingPreview = null;
-  $("#new-view").hidden = true;
-  $("#live-view").hidden = true;
-  $("#publications-view").hidden = true;
-  $("#project-view").hidden = false;
+  switchView("project-view");
   const detail = await api(`/api/projects/${id}`);
   if (state.id !== id) return;
   state.detail = detail;
@@ -751,10 +753,7 @@ async function run(action, preview = false) {
 }
 $("#new-project").addEventListener("click", () => {
   state.id = null;
-  $("#new-view").hidden = false;
-  $("#live-view").hidden = true;
-  $("#publications-view").hidden = true;
-  $("#project-view").hidden = true;
+  switchView("new-view");
   $("#sources").focus();
   refreshProjects().catch((e) => notice(e.message, true));
 });
@@ -992,10 +991,7 @@ $("#show-captions").addEventListener("click", () => setTab("captions"));
 
 function showLive() {
   state.id = null;
-  $("#new-view").hidden = true;
-  $("#project-view").hidden = true;
-  $("#publications-view").hidden = true;
-  $("#live-view").hidden = false;
+  switchView("live-view");
   refreshLive().catch((e) => notice(e.message, true));
 }
 $("#show-live").addEventListener("click", showLive);

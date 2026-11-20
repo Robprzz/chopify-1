@@ -1,4 +1,5 @@
 """Exercise actual HTTP routes, mutation protection and saved project editing."""
+from contextlib import contextmanager
 import json
 import shutil
 import socket
@@ -10,17 +11,25 @@ import urllib.request
 import pytest
 
 
-@pytest.fixture
-def server(tmp_path):
+@contextmanager
+def running_server(root):
     import dashboard
-    httpd = dashboard.make_server(tmp_path, port=0)
+    httpd = dashboard.make_server(root, port=0)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
-    yield httpd, f"http://127.0.0.1:{httpd.server_port}"
-    httpd.shutdown()
-    httpd.server_close()
-    httpd.app.close()
-    thread.join()
+    try:
+        yield httpd, f"http://127.0.0.1:{httpd.server_port}"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        httpd.app.close()
+        thread.join()
+
+
+@pytest.fixture
+def server(tmp_path):
+    with running_server(tmp_path) as active:
+        yield active
 
 
 def request(base, path, data=None, token=None, origin=None):

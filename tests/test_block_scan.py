@@ -1,6 +1,8 @@
 """Block-scanned discovery keeps long transcripts bounded and resumable."""
 import json
 
+import pytest
+
 import score_clips
 
 
@@ -76,6 +78,24 @@ def test_block_scan_caps_windows_at_max_len_across_boundaries(tmp_path):
     assert all(item["duration"] <= 60 + 1e-6 for item in candidates)
     assert candidates[0]["start"] < 1800
     assert candidates[-1]["end"] >= 7190
+
+
+@pytest.mark.parametrize("next_start, first_end_is_valid", [(25.05, False), (25.2, True)])
+def test_block_scan_uses_real_pause_at_end_of_context(monkeypatch, next_start, first_end_is_valid):
+    monkeypatch.setattr(score_clips, "BLOCK_SECONDS", 20)
+    words = [{"word": "Ganamos", "start": 19.0, "end": 23.9},
+             {"word": "la partida.", "start": next_start, "end": 29.5}]
+    # Presegmented input can lack boundary metadata. The next span starts
+    # outside this block's context, so the actual gap determines eligibility.
+    sentences = [{"start": word["start"], "end": word["end"],
+                  "text": word["word"], "words": [word]} for word in words]
+
+    candidates, _ = score_clips.discover_blocks(sentences, 4, 5)
+
+    expected = [(next_start, 29.5)]
+    if first_end_is_valid:
+        expected.insert(0, (19.0, 23.9))
+    assert [(clip["start"], clip["end"]) for clip in candidates] == expected
 
 
 def test_long_discover_uses_block_scan(monkeypatch, tmp_path):

@@ -26,9 +26,17 @@ Auditoría inicial de `Robprzz/chopify-1`, rama
 ## Verificación y hallazgos pendientes
 
 - Las regresiones automatizadas cubren el cambio de modo, la edición del texto, el reemplazo de archivos, el reintento después de una escritura parcial, las opciones guardadas, el cambio de perfil y versión, el reranking y los bloques largos. Las pruebas de un proyecto URL comprueban que la descarga y la transcripción se reutilizan, incluidas las ediciones del usuario.
-- La revisión base falla en `TestArc.test_grow_window_backs_off_mid_sentence_end`. `_grow_window` acepta el fin de la fuente aunque la última frase esté incompleta. La corrección de caché mantiene el comportamiento de los límites del recorte.
+- En `c0958ce`, `TestArc.test_grow_window_backs_off_mid_sentence_end` reproducía un final cortado que también aceptaba el descubrimiento activo. El cambio de selección de finales descrito abajo corrige ambos casos.
 - Studio guarda formatos personalizados en la raíz de proyectos. La resolución de formatos por nombre en `projects.py` usa el directorio predeterminado de `video_types.py`. Queda por alinear esas rutas y cubrir el flujo de creación y uso de un formato con una prueba de integración.
 - El clasificador opcional de `video_types.py` construye su muestra con `text` en los registros de palabras. Whisper guarda esos registros con la clave `word`. Queda por verificar y corregir la muestra que recibe el clasificador local.
+
+## Selección de finales de clip
+
+El descubrimiento comprueba cada posible final de frase antes de puntuarlo. Un guion de corte o una palabra claramente pendiente, como `the` o `porque`, descarta ese punto incluso si Whisper añadió puntuación. Una pausa real o un último tramo plausible del texto siguen siendo válidos sin puntuación. En vídeos largos, se consulta el inicio de la frase siguiente si cae fuera del contexto del bloque. El descubrimiento conserva los límites de duración configurados.
+
+`DISCOVERY_VERSION` sube a `2`. La siguiente preparación vuelve a calcular los candidatos y la selección, con reutilización de la descarga y la transcripción si sus entradas coinciden. La comprobación usa señales de texto y tiempos, así que una frase que se corta sin dejar una señal reconocible puede seguir siendo elegible.
+
+Validación en Linux con Python 3.12. La revisión `c0958ce` reproducía el fallo original. Pasaron las 28 pruebas dirigidas de límites de frase, bloques y caché y las 454 pruebas de la suite completa. Las nuevas regresiones cubren cierres incompletos, pausas, español sin puntuación y el contexto entre bloques. También pasaron la compilación de Python y la construcción del sitio de documentación.
 
 ## Rebranding
 

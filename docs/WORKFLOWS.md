@@ -258,8 +258,12 @@ python chopify.py recording.mp4 --brand examples/brand.json --aspect 9:16
 
 Discovery is exhaustive rather than greedy. Every sentence is treated as a
 possible start, and the engine evaluates a duration ladder of 15s, 30s, 45s,
-60s, 90s, 2m, 3m, and 5m (plus your preferred length). Endpoints snap to a
-complete sentence, then refine by up to two sentences around the best result.
+60s, 90s, 2m, 3m, and 5m (plus your preferred length). Endpoints use terminal
+punctuation, a clear pause, or a plausible final span at the end of the
+transcript. A trailing dash or a dangling word such as `because` or `porque`
+can rule out an endpoint, even at a pause. A source with no written punctuation
+can still produce clips. The engine then refines by up to two sentences around
+the best result, within the requested length range.
 Each start keeps at most two records: its highest-quality endpoint and its
 best endpoint near your preferred length. Candidates may overlap; deduplication
 removes a lower-scoring window when it overlaps more than 55% of the shorter

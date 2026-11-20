@@ -28,6 +28,7 @@ import json
 import bisect
 import hashlib
 import argparse
+import unicodedata
 import urllib.request
 from pathlib import Path
 
@@ -41,7 +42,7 @@ LONG_SOURCE_SECONDS = 7200
 BLOCK_SECONDS = 1800
 BLOCK_VERSION = 2
 # Bump when candidate windows, deterministic scoring, or discovery metadata change.
-DISCOVERY_VERSION = 1
+DISCOVERY_VERSION = 2
 
 BASE_LADDER = (15, 30, 45, 60, 90, 120, 180, 300)
 DURATION_HELP = "Use seconds or a duration like 45s, 2m, or 1m30s (5s to 1h)."
@@ -163,6 +164,12 @@ def load_transcript(workdir):
 
 ARC_RE = re.compile(r"[.!?\u2026][\"')\]]?$")
 SENTENCE_PAUSE_SECONDS = 1.2
+# Common dangling articles and conjunctions in English and Spanish. Keep
+# accents and leave ambiguous endings such as the gaming callout A eligible.
+UNFINISHED_END_WORDS = {
+    "the", "an", "and", "or", "but", "because", "although", "unless",
+    "el", "del", "los", "las", "de", "porque", "aunque", "pero", "mientras", "que",
+}
 
 
 def is_arc_complete(text):
@@ -199,21 +206,21 @@ def sentenceize(words, gap=SENTENCE_PAUSE_SECONDS):
     return out
 
 
-def is_usable_endpoint(sentences, index):
-    """Allow punctuation or a real pause; the end of the source is a fallback.
-
-    Unlike is_arc_complete, this does not require Whisper to generate periods.
-    It is intentionally conservative when no pause/punctuation is present.
-    """
+def is_usable_endpoint(sentences, index, *, following_start=None):
+    """Accept plausible endings at punctuation, a pause, or true transcript end."""
     if not 0 <= index < len(sentences):
         return False
     sent = sentences[index]
-    if is_arc_complete(sent.get("text", "")) or sent.get("boundary") == "pause":
+    text = unicodedata.normalize("NFC", (sent.get("text") or "").strip())
+    if (not text or text.endswith(("-", "–", "—"))
+            or _norm_token(text.rsplit(maxsplit=1)[-1]) in UNFINISHED_END_WORDS):
+        return False
+    if is_arc_complete(text) or sent.get("boundary") == "pause":
         return True
-    if index + 1 == len(sentences):
-        return True
-    return (float(sentences[index + 1]["start"]) - float(sent["end"])
-            > SENTENCE_PAUSE_SECONDS)
+    if index + 1 < len(sentences):
+        following_start = float(sentences[index + 1]["start"])
+    return (following_start is None
+            or following_start - float(sent["end"]) > SENTENCE_PAUSE_SECONDS)
 
 
 # ------------------------------------------------------------- heuristic core
@@ -705,9 +712,11 @@ def discover_media_candidates(timeline, min_len, max_len, preferred_len=None,
 
 def discover_candidates(sentences, min_len=15, max_len=300,
                         preferred_len=None, band=(30, 120),
-                        seed_indices=None, progress=None):
+                        seed_indices=None, progress=None, *,
+                        following_start=None):
     """Evaluate every seed against the duration ladder.
 
+    ``following_start`` marks the first sentence outside a discovery block.
     Returns (start-sorted candidates, stats). No threshold is applied here.
     """
     if min_len > max_len:
@@ -721,6 +730,8 @@ def discover_candidates(sentences, min_len=15, max_len=300,
     index = WindowIndex(sentences)
     seeds = normalize_seed_indices(sentences, seed_indices)
     ends = [float(sentence_["end"]) for sentence_ in sentences]
+    usable_ends = [is_usable_endpoint(sentences, i, following_start=following_start)
+                   for i in range(len(sentences))]
     last_index = len(sentences) - 1
     candidates = []
     windows_scanned = 0
@@ -729,7 +740,7 @@ def discover_candidates(sentences, min_len=15, max_len=300,
     def evaluate(seed, end_index, choices):
         if end_index < seed or end_index > last_index:
             return
-        if not is_usable_endpoint(sentences, end_index):
+        if not usable_ends[end_index]:
             return
         duration = ends[end_index] - sentences[seed]["start"]
         if duration < min_len or duration > max_len:
@@ -865,10 +876,12 @@ def discover_blocks(sentences, min_len, max_len, preferred_len=None,
             owned_end = bisect.bisect_left(starts, block_end)
             context_end = bisect.bisect_left(starts, block_end + max_len)
             owned_count = max(0, owned_end - first)
+            following_start = starts[context_end] if context_end < len(starts) else None
             local, part_stats = discover_candidates(
                 sentences[first:context_end], min_len, max_len,
                 preferred_len=preferred_len, band=band,
-                seed_indices=list(range(owned_count)))
+                seed_indices=list(range(owned_count)),
+                following_start=following_start)
             for item in local:
                 if item.get("seed_index") is not None:
                     item["seed_index"] += first

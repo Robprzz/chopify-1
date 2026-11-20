@@ -632,6 +632,65 @@ class TestArc:
         a, b = w
         assert score_clips.is_arc_complete(sents[b]["text"])
 
+    def test_discovery_respects_minimum_when_tail_is_incomplete(self):
+        words = (sentence("Here is the thing nobody tells you about this.", 0.0)
+                 + sentence("and then we were walking to the", 8.0))
+        sentences = score_clips.sentenceize(words)
+
+        candidates, _ = score_clips.discover_candidates(sentences, min_len=3, max_len=30)
+        assert [(clip["start"], clip["end"]) for clip in candidates] == [(0.0, 3.55)]
+        candidates, _ = score_clips.discover_candidates(sentences, min_len=5, max_len=30)
+        assert candidates == []
+
+    @pytest.mark.parametrize("unfinished", [
+        "casi perdemos la partida porque",
+        "casi perdemos la partida porque...",
+        "casi perdemos la partida con un juga-",
+    ])
+    def test_discovery_skips_incomplete_span_even_before_pause(self, unfinished):
+        words = (sentence(unfinished, 0.0)
+                 + sentence("remontamos y al final ganamos la partida", 8.0))
+        candidates, _ = score_clips.discover_candidates(
+            score_clips.sentenceize(words), min_len=2, max_len=20)
+
+        assert candidates
+        assert {clip["end"] for clip in candidates} == {words[-1]["end"]}
+
+    @pytest.mark.parametrize("query", [None, "remontamos"])
+    def test_run_keeps_unpunctuated_span_at_a_pause(self, tmp_path, monkeypatch, query):
+        first = sentence("remontamos y al final ganamos la partida", 0.0)
+        words = first + sentence("y todavía no sabemos por qué se fue el", 8.0)
+        (tmp_path / "transcript.json").write_text(json.dumps({
+            "video": "fake.mp4", "duration": 15, "language": "es", "words": words,
+        }), encoding="utf-8")
+        monkeypatch.setattr(score_clips, "source_evidence",
+                            lambda *args: (None, "talk", 0.5, 1.0, False, None))
+        segments, _ = score_clips.run(tmp_path, min_score=0, min_len=2,
+                                      max_len=20, search=query)
+
+        assert [(clip["start"], clip["end"]) for clip in segments] == [
+            (0.0, first[-1]["end"])]
+
+    def test_terminal_punctuation_does_not_complete_an_unfinished_phrase(self):
+        words = sentence("estábamos a punto de ganar pero.", 0.0)
+        candidates, _ = score_clips.discover_candidates(
+            score_clips.sentenceize(words), min_len=2, max_len=20)
+
+        assert candidates == []
+
+    @pytest.mark.parametrize("finished", [
+        "ganamos la ronda junto a él",
+        "ganamos la ronda junto a e\u0301l",
+        "en la última ronda plantamos en a",
+        "finalmente nos dijo que sí",
+    ])
+    def test_discovery_keeps_complete_unpunctuated_tail(self, finished):
+        words = sentence(finished, 0.0)
+        candidates, _ = score_clips.discover_candidates(
+            score_clips.sentenceize(words), min_len=1, max_len=20)
+
+        assert [clip["text"] for clip in candidates] == [finished]
+
 
 # ------------------------------------------------------------ v1.3: --search
 

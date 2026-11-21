@@ -1,8 +1,11 @@
 """SQLite jobs, Studio HTTP, and Chromium with a fake local Ollama server."""
 from copy import deepcopy
+from functools import lru_cache
 import hashlib
 from pathlib import Path
 import shutil
+import subprocess
+from tempfile import TemporaryDirectory
 import time
 from urllib.error import HTTPError
 
@@ -30,6 +33,16 @@ Deja secar las semillas y guárdalas en un frasco etiquetado.
 """
 
 
+@lru_cache(maxsize=1)
+def editorial_fixture_mp4():
+    with TemporaryDirectory() as work:
+        media = Path(work) / "fixture.mp4"
+        subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=size=160x90:rate=25",
+                        "-f", "lavfi", "-i", "anullsrc", "-t", "3", "-c:v", "libx264", "-c:a", "aac",
+                        str(media)], check=True)
+        return media.read_bytes()
+
+
 def write_export(root, source=None, live=False):
     if live:
         project = "live/" + "a" * 12
@@ -43,7 +56,7 @@ def write_export(root, source=None, live=False):
     if source:
         shutil.copyfile(source, clip)
     else:
-        clip.write_bytes(b"synthetic fixture export")
+        clip.write_bytes(editorial_fixture_mp4())
     clip.with_suffix(".srt").write_text(SRT, encoding="utf-8")
     projects.atomic_json(clip.with_suffix(".meta.json"), {"score": 8.3, "start": 0, "end": 3})
     if live:

@@ -50,6 +50,10 @@ Abre **Automation → AI Engine** para seleccionar el modelo local, comprobar Ol
 
 [Instalación de Ollama, arquitectura y validación de AI Engine](AI-ENGINE.md)
 
+## Fase 2.1 · Calidad de subtítulos
+
+**Automation → AI Engine → Calidad de subtítulos** diagnostica un clip existente, permite retranscribir su audio final con Faster-Whisper y genera una versión nueva desde una fuente limpia verificada. AI Engine comprueba los subtítulos antes de generar propuestas. [Auditoría, evidencia y reparación en Windows](SUBTITLE-QUALITY.md)
+
 ## Arquitectura para las fases siguientes
 
 1. **Subtítulos, calidad y duplicados.** Guardar el original junto a una revisión separada. Conservar timestamps y validar sentido, orden y rangos de subtítulos antes de usar la revisión. Mantener la puntuación de detección y la revisión editorial en campos distintos. La admisión automática exige la puntuación mínima configurada y que pasen las comprobaciones de audio, duración, continuidad, contexto, subtítulos y archivo final. Comparar SHA-256, intervalos de la misma fuente y similitud textual con alcance por cuenta para detectar duplicados.

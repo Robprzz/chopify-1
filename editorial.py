@@ -7,6 +7,8 @@ import threading
 import time
 
 import automation
+import captions
+import subtitle_quality
 from editorial_content import PLATFORMS, PROMPT_VERSION, Rules, assemble, messages, plan_schema, validate_config
 from editorial_providers import Cancelled, Cancellation, Ollama, ProviderError
 from editorial_source import key, read_clip
@@ -135,7 +137,8 @@ class Engine:
                     "timeout": config["timeout"], "model": model, "model_digest": digest,
                     "prompt_version": PROMPT_VERSION}
         fingerprint = key([source["clip_id"], source["transcript_id"], source["original_score"],
-                           source["sampled"], source["filtered"], settings])
+                           source["sampled"], source["filtered"], source.get("media_version"),
+                           captions.TIMELINE_VERSION, settings])
         job, cached = self.store.submit(source, settings, fingerprint, force)
         self.wake.set()
         return {"job_id": job, "reused": cached}
@@ -230,6 +233,19 @@ class Engine:
             if self.store.cancel_requested(job):
                 cancellation.cancel()
             cancellation.check()
+            if source["project"] is not None:
+                path = self.clip_path(source["project"], source["filename"])
+                before = read_clip(path, source["project"], source["filename"])
+                if before["transcript_hash"] != source["transcript_hash"] or (
+                        before["media_version"] != source.get("media_version")):
+                    raise subtitle_quality.SubtitleError("El clip o el subtítulo cambió. Vuelve a solicitar el análisis.")
+                diagnostic = subtitle_quality.diagnose(path)
+                if diagnostic["errors"]:
+                    raise subtitle_quality.SubtitleError("Subtítulos bloqueados. " + diagnostic["errors"][0] + " Abre Calidad de subtítulos para repararlos.")
+                cancellation.check()
+                after = read_clip(path, source["project"], source["filename"])
+                if before != after:
+                    raise subtitle_quality.SubtitleError("El clip cambió durante el diagnóstico. Repite el análisis.")
             result, error = self._generate(source, settings, cancellation)
             cancellation.check()
             state = "done"
@@ -237,6 +253,8 @@ class Engine:
             # Closing Studio preserves outstanding work. User cancellation is terminal.
             state = "queued" if self.stopping.is_set() else "cancelled"
             result = None
+        except subtitle_quality.SubtitleError as exc:
+            error = str(exc)
         except (ProviderError, ValueError, OSError, TypeError, KeyError, sqlite3.Error):
             error = "No se pudo completar el análisis editorial."
         finally:

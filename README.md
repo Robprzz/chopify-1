@@ -296,6 +296,8 @@ Chopify does not upload footage or transcripts to a hosted processing service. V
 
 Yes. Open a prepared project in Studio, choose **Transcript**, edit word text or start/end times, and **Save captions**. Export again to apply the edits. Each draft and finished clip includes an SRT file relative to that clip's timeline. See the [caption workflow](docs/WORKFLOWS.md#edit-captions-and-export-srt).
 
+For a finished clip, select **Automation → AI Engine → Calidad de subtítulos** to diagnose its captions, retranscribe the finalized audio with a locally installed Faster-Whisper model, and export a separate corrected version from the clean source. [Subtitle diagnostics and repair](docs/SUBTITLE-QUALITY.md)
+
 ### Can I style and animate captions?
 
 Yes. Open a prepared project, choose **Captions**, and start from one of 13 presets: `default`, `clean`, `minimal`, `bold`, `boxed`, `karaoke`, `pop`, `neon`, `typewriter`, `retro`, `hormozi`, `mrbeast`, or `podcast`. Adjust font, size, margin, colors, outline, shadow, box background, words per cue, position, motion, and word highlighting. **Preview 5s** plays a selected clip range with the overlay.

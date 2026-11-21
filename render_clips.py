@@ -27,6 +27,9 @@ import tempfile
 import uuid
 from pathlib import Path
 
+import shutil
+
+import captions
 import branding
 import tighten  # local module: filler/silence removal
 import watermark
@@ -311,10 +314,10 @@ def crop_for(W, H, tw, th):
     return cw, ch, x0, y0
 
 
-def _make_detector(workdir):
+def _make_detector(workdir, allow_download=True):
     import cv2
     model = Path(workdir).parent / "yunet.onnx"
-    if not model.exists():
+    if allow_download and not model.exists():
         try:
             import urllib.request
             urllib.request.urlretrieve(YUNET_URL, str(model))
@@ -329,7 +332,7 @@ def _make_detector(workdir):
         cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
 
 
-def detect_track(source, start, dur, W, workdir):
+def detect_track(source, start, dur, W, workdir, allow_download=True, timeout=None):
     """Low-res detection pass -> [(t_rel, center_x_source_px or None)]."""
     import cv2
     det_path = Path(workdir) / "_det.mp4"
@@ -337,8 +340,8 @@ def detect_track(source, start, dur, W, workdir):
         ["ffmpeg", "-y", "-ss", f"{start:.3f}", "-i", str(source),
          "-t", f"{dur:.3f}", "-vf", f"fps={DET_FPS},scale={DET_W}:-2",
          "-an", str(det_path)],
-        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    kind, det = _make_detector(workdir)
+        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=timeout)
+    kind, det = _make_detector(workdir, allow_download)
     cap = cv2.VideoCapture(str(det_path))
     dw = cap.get(cv2.CAP_PROP_FRAME_WIDTH) or DET_W
     dh = cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 360
@@ -420,11 +423,10 @@ def build_sendcmd(track, crop_w, path):
 
 
 def ass_time(t):
-    t = max(0.0, t)
-    h = int(t // 3600)
-    m = int((t % 3600) // 60)
-    s = t % 60
-    return f"{h:d}:{m:02d}:{s:05.2f}"
+    h, remainder = divmod(max(0, round(t * 100)), 360000)
+    m, remainder = divmod(remainder, 6000)
+    seconds, hundredths = divmod(remainder, 100)
+    return f"{h:d}:{m:02d}:{seconds:02d}.{hundredths:02d}"
 
 
 def ass_escape(s):
@@ -432,7 +434,7 @@ def ass_escape(s):
 
 
 def build_ass(words, clip_start, clip_end, path, tw, th, font_size, margin_v,
-              style_name=DEFAULT_STYLE, brand=None, caption=None):
+              style_name=DEFAULT_STYLE, brand=None, caption=None, *, groups=None):
     st = resolve_caption(style_name, brand, caption)
     color = ass_style_color(st["color"])
     highlight = ass_style_color(st["highlight"])
@@ -453,8 +455,6 @@ def build_ass(words, clip_start, clip_end, path, tw, th, font_size, margin_v,
         border_style = 1
         outline_colour = outline_color
         back_colour = "&H64000000"
-    sub = [w for w in words
-           if not w.get("hidden") and w["end"] > clip_start and w["start"] < clip_end]
     header = (
         "[Script Info]\nScriptType: v4.00+\n"
         f"PlayResX: {tw}\nPlayResY: {th}\nWrapStyle: 0\nScaledBorderAndShadow: yes\n\n"
@@ -471,18 +471,21 @@ def build_ass(words, clip_start, clip_end, path, tw, th, font_size, margin_v,
         "Effect, Text\n"
     )
     group_size = int(st["words_per_cue"] or WORDS_PER_LINE)
-    groups = [sub[i:i + group_size] for i in range(0, len(sub), group_size)]
+    if groups is None:
+        groups = captions.plan_cues(words, clip_start, clip_end, group_size,
+                                    **{k: st[k] for k in captions.TIMING_FIELDS})
     animation = st["animation"]
     events = []
     for group in groups:
         emphasised = _cue_highlight(group, bool(st["emphasis"]))
         emoji_index, emoji = _cue_emoji(group) if st["emoji"] else (None, None)
         for i, word in enumerate(group):
-            s0 = max(word["start"], clip_start) - clip_start
-            en = min(clip_end, group[i + 1]["start"] if i + 1 < len(group)
-                     else word["end"]) - clip_start
-            if en <= s0:
-                en = s0 + 0.12
+            s0 = word["left"] / 1000
+            en = word["right"] / 1000
+            if i + 1 < len(group) and group[i + 1]["left"] - word["right"] <= 150:
+                en = group[i + 1]["left"] / 1000
+            if ass_time(s0) == ass_time(en):
+                continue
             parts = []
             for j, item in enumerate(group):
                 if animation == "typewriter" and j > i:
@@ -501,13 +504,14 @@ def build_ass(words, clip_start, clip_end, path, tw, th, font_size, margin_v,
                 else:
                     word_color = color
                 motion = _motion_tag(animation) if j == i else ""
-                parts.append("{" + f"\\c{word_color}" + motion + "}" + token)
+                separator = ("" if j == 0 else r"\N" if item["line"] != group[j - 1]["line"] else " ")
+                parts.append(separator + "{" + f"\\c{word_color}" + motion + "}" + token)
             events.append(
-                f"Dialogue: 0,{ass_time(s0)},{ass_time(en)},Cap,,0,0,0,,{' '.join(parts)}")
+                f"Dialogue: 0,{ass_time(s0)},{ass_time(en)},Cap,,0,0,0,,{''.join(parts)}")
     Path(path).write_text(header + "\n".join(events) + "\n", encoding="utf-8")
 
 
-def write_meta(seg, out_path):
+def write_meta(seg, out_path, subtitle_track=None):
     """Deterministic ready-to-post metadata saved as <clip>.meta.json."""
     hook = str(seg.get("hook", "clip")).replace("-", " ").strip()
     title = hook.capitalize()
@@ -520,6 +524,8 @@ def write_meta(seg, out_path):
         "start": seg.get("start"),
         "end": seg.get("end"),
     }
+    if subtitle_track is not None:
+        meta["subtitles"] = subtitle_track
     Path(out_path).with_suffix(".meta.json").write_text(
         json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
     return Path(out_path).with_suffix(".meta.json")
@@ -600,8 +606,7 @@ def render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAUL
            do_tighten=False, loudnorm=False, preview=False, brand=None,
            layout="single", centers=(0.25, 0.75), caption=None,
            source_offset=0.0, fit="cover", facecam_box=None,
-           facecam_height=0.34, mark=None):
-    from captions import write_srt
+           facecam_height=0.34, mark=None, transcript_info=None, timeout=None, allow_model_download=True):
     out_dir = (Path(out_dir) if out_dir else default_out()).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     source = Path(source).resolve()
@@ -649,18 +654,21 @@ def render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAUL
               f"{(end - start) - dur:.1f}s removed", flush=True)
         start = 0.0
         local_start = 0.0
+    groups = captions.plan_cues(cap_words, start, start + dur, resolved["words_per_cue"],
+                                **{k: resolved[k] for k in captions.TIMING_FIELDS})
     if layout == "stacked":
-        box, warning = resolve_facecam_box(source, W, H, workdir, facecam_box)
+        box, warning = resolve_facecam_box(source, W, H, workdir, facecam_box,
+                                           allow_download=allow_model_download, timeout=timeout)
         if warning:
             print(f"  {warning}", flush=True)
         vf, seam_margin = stacked_graph(W, H, tw, th, facecam_height, box)
         caption_override = dict(caption or {})
         caption_override["margin"] = None
         build_ass(cap_words, start, start + dur, out_dir / "_caption.ass",
-                  tw, th, font_size, seam_margin, style, brand, caption_override)
+                  tw, th, font_size, seam_margin, style, brand, caption_override, groups=groups)
     else:
         build_ass(cap_words, start, start + dur, out_dir / "_caption.ass",
-                  tw, th, font_size, margin_v, style, brand, caption)
+                  tw, th, font_size, margin_v, style, brand, caption, groups=groups)
 
     needs_track = cw < W * 0.95          # real horizontal crop -> track the speaker
     if layout == "stacked":
@@ -682,7 +690,8 @@ def render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAUL
               f"pad={tw}:{th}:0:0,subtitles=_caption.ass")
         mode = "podcast split-screen"
     elif needs_track:
-        track = smooth_track(detect_track(render_src, local_start, dur, W, workdir), W, cw)
+        track = smooth_track(
+            detect_track(render_src, local_start, dur, W, workdir, allow_model_download, timeout), W, cw)
         build_sendcmd(track, cw, out_dir / "_crop.cmd")
         init_x = max(0, min(int(round(track[0][1] - cw / 2.0)), W - cw))
         vf = (f"sendcmd=f=_crop.cmd,crop={cw}:{ch}:{init_x}:{y0},"
@@ -701,6 +710,8 @@ def render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAUL
            "-t", f"{dur:.3f}",
            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
            "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", str(out)]
+    if timeout is not None:
+        cmd[cmd.index("-c:v"):cmd.index("-c:v")] = ["-threads", "2"]
     if mark:
         cmd.insert(1, "-nostdin")
         w, h, x, y = mark.geometry(tw, th)
@@ -747,14 +758,29 @@ def render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAUL
             temporary = Path(staging) / "video.mp4"
             try:
                 subprocess.run([*cmd[:-1], str(temporary)], check=True, cwd=str(out_dir),
-                               timeout=max(60, min(7200, dur * 12 + 60)))
+                               timeout=timeout or max(60, min(7200, dur * 12 + 60)))
                 temporary.replace(out)
             except (OSError, subprocess.SubprocessError):
                 raise watermark.WatermarkError("FFmpeg no pudo incorporar la marca de agua al MP4. Comprueba la imagen PNG y los filtros de FFmpeg.") from None
     else:
-        subprocess.run(cmd, check=True, cwd=str(out_dir))
-    write_srt(cap_words, start, start + dur, out.with_suffix(".srt"),
-              group_size=resolved["words_per_cue"])
+        subprocess.run(cmd, check=True, cwd=str(out_dir), timeout=timeout)
+    srt = captions.write_srt(cap_words, start, start + dur, out.with_suffix(".srt"), groups=groups)
+    ass = out_dir / "_caption.ass"
+    track = None
+    if not preview:
+        from subtitle_quality import artifact_hash
+        ass_output = out.with_suffix(".ass")
+        shutil.copyfile(ass, ass_output)
+        track = {
+            "version": captions.TIMELINE_VERSION, "duration": dur,
+            "words": sum(len(captions.cue_text(group).split()) for group in groups),
+            "timing": {k: resolved[k] for k in captions.TIMING_FIELDS},
+            "srt_hash": artifact_hash(srt), "ass_hash": artifact_hash(ass_output),
+            "media_hash": artifact_hash(out), "tightened": bool(do_tighten),
+            "render_options": {"style": style, "fit": fit, "layout": layout, "centers": centers,
+                               "caption": caption, "facecam_box": facecam_box, "facecam_height": facecam_height},
+            **(transcript_info or {}),
+        }
 
     for tmpf in (out_dir / "_caption.ass", out_dir / "_crop.cmd"):
         try:
@@ -777,8 +803,8 @@ def render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAUL
     poster = out.with_suffix(".png")
     subprocess.run(["ffmpeg", "-y", "-ss", f"{dur * 0.4:.2f}", "-i", str(out),
                     "-frames:v", "1", "-q:v", "2", str(poster)],
-                   check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    meta_path = write_meta(seg, out)
+                   check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=timeout)
+    meta_path = write_meta(seg, out, track)
 
     print(f"SAVED {out}  ({aspect} {tw}x{th}, {mode})  "
           f"+ poster {poster.name} + {meta_path.name}", flush=True)
@@ -883,12 +909,12 @@ def clamp_facecam_box(box):
             round(max(0.05, min(h, 1 - y)), 6))
 
 
-def _detect_facecam_box(frame_path, W, H, workdir, detector=None):
+def _detect_facecam_box(frame_path, W, H, workdir, detector=None, allow_download=True):
     import cv2
     image = cv2.imread(str(frame_path))
     if image is None:
         raise ValueError("Could not read sampled frame")
-    kind, det = detector or _make_detector(workdir)
+    kind, det = detector or _make_detector(workdir, allow_download)
     ih, iw = image.shape[:2]
     if kind == "yunet":
         det.setInputSize((iw, ih))
@@ -909,7 +935,7 @@ def _detect_facecam_box(frame_path, W, H, workdir, detector=None):
     return clamp_facecam_box((x / iw, y / ih, w / iw, h / ih)), None
 
 
-def resolve_facecam_box(source, W, H, workdir, box, detector=None):
+def resolve_facecam_box(source, W, H, workdir, box, detector=None, allow_download=True, timeout=None):
     """Return (normalized box, warning). Explicit box wins; detection is best-effort."""
     if box is not None:
         return clamp_facecam_box(box), None
@@ -919,8 +945,8 @@ def resolve_facecam_box(source, W, H, workdir, box, detector=None):
         frame_path = Path(workdir) / "_facecam.jpg"
         subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", "0.5",
                         "-i", str(source), "-frames:v", "1", str(frame_path)],
-                       check=True, capture_output=True)
-        return _detect_facecam_box(frame_path, W, H, workdir, detector)
+                       check=True, capture_output=True, timeout=timeout)
+        return _detect_facecam_box(frame_path, W, H, workdir, detector, allow_download)
     except Exception as exc:
         return DEFAULT_FACECAM_BOX, f"Facecam detection failed ({exc}); using default box."
 

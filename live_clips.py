@@ -8,6 +8,7 @@ from pathlib import Path
 
 import branding
 import ingest
+from live_signals import LIVE_TRANSCRIPT_MODEL
 import projects
 import render_clips
 import watermark
@@ -149,7 +150,9 @@ class LiveClipWriter:
                       layout=options["layout"], centers=options["centers"],
                       caption=options["caption"], fit=options["fit"],
                       facecam_box=options["facecam_box"],
-                      facecam_height=options["facecam_height"], mark=mark)
+                      facecam_height=options["facecam_height"], mark=mark,
+                      transcript_info={"model": LIVE_TRANSCRIPT_MODEL if words else None,
+                                       "origin": "Transcripción Live"})
             record.files = {"window": str(window)}
             for path in sorted(self.clips_dir.glob(f"{record.id}-*")):
                 record.files[path.suffix.lstrip(".") or "file"] = str(path)

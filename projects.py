@@ -17,7 +17,7 @@ import sections
 import branding
 import video_types
 import watermark
-from captions import update_transcript
+from captions import TIMELINE_VERSION, update_transcript
 
 LIVE_DEFAULTS = {
     "live_buffer": 300, "live_buffer_max_mb": 512, "live_pre_roll": 30,
@@ -579,7 +579,7 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
                         sections.SECTION_VERSION])
                 key = digest([segment, data["words"], file_identity(source),
                               options, brand, logo_identity, preview,
-                              source_offset, section_key, *mark_identity])
+                              source_offset, section_key, TIMELINE_VERSION, *mark_identity])
                 cached = state["renders"].get(key)
                 expected_suffixes = [".mp4", ".srt"] if preview else [".mp4", ".srt", ".png", ".meta.json"]
                 if resume and cached and all(Path(cached).with_suffix(ext).is_file() for ext in expected_suffixes):
@@ -615,7 +615,7 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
                                 segment, data["words"],
                                 file_identity(source), options, brand,
                                 logo_identity, preview, source_offset,
-                                section_key, *mark_identity])
+                                section_key, TIMELINE_VERSION, *mark_identity])
                         except (Exception, SystemExit) as exc:
                             failed_sections[group_index] = str(exc)
                             render_errors.append(
@@ -629,7 +629,10 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
                         options["aspect"], out_dir=out, style=options["style"],
                         do_tighten=options["tighten"], loudnorm=options["loudnorm"], preview=preview,
                         brand=brand, layout=options["layout"], centers=options["centers"],
-                        caption=options["caption"], source_offset=source_offset, mark=mark)
+                        caption=options["caption"], source_offset=source_offset, mark=mark,
+                        transcript_info={"model": data.get("model"), "origin": "project",
+                                         "transcript_version": data.get("transcript_version"),
+                                         "transcript_hash": digest(data["words"])})
                 except (Exception, SystemExit) as exc:
                     if not render_from_sections:
                         raise

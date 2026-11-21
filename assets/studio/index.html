@@ -11,6 +11,7 @@
     <script src="/publications.js" defer></script>
     <script src="/automation.js" defer></script>
     <script src="/editorial.js" defer></script>
+    <script src="/subtitles.js" defer></script>
     <script src="/watermark.js" defer></script>
   </head>
   <body>
@@ -324,6 +325,32 @@
             <button id="editorial-regenerate" type="button">Regenerar</button>
             <button id="editorial-cancel" type="button" hidden>Cancelar procesamiento</button>
           </div>
+          <details class="editorial-details" id="subtitle-quality">
+            <summary>Calidad de subtítulos</summary>
+            <div class="publication-actions">
+              <button id="subtitle-diagnose" type="button">Diagnosticar subtítulos</button>
+              <button id="subtitle-transcribe" type="button">Retranscribir audio final</button>
+              <button id="subtitle-preview" type="button" disabled>Previsualizar versión corregida</button>
+              <button id="subtitle-export" type="button" disabled>Exportar nueva versión</button>
+            </div>
+            <div class="form-grid">
+              <label>Modelo de Faster-Whisper instalado<select id="subtitle-model">
+                <option>tiny</option><option>base</option><option>small</option><option selected>medium</option>
+                <option>large-v2</option><option>large-v3</option><option>turbo</option><option>distil-large-v3</option>
+              </select></label>
+              <label>Duración mínima orientativa (ms)<input type="number" id="subtitle-cue_min_ms" min="200" max="1500" value="500" required /></label>
+              <label>Duración máxima (ms)<input type="number" id="subtitle-cue_max_ms" min="1500" max="8000" value="4000" required /></label>
+              <label>Pausa para separar subtítulos (ms)<input type="number" id="subtitle-cue_gap_ms" min="250" max="1500" value="650" required /></label>
+              <label>Máximo de líneas<select id="subtitle-cue_lines"><option>1</option><option selected>2</option></select></label>
+            </div>
+            <p id="subtitle-status" role="status"></p>
+            <ul id="subtitle-diagnostics"></ul>
+            <details id="subtitle-draft" hidden><summary>Texto y tiempos del borrador</summary>
+              <pre id="subtitle-draft-text"></pre><a id="subtitle-srt" download="subtitulos-corregidos.srt">Descargar SRT</a>
+            </details>
+            <video id="subtitle-video" class="subtitle-preview" controls playsinline hidden></video>
+            <a id="subtitle-output" hidden>Descargar el nuevo MP4</a>
+          </details>
           <label>Historial editorial<select id="editorial-history"><option value="">Sin resultados</option></select></label>
           <button id="editorial-older" type="button" hidden>Ver versiones anteriores</button>
           <div id="editorial-result" aria-live="polite"></div>
@@ -649,6 +676,12 @@
                       <option value="top">Top</option>
                     </select></label
                   >
+                </div>
+                <div class="form-grid">
+                  <label>Target minimum cue (ms)<input name="cue_min_ms" type="number" min="200" max="1500" required /></label>
+                  <label>Maximum cue (ms)<input name="cue_max_ms" type="number" min="1500" max="8000" required /></label>
+                  <label>Pause between cues (ms)<input name="cue_gap_ms" type="number" min="250" max="1500" required /></label>
+                  <label>Caption lines<select name="cue_lines"><option>1</option><option>2</option></select></label>
                 </div>
                 <div class="pair">
                   <label

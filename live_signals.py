@@ -222,6 +222,9 @@ class VisualAnalyzer(BaseAnalyzer):
             self.bus.add("visual", t, float(value))
 
 
+LIVE_TRANSCRIPT_MODEL = "small"
+
+
 class TranscriptAnalyzer(BaseAnalyzer):
     name = "transcript"
     delay = 1.0
@@ -243,7 +246,7 @@ class TranscriptAnalyzer(BaseAnalyzer):
             return [], start, start
         start, end = bounds
         if self.model is None:
-            self.model = dt._load_model("small", self.device, "int8")
+            self.model = dt._load_model(LIVE_TRANSCRIPT_MODEL, self.device, "int8")
         with tempfile.TemporaryDirectory(dir=self.buffer.directory) as directory:
             wav = Path(directory) / "transcript.wav"
             subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(path), "-ac", "1",

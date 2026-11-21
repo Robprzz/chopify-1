@@ -142,6 +142,10 @@ function captionFromForm() {
     outline_color: value("outline_color"),
     uppercase: form.elements.uppercase.checked,
     words_per_cue: Number(value("words_per_cue")),
+    cue_min_ms: Number(value("cue_min_ms")),
+    cue_max_ms: Number(value("cue_max_ms")),
+    cue_gap_ms: Number(value("cue_gap_ms")),
+    cue_lines: Number(value("cue_lines")),
     position: value("position"),
     margin: Number(value("margin")),
     outline: Number(value("outline")),
@@ -268,24 +272,34 @@ function updateCaptionOverlay(force = false) {
   const current = player.currentTime || 0;
   let cue = null,
     cueIndex = -1;
-  for (let i = 0; i < words.length; i += per) {
-    const group = words.slice(i, i + per);
-    if (
-      group.length &&
-      current >= group[0].start &&
-      current <= group[group.length - 1].end
-    ) {
-      cue = group;
+  const minimum = style.cue_min_ms / 1000;
+  const maximum = style.cue_max_ms / 1000;
+  const gap = style.cue_gap_ms / 1000;
+  for (let i = 0; i < words.length;) {
+    let end = i + 1;
+    while (end < Math.min(i + per, words.length)) {
+      const previous = words[end - 1], next = words[end];
+      if (next.start - previous.end >= gap || next.end - words[i].start > maximum
+          || (previous.end - words[i].start >= minimum && /[.!?…]$/.test(previous.word.trim()))) break;
+      end++;
+    }
+    if (current >= words[i].start && current < words[end - 1].end) {
+      cue = words.slice(i, end);
       cueIndex = i;
       break;
     }
+    if (current < words[i].start) break;
+    i = end;
   }
-  if (!cue) {
+  const active = cue?.findIndex((word, i) => {
+    const next = cue[i + 1];
+    const end = next && next.start - word.end <= .15 ? next.start : word.end;
+    return current >= word.start && current < end;
+  }) ?? -1;
+  if (active < 0) {
     overlay.hidden = true;
     return;
   }
-  let active = 0;
-  for (let i = 0; i < cue.length; i++) if (current >= cue[i].start) active = i;
   const marked = [];
   for (let i = 0; i < cue.length; i++)
     if (cue[i].emphasis === true) marked.push(i);

@@ -120,10 +120,14 @@ function renderEditorialResult(job) {
     + (job.elapsed !== null ? " · " + job.elapsed.toFixed(2) + " s" : "")
     + (job.error ? " · " + job.error : "");
   output.append(status);
-  if (!job.result) return;
+  if (!job.result) {
+    if (job.error?.startsWith("Subtítulos bloqueados.")) $("#subtitle-quality").open = true;
+    return;
+  }
   const caseData = job.result;
-  const recommended = caseData.variants.find(v => v.style === caseData.recommended_variant);
-  const chosen = job.selected || recommended.style;
+  const recommended = caseData.variants.find(v => v.style === caseData.recommended_variant
+    && v.score > 0 && caseData.editorial_score > 0 && caseData.confidence > 0);
+  const chosen = job.selected || recommended?.style;
   const active = caseData.variants.find(v => v.style === chosen);
   const activeText = job.edits[chosen] || active;
   const secondary = caseData.secondary_topics.map(escapeHTML).join(" · ") || "—";
@@ -149,13 +153,13 @@ function renderEditorialResult(job) {
     </details>`;
   }).join("");
   output.insertAdjacentHTML("beforeend", `
-    <h3>${escapeHTML(activeText.title)}</h3>
-    <p>${escapeHTML(activeText.caption)} · ${escapeHTML(activeText.hashtags.join(" "))}</p>
+    ${activeText ? `<h3>${escapeHTML(activeText.title)}</h3>
+    <p>${escapeHTML(activeText.caption)} · ${escapeHTML(activeText.hashtags.join(" "))}</p>` : ""}
     <p>Puntuación de detección ${caseData.original_score ?? "—"} · Editorial ${caseData.editorial_score}/10 · Confianza ${Math.round(caseData.confidence * 100)}%</p>
     <p>${editorialProvider(caseData.provider)}${caseData.model ? " · " + escapeHTML(caseData.model) : ""}
       · ${editorialPlatforms[caseData.platform]} · Prompt ${escapeHTML(caseData.prompt_version)}</p>
     <p>Tema · ${escapeHTML(caseData.main_topic)}</p>
-    <p>Recomendada · ${editorialStyles[recommended.style]}. ${escapeHTML(caseData.recommendation_reason)}</p>
+    <p>${recommended ? `Recomendada · ${editorialStyles[recommended.style]}. ${escapeHTML(caseData.recommendation_reason)}` : "No hay una propuesta editorial válida para recomendar."}</p>
     <details class="editorial-details"><summary>Evaluación y evidencia</summary>
       <p>Temas secundarios · ${secondary}</p>
       <p>Intención · ${escapeHTML(({explain:"Explicar", tell:"Narrar", react:"Reaccionar", ask:"Preguntar"})[caseData.intent] || "Sin determinar")}</p>
@@ -245,6 +249,7 @@ async function openEditorial(clip) {
     renderEditorialResult(null);
   }
   await refreshEditorialClips(clip);
+  resetSubtitlePanel();
   await refreshEditorialHistory();
   await refreshEditorialConnection();
   if (clip) $("#editorial-heading").scrollIntoView({ block: "start" });
@@ -254,10 +259,19 @@ async function generateEditorial(force, test = false) {
   await studioConfig;
   const clip = editorialView.clips.find(item => editorialClipKey(item) === $("#editorial-clip").value);
   if (!test && !clip) throw new Error("Selecciona un clip terminado.");
-  const response = await editorialApi(test ? "test" : "generate", {
-    project: clip?.project, filename: clip?.filename, platform: $("#editorial-platform").value, force,
-  });
-  if (test) $("#editorial-clip").value = "";
+  let response;
+  try {
+    response = await editorialApi(test ? "test" : "generate", {
+      project: clip?.project, filename: clip?.filename, platform: $("#editorial-platform").value, force,
+    });
+  } catch (error) {
+    if (/subtítulo|\bSRT\b|transcripci[oó]n/i.test(error.message)) $("#subtitle-quality").open = true;
+    throw error;
+  }
+  if (test) {
+    $("#editorial-clip").value = "";
+    resetSubtitlePanel();
+  }
   editorialView.before = null;
   editorialView.selected = response.job_id;
   renderEditorialResult(await editorialApi("result?id=" + response.job_id));
@@ -297,6 +311,7 @@ $("#editorial-cancel").addEventListener("click", editorialSafe(async () => {
   renderEditorialResult(await editorialApi("cancel", { job_id: editorialView.job.id }));
 }));
 $("#editorial-clip").addEventListener("change", editorialSafe(async () => {
+  resetSubtitlePanel();
   editorialView.selected = editorialView.before = null;
   renderEditorialResult(null);
   await refreshEditorialHistory();

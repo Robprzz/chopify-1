@@ -23,6 +23,7 @@ import editorial_providers
 import editorial_store
 import projects
 import render_clips
+import subtitle_repair
 import tiktok
 import video_types
 import watermark
@@ -37,6 +38,7 @@ STATIC_FILES = {
     "automation.js": ("automation.js", "text/javascript; charset=utf-8"),
     "watermark.js": ("watermark.js", "text/javascript; charset=utf-8"),
     "editorial.js": ("editorial.js", "text/javascript; charset=utf-8"),
+    "subtitles.js": ("subtitles.js", "text/javascript; charset=utf-8"),
     "style.css": ("style.css", "text/css; charset=utf-8"),
 }
 
@@ -109,6 +111,7 @@ class Studio:
         self.automation_settings = automation.SettingsStore(self.root)
         self.watermark = watermark.Store(self.root)
         self.editorial = editorial.Engine(self.automation_settings, self.tiktok._clip)
+        self.subtitle_repair = subtitle_repair.Repair(self.root, self.tiktok._clip)
         self.processes = set()
         self.live_sessions = {}
         self.live_lock = threading.Lock()
@@ -243,6 +246,7 @@ class Studio:
                 child.terminate()
             self.executor.shutdown(wait=False, cancel_futures=True)
         self.editorial.close()
+        self.subtitle_repair.close()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -328,6 +332,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self.automation_settings_action()
             if len(parts) == 3 and parts[:2] == ["api", "editorial"]:
                 return self.editorial_action(parts[2], query=parse_qs(location.query, max_num_fields=4))
+            if len(parts) == 3 and parts[:2] == ["api", "subtitle-repair"]:
+                if parts[2] == "latest":
+                    query = parse_qs(location.query, max_num_fields=2)
+                    return self.send_json(self.app.subtitle_repair.latest(
+                        query.get("project", [""])[0], query.get("filename", [""])[0]))
+                return self.send_json(self.app.subtitle_repair.status(parts[2]))
+            if len(parts) == 3 and parts[0] == "subtitle-repair":
+                return self.send_file(self.app.subtitle_repair.asset(parts[1], parts[2]))
             if parts == ["api", "watermark"]:
                 return self.send_json(self.app.watermark.read())
             if len(parts) == 2 and parts[0] == "watermark-image":
@@ -387,6 +399,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.automation_settings_action(body)
             if len(parts) == 3 and parts[:2] == ["api", "editorial"]:
                 return self.editorial_action(parts[2], body)
+            if len(parts) == 3 and parts[:2] == ["api", "subtitle-repair"]:
+                if parts[2] not in {"diagnose", "transcribe", "preview", "export"}:
+                    return self.send_json({"error": "Acción de subtítulos desconocida."}, 404)
+                return self.send_json(self.app.subtitle_repair.start(parts[2], body), 202)
             if parts == ["api", "live"]:
                 source = body.get("source")
                 if not isinstance(source, str) or not source.strip():

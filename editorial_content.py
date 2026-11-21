@@ -211,9 +211,11 @@ def assemble(plan, source, settings, provider, model):
             "reason": "Se apoya en el fragmento transcrito que comienza en "
                       f"{entries[item['caption']]['start']:.2f} s."
         })
-    recommended = max(variants, key=lambda item: item["score"])
+    best = max(variants, key=lambda item: item["score"])
     criteria = {k: {"score": v["score"], "justification": f'{LABELS[k]} · «{text[v["evidence"]]}»',
                     "evidence": entries[v["evidence"]]} for k, v in plan["criteria"].items()}
+    score = round(sum(criteria[k]["score"] * settings["weights"][k] for k in WEIGHTS) / 100, 2)
+    recommended = best["style"] if best["score"] > 0 and score > 0 and plan["confidence"] > 0 else None
     return {
         "clip_id": source["clip_id"], "provider": provider, "model": model, "prompt_version": PROMPT_VERSION,
         "platform": platform, "language": language, "main_topic": text[plan["main"]],
@@ -222,10 +224,11 @@ def assemble(plan, source, settings, provider, model):
         "highlights": [entries[i] for i in plan["ideas"]],
         "intent": plan["intent"], "emotion": plan["emotion"], "educational_value": plan["education"],
         "standalone": plan["standalone"], "original_score": source["original_score"],
-        "editorial_score": round(sum(criteria[k]["score"] * settings["weights"][k] for k in WEIGHTS) / 100, 2),
+        "editorial_score": score,
         "confidence": plan["confidence"], "criteria": criteria, "variants": variants,
-        "recommended_variant": recommended["style"],
-        "recommendation_reason": "La variante obtuvo la mayor puntuación editorial entre las tres propuestas.",
+        "recommended_variant": recommended,
+        "recommendation_reason": ("La variante obtuvo la mayor puntuación editorial entre las tres propuestas."
+                                  if recommended else "No hay una propuesta editorial válida para recomendar."),
         "warnings": [message for condition, message in [
             (provider == "rules", "Generado mediante reglas locales."),
             (source["filtered"], "Se omitieron pasajes con apariencia de instrucciones."),

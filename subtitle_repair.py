@@ -256,8 +256,8 @@ class Repair:
         self.future = None
         self.active_id = None
 
-    def close(self):
-        self.pool.shutdown(wait=False, cancel_futures=True)
+    def close(self, wait=False):
+        self.pool.shutdown(wait=wait, cancel_futures=True)
 
     def _folder(self, ident):
         if not isinstance(ident, str) or not re.fullmatch(r"[0-9a-f]{20}", ident):

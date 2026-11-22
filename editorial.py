@@ -43,6 +43,8 @@ class Engine:
         self.events = Queue(maxsize=MAX_PENDING)
         self.lock = threading.Lock()
         self.model_lock = threading.Lock()
+        self.dispatch_lock = threading.Lock()
+        self.quiescing = False
         self.schema_lock = threading.Lock()
         self.migrated = False
         self.model_status = {"available": None, "models": [], "error": None, "executable_found": None}
@@ -81,6 +83,18 @@ class Engine:
             if not any(m["name"] == model and m["digest"] for m in self.refresh_models(force=True)["models"]):
                 raise ValueError("Selecciona un modelo local instalado con una versión verificable.")
         return self.store.save_config(settings, revision)
+
+    def pause_dispatch(self, paused):
+        with self.dispatch_lock:
+            self.quiescing = paused
+        self.wake.set()
+
+    def busy(self):
+        if not self.migrated:
+            return False
+        with self.store.connect() as db:
+            return bool(db.execute("SELECT 1 FROM editorial_jobs WHERE owner=? AND state='running'",
+                                   (self.owner,)).fetchone())
 
     def close(self):
         self.stopping.set()
@@ -248,8 +262,9 @@ class Engine:
         while not self.stopping.is_set():
             try:
                 self._migrate()
-                auto = self._accept_auto()
-                claimed = self.store.claim(self.owner)
+                with self.dispatch_lock:
+                    auto = False if self.quiescing else self._accept_auto()
+                    claimed = None if self.quiescing else self.store.claim(self.owner)
                 if claimed:
                     self._process(*claimed)
                     continue

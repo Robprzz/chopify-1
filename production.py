@@ -121,6 +121,8 @@ class Production:
         self.owner = secrets.token_hex(12)
         self.wake = threading.Event()
         self.stopping = threading.Event()
+        self.dispatch_lock = threading.Lock()
+        self.quiescing = False
         self.thread = threading.Thread(target=self._run, daemon=True, name="chopify-production")
         self.thread.start()
 
@@ -132,10 +134,20 @@ class Production:
             self.store.enqueue(project, filename)
             self.wake.set()
 
+    def pause_dispatch(self, paused):
+        with self.dispatch_lock:
+            self.quiescing = paused
+        self.wake.set()
+
+    def active(self):
+        with self.store.connect() as db:
+            return bool(db.execute("SELECT 1 FROM production_jobs WHERE owner=? AND finished IS NULL",
+                                   (self.owner,)).fetchone())
+
     def close(self):
         self.stopping.set()
         self.wake.set()
-        self.thread.join(timeout=3)
+        self.thread.join()
 
     def _scan(self):
         allow_live = self.settings.read()["settings"]["live_clipping"]
@@ -151,7 +163,8 @@ class Production:
                 if time.monotonic() >= next_scan:
                     next_scan = time.monotonic() + SCAN_INTERVAL
                     self._scan()
-                job = self.store.claim(self.owner)
+                with self.dispatch_lock:
+                    job = None if self.quiescing else self.store.claim(self.owner)
                 if job:
                     self._process(job)
                     continue

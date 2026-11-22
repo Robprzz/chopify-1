@@ -8,6 +8,8 @@ import mimetypes
 from pathlib import Path
 import re
 import secrets
+import os
+import signal
 import socket
 import sqlite3
 import subprocess
@@ -25,6 +27,9 @@ import projects
 import production
 import render_clips
 import subtitle_repair
+import studio_settings
+import studio_system
+import studio_windows
 import tiktok
 import video_types
 import watermark
@@ -41,6 +46,8 @@ STATIC_FILES = {
     "editorial.js": ("editorial.js", "text/javascript; charset=utf-8"),
     "subtitles.js": ("subtitles.js", "text/javascript; charset=utf-8"),
     "production.js": ("production.js", "text/javascript; charset=utf-8"),
+    "system.js": ("system.js", "text/javascript; charset=utf-8"),
+    "chopify.ico": ("chopify.ico", "image/x-icon"),
     "style.css": ("style.css", "text/css; charset=utf-8"),
 }
 
@@ -101,7 +108,7 @@ def project_detail(root, project_id):
 
 
 class Studio:
-    def __init__(self, root):
+    def __init__(self, root, installation=None):
         self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         (self.root / "brands").mkdir(exist_ok=True)
@@ -110,7 +117,11 @@ class Studio:
         self.lock = threading.RLock()
         self.futures = {}
         self.resources = threading.Lock()
-        self.tiktok = tiktok.TikTokStudio(self.root, self.busy)
+        self.installation = installation
+        self.identity = installation.identity() if installation else None
+        self.active_requests = 0
+        profile = installation.read()["tiktok_profile"] if installation else "production"
+        self.tiktok = tiktok.TikTokStudio(self.root, self.busy, installation.vault if installation else None, profile)
         self.automation_settings = automation.SettingsStore(self.root)
         self.watermark = watermark.Store(self.root)
         self.editorial = editorial.Engine(self.automation_settings, self.tiktok._clip, resources=self.resources)
@@ -119,6 +130,7 @@ class Studio:
         self.live_sessions = {}
         self.live_lock = threading.Lock()
         self.closing = False
+        self.closed = False
         for path in self.root.glob("*/project.json"):
             try:
                 state = projects.read_project(path.parent)
@@ -130,6 +142,7 @@ class Studio:
 
         self.production = production.Production(self.root, self.editorial, self.automation_settings,
                                                self.tiktok._clip, self._production_catalog, self.resources)
+        self.system = studio_system.System(installation or studio_settings.Settings(HERE), self)
 
     def _production_catalog(self):
         from live_clips import PRODUCTION_REPAIR, live_exports
@@ -214,14 +227,17 @@ class Studio:
                 with self.lock:
                     if self.closing:
                         return
-                    child = subprocess.Popen(cmd, cwd=HERE, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
+                    child = subprocess.Popen(cmd, cwd=HERE, stdin=subprocess.DEVNULL, stdout=log,
+                                             stderr=subprocess.STDOUT, start_new_session=os.name != "nt")
                     self.processes.add(child)
                 code = child.wait()
                 with self.lock:
                     self.processes.discard(child)
             if code:
                 state = projects.read_project(path)
-                state.update(status="failed", error=state.get("error") or "Job failed. Open the job log for setup or input details.")
+                state.update(status="interrupted" if self.closing else "failed",
+                             error="Studio se cerró. Reanuda el proyecto para continuar." if self.closing else (
+                                 state.get("error") or "Job failed. Open the job log for setup or input details."))
                 projects.save_project(path, state)
         except Exception as exc:
             state = projects.read_project(path)
@@ -271,17 +287,61 @@ class Studio:
                 continue
         return result
 
+    def activity(self):
+        with self.lock:
+            return {
+                "projects": sum(not future.done() for future in self.futures.values()),
+                "live": sum(getattr(session, "status", None) in {"starting", "running"}
+                            for session in self.live_sessions.values()),
+                "production": self.production.active(),
+                "editorial": self.editorial.busy(),
+                "subtitle_repair": bool(self.subtitle_repair.future and not self.subtitle_repair.future.done()),
+                "tiktok_transfer": self.tiktok.sending,
+                "tiktok_verification": self.system.restoring(),
+            }
+
+    def quiesce(self, mode):
+        with self.lock:
+            if self.closing:
+                raise ValueError("Studio ya está preparando el cierre.")
+            self.closing = True
+            self.production.pause_dispatch(True)
+            if mode != "wait":
+                self.editorial.pause_dispatch(True)
+
+    def unquiesce(self):
+        with self.lock:
+            self.closing = False
+            self.production.pause_dispatch(False)
+            self.editorial.pause_dispatch(False)
+
     def close(self):
         with self.lock:
-            self.closing = True
-            for session in list(self.live_sessions.values()):
-                session.stop()
-            for child in list(self.processes):
-                child.terminate()
-            self.executor.shutdown(wait=False, cancel_futures=True)
+            if self.closed:
+                return
+            self.closed = self.closing = True
+            sessions = list(self.live_sessions.values())
+            children = list(self.processes)
+        self.production.pause_dispatch(True)
+        self.editorial.pause_dispatch(True)
+        for session in sessions:
+            session.stop()
+        for child in children:
+            if child.poll() is not None:
+                continue
+            if os.name == "nt":
+                from ingest import _kill_tree
+                _kill_tree(child)
+            else:
+                try:
+                    os.killpg(child.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+        self.executor.shutdown(wait=True, cancel_futures=True)
         self.production.close()
         self.editorial.close()
-        self.subtitle_repair.close()
+        self.subtitle_repair.close(wait=True)
+        self.system.close()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -320,15 +380,14 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({"error": "Use the 127.0.0.1 Studio address."}, 403)
         try:
             location = urlsplit(self.path)
-            if location.path == tiktok.CALLBACK:
-                values = parse_qs(location.query, max_num_fields=16)
-                self.app.tiktok.callback(values, self.server.server_port)
-                self.send_response(303)
-                self.send_header("Location", "/#publicaciones")
-                self.send_header("Content-Length", "0")
-                self.end_headers()
-                return
+            if location.path in {tiktok.AUTHORIZE_START, tiktok.CALLBACK}:
+                return self.oauth_navigation(location)
             parts = unquote(location.path).strip("/").split("/")
+            if parts == ["api", "health"] and self.app.identity:
+                nonce = parse_qs(location.query, max_num_fields=1).get("nonce", [""])[0]
+                return self.send_json({"proof": studio_settings.instance_proof(self.app.identity, nonce)})
+            if parts == ["api", "system", "status"]:
+                return self.send_json(self.app.system.status())
             if parts == ["api", "config"]:
                 brands = sorted(p.stem for p in (self.app.root / "brands").glob("*.json"))
                 caption_brands = {}
@@ -344,6 +403,7 @@ class Handler(BaseHTTPRequestHandler):
                     }
                 payload = {
                     "token": self.app.token,
+                    "managed_settings": self.app.installation is not None,
                     "defaults": projects.DEFAULT_OPTIONS,
                     "brands": brands,
                     "caption_brands": caption_brands,
@@ -416,12 +476,43 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, TypeError) as exc:
             self.send_json({"error": str(exc)}, 400)
 
+    def oauth_navigation(self, location):
+        with self.app.lock:
+            if self.app.closing:
+                return self.send_json({"error": "Studio está cerrando. Vuelve a conectar TikTok al iniciar."}, 409)
+            self.app.active_requests += 1
+        try:
+            if location.path == tiktok.AUTHORIZE_START:
+                url = self.app.tiktok.take_authorization_url(parse_qs(location.query, max_num_fields=1))
+            else:
+                self.app.tiktok.callback(parse_qs(location.query, max_num_fields=16), self.server.server_port)
+                url = "/#publicaciones"
+            self.send_response(303)
+            self.send_header("Location", url)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+        finally:
+            with self.app.lock:
+                self.app.active_requests -= 1
+
     def do_POST(self):
         origin = self.headers.get("Origin")
         expected = f"http://127.0.0.1:{self.server.server_port}"
-        if (not self.valid_host() or (origin is not None and origin != expected)
-                or not secrets.compare_digest(self.headers.get("X-Chopify-Token", ""), self.app.token)):
+        token = self.headers.get("X-Chopify-Token", "")
+        if (not token.isascii() or not self.valid_host() or (origin is not None and origin != expected)
+                or not secrets.compare_digest(token, self.app.token)):
             return self.send_json({"error": "Request rejected. Reload Studio and retry."}, 403)
+        with self.app.lock:
+            if self.app.closing:
+                return self.send_json({"error": "Studio está preparando el cierre."}, 409)
+            self.app.active_requests += 1
+        try:
+            return self._dispatch_POST()
+        finally:
+            with self.app.lock:
+                self.app.active_requests -= 1
+
+    def _dispatch_POST(self):
         try:
             length = int(self.headers.get("Content-Length", "0"))
             if not 0 < length <= 10_000_000:
@@ -430,6 +521,8 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(body, dict):
                 raise ValueError("Expected a JSON object.")
             parts = unquote(urlsplit(self.path).path).strip("/").split("/")
+            if len(parts) == 3 and parts[:2] == ["api", "system"]:
+                return self.system_action(parts[2], body)
             if len(parts) == 3 and parts[:2] == ["api", "tiktok"]:
                 return self.tiktok_action(parts[2], body)
             if parts == ["api", "automation", "settings"]:
@@ -525,6 +618,47 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"error": "Project or transcript not found. Prepare the project first."}, 404)
         except (ValueError, KeyError, TypeError, OSError) as exc:
             self.send_json({"error": str(exc)}, 400)
+
+    def system_action(self, action, body):
+        system = self.app.system
+        if action == "save":
+            return self.send_json(system.save(body))
+        if action == "diagnose":
+            return self.send_json(system.diagnose())
+        if action == "ollama":
+            return self.send_json(system.diagnose(start=True))
+        if action == "credentials":
+            self.app.tiktok.change_credentials(body.get("profile"), body.get("action"), body.get("key"), body.get("secret"))
+            system.restore_in_background()
+            return self.send_json(self.app.tiktok.integrations())
+        if action == "verify":
+            return self.send_json(self.app.tiktok.verify_authorization(renew=body.get("renew") is True))
+        if action == "forget":
+            return self.send_json(self.app.tiktok.disconnect(local_only=True))
+        if action == "shortcut":
+            command = body.get("action")
+            if command not in {"status", "create", "delete"}:
+                raise ValueError("Selecciona una acción de acceso directo.")
+            return self.send_json({"shortcut": studio_windows.shortcut(system.store.checkout, command)})
+        if action == "choose-folder":
+            return self.send_json({"path": studio_windows.choose_folder()})
+        if action == "logs":
+            system.open_logs()
+            return self.send_json({"ok": True})
+        if action == "update-check":
+            return self.send_json(system.repository.check())
+        if action in {"update", "shutdown"}:
+            if body.get("confirmed") is not True:
+                raise ValueError("Confirma la operación en Studio.")
+            mode = "update" if action == "update" else body.get("mode")
+            if mode == "update" and action != "update":
+                raise ValueError("Elige una modalidad de cierre válida.")
+            result = system.lifecycle(self.server, mode, body)
+            try:
+                return self.send_json(result)
+            finally:
+                system.stop_server(self.server, mode)
+        return self.send_json({"error": "Acción de sistema desconocida."}, 404)
 
     def automation_settings_action(self, body=None):
         store = self.app.automation_settings
@@ -710,22 +844,33 @@ class StudioServer(ThreadingHTTPServer):
         super().server_bind()
 
 
-def make_server(root="projects", port=8765):
+def make_server(root="projects", port=8765, installation=None):
     static_files = load_static_files()
     server = StudioServer(("127.0.0.1", port), Handler)
     server.static_files = static_files
-    server.app = Studio(root)
+    try:
+        server.app = Studio(root, installation)
+    except BaseException:
+        server.server_close()
+        raise
     return server
 
 
 def main():
     parser = argparse.ArgumentParser(description="Open Chopify Studio on your own computer.")
-    parser.add_argument("--projects-dir", default="projects")
+    parser.add_argument("--projects-dir")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--no-browser", action="store_true")
+    parser.add_argument("--managed-launch", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
+    job_handle = studio_windows.managed_job() if args.managed_launch else None
+    installation = studio_settings.Settings(HERE)
     try:
-        server = make_server(args.projects_dir, args.port)
+        prefs = installation.read()
+        studio_settings.tool_path(studio_settings.find_ffmpeg(HERE, prefs["ffmpeg_dir"]), os.environ)
+        server = make_server(args.projects_dir or installation.projects(prefs), args.port, installation)
+    except ValueError as exc:
+        parser.exit(1, f"{exc}\n")
     except RuntimeError as exc:
         parser.exit(1, f"{exc}\n")
     except OSError as exc:
@@ -734,8 +879,13 @@ def main():
         parser.exit(1, f"Cannot bind Studio to port {args.port}. Stop any previous Studio process and check whether the port is already in use.\n")
     url = f"http://127.0.0.1:{server.server_port}"
     print(f"Chopify Studio: {url}\nCheckout: {HERE}\nProjects: {server.app.root}\nPress Ctrl+C to stop.", flush=True)
-    if not args.no_browser:
-        webbrowser.open(url)
+    for name in ("CHOPIFY_TIKTOK_CLIENT_KEY", "CHOPIFY_TIKTOK_CLIENT_SECRET"):
+        os.environ.pop(name, None)
+    if args.managed_launch and os.name == "nt" and not job_handle:
+        print("Windows no permitió crear el grupo de procesos administrado.", flush=True)
+    server.app.system.start_optional()
+    if not args.no_browser and prefs["open_browser"]:
+        threading.Thread(target=webbrowser.open, args=(url,), daemon=True).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:

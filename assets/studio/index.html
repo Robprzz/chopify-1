@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="robots" content="noindex,nofollow" />
     <title>Chopify Studio · Local video workspace</title>
-    <link rel="icon" href="data:," />
+    <link rel="icon" href="/chopify.ico" />
     <link rel="stylesheet" href="/style.css" />
     <script src="/app.js" defer></script>
     <script src="/publications.js" defer></script>
@@ -13,6 +13,7 @@
     <script src="/editorial.js" defer></script>
     <script src="/subtitles.js" defer></script>
     <script src="/production.js" defer></script>
+    <script src="/system.js" defer></script>
     <script src="/watermark.js" defer></script>
   </head>
   <body>
@@ -29,6 +30,7 @@
       <button id="show-live" class="wide">● Live clipping</button>
       <button id="show-publications" class="wide" lang="es">Publicaciones</button>
       <button id="show-automation" class="wide">Automation</button>
+      <button id="show-system" class="wide" lang="es">System Settings</button>
       <button id="show-watermark" class="wide" lang="es">Marca de agua</button>
       <div class="rail-heading">
         YOUR PROJECTS <span id="project-count">0</span>
@@ -910,6 +912,112 @@
             </details>
           </aside>
         </div>
+      </section>
+      <section id="system-view" class="view" lang="es" hidden>
+        <div class="intro">
+          <h1>System Settings</h1>
+          <p id="system-message" role="status"></p>
+          <p id="system-error" role="alert" hidden></p>
+        </div>
+        <section class="panel input-panel" id="system-wizard" aria-labelledby="wizard-heading" hidden>
+          <h2 id="wizard-heading">Primera configuración</h2>
+          <p id="wizard-progress"></p>
+          <p id="wizard-guidance"></p>
+          <div class="publication-actions">
+            <button id="wizard-back" type="button">Anterior</button>
+            <button id="wizard-next" type="button" class="primary">Siguiente</button>
+            <button id="wizard-finish" type="button">Terminar configuración</button>
+          </div>
+        </section>
+        <form class="panel input-panel system-section" id="system-general" autocomplete="off">
+          <h2>General</h2>
+          <p id="system-projects-current"></p>
+          <label>Carpeta de proyectos <input name="projects_dir" maxlength="4096" placeholder="Usar projects de la instalación" /></label>
+          <button type="button" data-system-folder="projects_dir" class="system-windows">Elegir carpeta</button>
+          <label class="check"><input type="checkbox" name="open_browser" /> Abrir el navegador predeterminado al iniciar</label>
+          <button type="submit">Guardar preferencias generales</button>
+        </form>
+        <section class="panel input-panel system-section" id="system-dependencies">
+          <h2>Dependencias</h2>
+          <dl id="system-python" class="production-metrics"></dl>
+          <form id="system-ffmpeg-form" autocomplete="off">
+            <label>Carpeta de FFmpeg y FFprobe <input name="ffmpeg_dir" maxlength="4096" placeholder="Detección automática" /></label>
+            <div class="publication-actions">
+              <button type="button" data-system-folder="ffmpeg_dir" class="system-windows">Elegir carpeta</button>
+              <button type="submit">Guardar ubicación</button>
+              <button id="system-diagnose" type="button">Ejecutar diagnóstico</button>
+            </div>
+          </form>
+          <p id="system-ffmpeg"></p>
+          <h3>Ollama local</h3>
+          <p id="system-ollama"></p>
+          <label class="check"><input id="system-ollama-auto" type="checkbox" /> Autorizar el inicio de Ollama local con Studio</label>
+          <div class="publication-actions">
+            <button id="system-save-ollama" type="button">Guardar preferencia de Ollama</button>
+            <button id="system-check-ollama" type="button">Comprobar o iniciar Ollama</button>
+          </div>
+          <label>Modelo local <select id="system-model"><option value="">Selección automática en producción</option></select></label>
+          <button id="system-save-model" type="button">Guardar modelo</button>
+        </section>
+        <section class="panel input-panel system-section" id="system-integrations">
+          <h2>Integraciones de TikTok</h2>
+          <label>Perfil activo <select id="system-profile"><option value="sandbox">Sandbox</option>
+            <option value="production">Production</option></select></label>
+          <button id="system-save-profile" type="button">Cambiar perfil activo</button>
+          <p id="system-account"></p>
+          <p id="system-profile-summary"></p>
+          <form id="system-credentials" autocomplete="off">
+            <fieldset>
+              <legend>Credenciales de la aplicación</legend>
+              <label>Perfil de las credenciales <select name="profile"><option value="sandbox">Sandbox</option>
+                <option value="production">Production</option></select></label>
+              <label>Client Key <input name="key" type="password" maxlength="512" autocomplete="off" /></label>
+              <label>Client Secret <input name="secret" type="password" maxlength="512" autocomplete="new-password" /></label>
+              <div class="publication-actions">
+                <button type="submit" value="save" id="system-secret-save">Guardar en Windows</button>
+                <button type="submit" value="temporary">Usar ahora temporalmente</button>
+                <button type="submit" value="delete">Eliminar credenciales guardadas</button>
+                <button type="submit" value="clear_temporary">Borrar credenciales temporales</button>
+              </div>
+            </fieldset>
+          </form>
+          <div class="publication-actions">
+            <button id="system-connect" type="button">Conectar cuenta</button>
+            <button id="system-verify" type="button">Verificar cuenta</button>
+            <button id="system-renew" type="button">Renovar autorización</button>
+            <button id="system-disconnect" type="button">Desconectar y revocar</button>
+            <button id="system-forget" type="button">Eliminar autorización local</button>
+          </div>
+        </section>
+        <section class="panel input-panel system-section" id="system-security">
+          <h2>Seguridad</h2>
+          <p id="system-storage"></p>
+          <p>Studio y su conexión a Ollama usan 127.0.0.1. Las credenciales temporales se borran al cerrar Studio.</p>
+        </section>
+        <section class="panel input-panel system-section" id="system-maintenance">
+          <h2>Mantenimiento</h2>
+          <p id="system-version"></p>
+          <div class="publication-actions">
+            <button id="system-update-check" type="button">Comprobar actualizaciones</button>
+            <button id="system-update" type="button" hidden>Actualizar y cerrar Studio</button>
+            <button id="system-logs" type="button" class="system-windows">Abrir carpeta de registros</button>
+          </div>
+          <p id="system-update-status" role="status"></p>
+          <p id="system-log-path"></p>
+          <h3>Acceso directo</h3>
+          <p id="system-shortcut-status"></p>
+          <div class="publication-actions">
+            <button type="button" data-system-shortcut="create" class="system-windows">Crear o recrear acceso directo</button>
+            <button type="button" data-system-shortcut="delete" class="system-windows">Eliminar acceso directo</button>
+            <button id="system-open-wizard" type="button">Abrir asistente</button>
+          </div>
+          <h3>Cerrar Studio</h3>
+          <p id="system-active"></p>
+          <div class="publication-actions">
+            <button type="button" data-system-shutdown="wait">Cerrar al terminar los trabajos activos</button>
+            <button type="button" data-system-shutdown="cancel">Cerrar y cancelar trabajos activos</button>
+          </div>
+        </section>
       </section>
       <footer>
         CHOPIFY <span>Open source. Local workspace.</span>

@@ -18,6 +18,7 @@ from pathlib import Path
 
 import projects
 import live_clips
+from secure_vault import PROFILES, VaultError
 
 API = "https://open.tiktokapis.com"
 INBOX_INIT = "/v2/post/publish/inbox/video/init/"
@@ -45,6 +46,10 @@ FAIL_REASONS = {
 }
 AUTHORIZE = "https://www.tiktok.com/v2/auth/authorize/"
 CALLBACK = "/api/tiktok/callback/"
+AUTHORIZE_START = "/api/tiktok/authorize/"
+AUTH_ERRORS = {"access_token_invalid", "invalid_grant", "invalid_client", "invalid_request",
+               "scope_not_authorized", "unauthorized_client", "server_error", "temporarily_unavailable",
+               "invalid_scope", "access_denied", "unsupported_grant_type"}
 SCOPES = ("user.info.basic", "video.upload")
 PRIVACY = {"PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "FOLLOWER_OF_CREATOR", "SELF_ONLY"}
 MAX_SIZE = 4 * 1024**3
@@ -119,7 +124,8 @@ class TikTokAPI:
 
     def send(self, request):
         try:
-            with self.opener.open(request, timeout=60) as response:
+            timeout = 15 if request.selector.startswith(("/v2/oauth/", "/v2/user/info/")) else 60
+            with self.opener.open(request, timeout=timeout) as response:
                 return response.status, response.read(128 * 1024)
         except urllib.error.HTTPError as exc:
             code = f"HTTP_{exc.code}"
@@ -129,7 +135,9 @@ class TikTokAPI:
                     try:
                         raw = exc.read(128 * 1024)
                         extract_code = _content_error_code if posting else _error_code
-                        code = extract_code(_decode(raw), code)
+                        candidate = extract_code(_decode(raw), code)
+                        if posting or candidate in AUTH_ERRORS:
+                            code = candidate
                     except (TikTokError, OSError, http.client.HTTPException):
                         pass
             raise TikTokError(f"TikTok rechazó la solicitud ({code}).", code) from None
@@ -147,6 +155,7 @@ class TikTokAPI:
         data = _decode(raw)
         if data.get("error"):
             code = _error_code(data, "oauth_error")
+            code = code if code in AUTH_ERRORS else "oauth_error"
             raise TikTokError(f"TikTok rechazó OAuth ({code}).", code)
         return data
 
@@ -160,6 +169,8 @@ class TikTokAPI:
         data = _decode(raw)
         extract_code = _content_error_code if path in (INBOX_INIT, POST_STATUS) else _error_code
         code = extract_code(data, "invalid_response")
+        if path not in (INBOX_INIT, POST_STATUS) and code not in AUTH_ERRORS | {"ok"}:
+            code = "invalid_response"
         if code != "ok" or not isinstance(data.get("data"), dict):
             raise TikTokError(f"TikTok rechazó la solicitud ({code}).", code)
         return data["data"]
@@ -209,12 +220,21 @@ def _inspect_mp4(path):
 
 
 class TikTokStudio:
-    def __init__(self, root, busy):
+    def __init__(self, root, busy, vault=None, profile="production"):
         self.root = Path(root).resolve()
         self.busy = busy
         self.history = self.root / ".tiktok-publications"
-        self.api = TikTokAPI(os.environ.get("CHOPIFY_TIKTOK_CLIENT_KEY", ""),
-                             os.environ.get("CHOPIFY_TIKTOK_CLIENT_SECRET", ""))
+        env = (os.environ.get("CHOPIFY_TIKTOK_CLIENT_KEY", ""),
+               os.environ.get("CHOPIFY_TIKTOK_CLIENT_SECRET", ""))
+        env_profile = os.environ.get("CHOPIFY_TIKTOK_PROFILE", "production")
+        self.environment = {env_profile: env} if env_profile in PROFILES and all(env) else {}
+        self.session = {}
+        self.vault = vault
+        self.profile = profile
+        self.credential_source = None
+        self.auth_persisted = False
+        self.authorization_url = None
+        self.api = TikTokAPI("", "")
         self.scopes = SCOPES
         if os.environ.get("CHOPIFY_TIKTOK_CREATOR_INFO") == "1":
             self.scopes += ("video.publish",)
@@ -225,6 +245,180 @@ class TikTokStudio:
         self.oauth_error = ""
         self.review = None
         self.sending = False
+        self._configure(profile)
+
+    def _record(self, profile, slot):
+        return self.vault.read(profile, slot) if self.vault else None
+
+    def _configure(self, profile):
+        if profile not in PROFILES:
+            raise TikTokError("Selecciona Sandbox o Production.")
+        self.profile = profile
+        self.pending = self.token = self.account = self.review = self.authorization_url = None
+        self.oauth_error = ""
+        self.auth_persisted = False
+        source = None
+        key, secret = "", ""
+        if profile in self.environment:
+            key, secret = self.environment[profile]
+            source = "environment"
+        elif profile in self.session:
+            key, secret = self.session[profile]
+            source = "session"
+        else:
+            try:
+                saved = self._record(profile, "application")
+                if saved and isinstance(saved.get("key"), str) and isinstance(saved.get("secret"), str):
+                    key, secret = saved["key"], saved["secret"]
+                    source = "protected"
+            except VaultError as exc:
+                self.oauth_error = str(exc)
+        self.credential_source = source
+        self.api = TikTokAPI(key, secret)
+        if source == "protected":
+            try:
+                saved = self._record(profile, "authorization")
+                if saved and saved.get("binding") == self._credential_binding():
+                    remaining = saved["refresh_until"] - time.time()
+                    if not math.isfinite(remaining) or remaining <= 0:
+                        self.vault.delete(profile, "authorization")
+                        self.oauth_error = "La sesión de TikTok caducó. Vuelve a conectar la cuenta."
+                        return
+                    lifetime = saved["access_until"] - time.time()
+                    if not math.isfinite(lifetime):
+                        raise ValueError
+                    self.token = self._token_record({**saved, "scope": ",".join(saved["scopes"]),
+                                                     "expires_in": max(1, math.ceil(lifetime)),
+                                                     "refresh_expires_in": max(1, math.ceil(remaining))})
+                    self.token["expires"] = time.monotonic() + lifetime
+                    self.auth_persisted = True
+            except (VaultError, TikTokError, KeyError, ValueError, TypeError, OverflowError):
+                self.oauth_error = "No se pudo recuperar la autorización de TikTok. Vuelve a conectar la cuenta."
+
+    def _credential_binding(self):
+        return hashlib.sha256(json.dumps([self.profile, self.api.key, self.api.secret]).encode()).hexdigest()
+
+    def _persist(self):
+        if not self.vault or self.credential_source != "protected":
+            return
+        token = self.token
+        wall = time.time()
+        clock = time.monotonic()
+        try:
+            self.vault.write(self.profile, "authorization", {
+                "binding": self._credential_binding(),
+                **{key: token[key] for key in ("access_token", "refresh_token", "open_id")},
+                "scopes": sorted(token["scopes"]), "access_until": wall + token["expires"] - clock,
+                "refresh_until": wall + token["refresh_expires"] - clock,
+            })
+            self.auth_persisted = True
+        except VaultError:
+            self.auth_persisted = False
+            self.oauth_error = "La autorización funciona en esta sesión. Windows no pudo guardar los tokens protegidos."
+
+    def _forget(self):
+        self.pending = self.token = self.account = self.review = self.authorization_url = None
+        self.auth_persisted = False
+        if self.vault and self.credential_source == "protected":
+            self.vault.delete(self.profile, "authorization")
+
+    def select_profile(self, profile):
+        with self.lock:
+            if self.sending:
+                raise TikTokError("Espera a que termine la subida antes de cambiar de perfil.")
+            self._configure(profile)
+
+    def change_credentials(self, profile, action, key=None, secret=None):
+        if profile not in PROFILES or action not in {"save", "temporary", "delete", "clear_temporary"}:
+            raise TikTokError("Acción de credenciales no válida.")
+        with self.lock:
+            if self.sending:
+                raise TikTokError("Espera a que termine la subida antes de editar credenciales.")
+            if action in {"save", "temporary"} and not all(
+                    isinstance(value, str) and 1 <= len(value) <= 512
+                    and re.fullmatch(r"[!-~]+", value) for value in (key, secret)):
+                raise TikTokError("Introduce el Client Key y el Client Secret completos, sin espacios.")
+            if action == "save":
+                if not self.vault:
+                    raise VaultError("El almacén protegido de Windows no está disponible.")
+                value = {"key": key, "secret": secret}
+                try:
+                    previous = self._record(profile, "application")
+                except VaultError:
+                    previous = None
+                self.vault.write(profile, "application", value)
+                if previous != value:
+                    self.vault.delete(profile, "authorization")
+                self.session.pop(profile, None)
+            elif action == "temporary":
+                self.session[profile] = (key, secret)
+            elif action == "delete":
+                if self.vault:
+                    self.vault.delete(profile, "authorization")
+                    self.vault.delete(profile, "application")
+                self.session.pop(profile, None)
+            else:
+                self.session.pop(profile, None)
+            if self.profile == profile:
+                self._configure(profile)
+
+    def integrations(self):
+        with self.lock:
+            profiles = {}
+            for profile in PROFILES:
+                try:
+                    saved = bool(self._record(profile, "application"))
+                except VaultError:
+                    saved = False
+                profiles[profile] = {"protected": saved, "temporary": profile in self.session,
+                                     "environment": profile in self.environment}
+            expired = bool(self.token and self.token["refresh_expires"] <= time.monotonic())
+            state = "expired" if expired else "verified" if self.account else "unverified" if self.token else "disconnected"
+            return {"profile": self.profile, "profiles": profiles, "source": self.credential_source,
+                    "protected_available": bool(self.vault and self.vault.available()),
+                    "authorization_saved": self.auth_persisted,
+                    "authorization": state,
+                    "account": self.account["name"] if self.account else None,
+                    "access_until": round(time.time() + self.token["expires"] - time.monotonic()) if self.token else None,
+                    "oauth_error": self.oauth_error}
+
+    def _verify_profile(self, token):
+        profile = self.api.authorized("/v2/user/info/?fields=open_id,display_name",
+                                      token["access_token"], method="GET").get("user")
+        if (not isinstance(profile, dict) or profile.get("open_id") != token["open_id"]
+                or not isinstance(profile.get("display_name"), str) or not profile["display_name"]):
+            raise TikTokError("TikTok no devolvió el perfil de la cuenta autorizada.")
+        # The former default (environment-only) continues to use Production history.
+        prefix = "sandbox:" if self.profile == "sandbox" else ""
+        key = hashlib.sha256((prefix + self.api.key + ":" + token["open_id"]).encode()).hexdigest()
+        return {"name": profile["display_name"][:150], "key": key}
+
+    def verify_authorization(self, *, renew=False, quiet=False):
+        with self.lock:
+            if not self.token:
+                if quiet:
+                    return
+                raise TikTokError("Conecta tu cuenta de TikTok.")
+            if self.sending:
+                raise TikTokError("Espera a que termine la subida antes de renovar la autorización.")
+            self.oauth_error = ""
+            try:
+                self._access("user.info.basic", verify=True, renew=renew)
+                try:
+                    self.account = self._verify_profile(self.token)
+                except TikTokError as exc:
+                    if exc.code not in {"access_token_invalid", "HTTP_401"} or renew:
+                        raise
+                    self._access("user.info.basic", verify=True, renew=True)
+                    self.account = self._verify_profile(self.token)
+            except TikTokError as exc:
+                if exc.code in {"access_token_invalid", "HTTP_401", "invalid_grant"}:
+                    self._forget()
+                self.account = self.review = None
+                self.oauth_error = str(exc)
+                if not quiet:
+                    raise
+            return {"ok": bool(self.account)}
 
     @staticmethod
     def redirect_uri(port):
@@ -234,7 +428,11 @@ class TikTokStudio:
         with self.lock:
             if not self.api.key or not self.api.secret:
                 raise TikTokError("Configura las credenciales de TikTok en el entorno de Studio.")
-            if self.account or self.sending:
+            if self.sending:
+                raise TikTokError("Espera a que termine la subida antes de cambiar de cuenta.")
+            if self.token and self.token["refresh_expires"] <= time.monotonic():
+                self._forget()
+            if self.token:
                 raise TikTokError("Desconecta la cuenta actual antes de cambiarla.")
             state, verifier = secrets.token_urlsafe(32), secrets.token_urlsafe(48)
             self.pending = (state, verifier, time.monotonic() + 600)
@@ -245,7 +443,22 @@ class TikTokStudio:
                 "state": state, "code_challenge_method": "S256",
                 "code_challenge": hashlib.sha256(verifier.encode()).hexdigest(),
             })
-            return {"url": AUTHORIZE + "?" + args}
+            url = AUTHORIZE + "?" + args
+            if self.vault is None:
+                return {"url": url}
+            self.authorization_url = url
+            return {"url": AUTHORIZE_START + "?state=" + state}
+
+    def take_authorization_url(self, values):
+        with self.lock:
+            state = values.get("state", [])
+            if (not self.authorization_url or not self.pending or len(state) != 1
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{40,50}", state[0])
+                    or not secrets.compare_digest(state[0], self.pending[0])
+                    or self.pending[2] < time.monotonic()):
+                raise TikTokError("Vuelve a iniciar la conexión de TikTok desde Studio.")
+            url, self.authorization_url = self.authorization_url, None
+            return url
 
     def callback(self, values, port):
         with self.lock:
@@ -255,7 +468,7 @@ class TikTokStudio:
                     or not secrets.compare_digest(state[0], self.pending[0])):
                 raise TikTokError("La sesión OAuth no coincide. Vuelve a conectar TikTok.")
             _, verifier, expires = self.pending
-            self.pending = None
+            self.pending = self.authorization_url = None
             code = values.get("code", [])
             try:
                 if expires < time.monotonic() or values.get("error") or len(code) != 1 or not code[0]:
@@ -268,18 +481,13 @@ class TikTokStudio:
                 required = set(SCOPES)
                 if not required.issubset(token["scopes"]):
                     raise TikTokError("TikTok no concedió los permisos de perfil y subida.")
-                profile = self.api.authorized("/v2/user/info/?fields=open_id,display_name",
-                                              token["access_token"], method="GET").get("user")
-                if (not isinstance(profile, dict) or profile.get("open_id") != token["open_id"]
-                        or not isinstance(profile.get("display_name"), str)
-                        or not profile["display_name"]):
-                    raise TikTokError("TikTok no devolvió el perfil de la cuenta autorizada.")
+                account = self._verify_profile(token)
             except TikTokError as exc:
                 self.oauth_error = str(exc)
             else:
                 self.token = token
-                key = hashlib.sha256((self.api.key + ":" + token["open_id"]).encode()).hexdigest()
-                self.account = {"name": profile["display_name"][:150], "key": key}
+                self.account = account
+                self._persist()
 
     @staticmethod
     def _token_record(data):
@@ -297,15 +505,13 @@ class TikTokStudio:
         except (KeyError, TypeError, ValueError, AttributeError, OverflowError):
             raise TikTokError("TikTok devolvió credenciales incompletas.") from None
 
-    def _access(self, scope="video.upload"):
-        if not self.account or not self.token:
+    def _access(self, scope="video.upload", *, verify=False, renew=False):
+        if not self.token or not (verify or self.account):
             raise TikTokError("Conecta tu cuenta de TikTok.")
         now = time.monotonic()
-        if self.token["expires"] - now < 60:
+        if renew or self.token["expires"] - now < 60:
             if self.token["refresh_expires"] <= now:
-                self.token = None
-                self.account = None
-                self.review = None
+                self._forget()
                 raise TikTokError("La sesión de TikTok caducó. Vuelve a conectar la cuenta.")
             try:
                 data = self.api.oauth("token", grant_type="refresh_token",
@@ -313,27 +519,31 @@ class TikTokStudio:
             except TikTokError as exc:
                 if exc.code != "invalid_grant":
                     raise
-                self.token = self.account = self.review = None
-                raise TikTokError("La sesión de TikTok caducó. Vuelve a conectar la cuenta.") from None
+                self._forget()
+                raise TikTokError("La sesión de TikTok caducó. Vuelve a conectar la cuenta.", "invalid_grant") from None
             updated = self._token_record(data)
             if updated["open_id"] != self.token["open_id"]:
                 raise TikTokError("TikTok devolvió una cuenta distinta durante la renovación.")
+            if not set(SCOPES).issubset(updated["scopes"]):
+                self._forget()
+                raise TikTokError("TikTok retiró el permiso necesario. Vuelve a conectar la cuenta.")
             self.token = updated
+            self._persist()
         if scope not in self.token["scopes"]:
             raise TikTokError(f"TikTok no ha concedido el permiso {scope}.")
         return self.token["access_token"]
 
-    def disconnect(self):
+    def disconnect(self, *, local_only=False):
         with self.lock:
             if self.sending:
                 raise TikTokError("Espera a que termine la subida antes de desconectar.")
-            if self.token:
+            if self.token and not local_only:
                 try:
                     self.api.oauth("revoke", token=self.token["access_token"])
                 except TikTokError as exc:
                     if exc.code not in {"access_token_invalid", "invalid_grant"}:
                         raise
-            self.pending = self.token = self.account = self.review = None
+            self._forget()
             self.oauth_error = ""
             return {"ok": True}
 

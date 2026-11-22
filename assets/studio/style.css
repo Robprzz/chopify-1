@@ -444,3 +444,18 @@ select { appearance: none; background-image: linear-gradient(45deg, transparent 
 
 .subtitle-preview { width: min(100%, 640px); max-height: 60vh; }
 #subtitle-draft-text { white-space: pre-wrap; max-height: 16rem; overflow: auto; }
+
+.production-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+  gap: .6rem 1rem;
+}
+.production-metrics div { border-bottom: 1px solid var(--line, #303638); padding-bottom: .45rem; }
+.production-metrics dd { margin: .2rem 0 0; font-weight: 700; }
+.production-table-wrap { max-width: 100%; overflow-x: auto; }
+.production-table-wrap table { width: 100%; border-collapse: collapse; text-align: left; }
+.production-table-wrap th, .production-table-wrap td { padding: .55rem; vertical-align: top; }
+.production-table-wrap td { border-top: 1px solid var(--line, #303638); overflow-wrap: anywhere; }
+.production-table-wrap small { display: block; }
+.production-table-wrap button { margin-bottom: .3rem; }
+#production-limit { width: 5rem; }

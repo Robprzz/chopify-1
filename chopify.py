@@ -327,6 +327,7 @@ def main():
                     help="optional safety cap; default all passing clips")
     ap.add_argument("--min-len", type=int, default=15, help="min clip seconds")
     ap.add_argument("--max-len", type=int, default=300, help="max clip seconds")
+    ap.add_argument("--automation-export", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--no-input", action="store_true",
                     help="never prompt; use flags and defaults")
     ap.add_argument("--explain", action="store_true",
@@ -519,12 +520,12 @@ def main():
                     return
             result = projects.run_project(path, action="render", preview=args.preview,
                                           pick=args.clips, resume=args.resume,
-                                          on_detection=detection_cb,
+                                          automation_export=args.automation_export, on_detection=detection_cb,
                                           explicit_keys=explicit_keys)
         else:
             result = projects.run_project(path, action=args.action, preview=args.preview,
                                           pick=args.clips, resume=args.resume,
-                                          on_detection=detection_cb,
+                                          automation_export=args.automation_export, on_detection=detection_cb,
                                           explicit_keys=explicit_keys)
         if not printed_summary:
             _print_selection(path, result, args.explain)

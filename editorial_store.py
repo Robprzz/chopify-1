@@ -53,6 +53,9 @@ class EditorialStore:
             db.execute("CREATE INDEX IF NOT EXISTS editorial_fingerprint ON editorial_jobs(fingerprint, id)")
             db.execute("CREATE INDEX IF NOT EXISTS editorial_clip ON editorial_jobs(clip_id, id)")
             db.execute("CREATE INDEX IF NOT EXISTS editorial_state ON editorial_jobs(state, id)")
+            db.execute("""CREATE INDEX IF NOT EXISTS editorial_production
+                          ON editorial_jobs(json_extract(settings, '$.production[0]'),
+                                            json_extract(settings, '$.production[1]'))""")
 
     def config(self):
         with self.connect() as db:
@@ -77,6 +80,12 @@ class EditorialStore:
     def submit(self, source, settings, fingerprint, force):
         clip_id = source["clip_id"]
         with self.connect(write=True) as db:
+            if "production" in settings:
+                registered = db.execute("""SELECT id FROM editorial_jobs
+                    WHERE json_extract(settings, '$.production[0]')=? AND json_extract(settings, '$.production[1]')=?
+                    LIMIT 1""", tuple(settings["production"])).fetchone()
+                if registered:
+                    return registered["id"], True
             row = db.execute("""
                 SELECT id FROM editorial_jobs WHERE fingerprint=? AND state IN ('queued','running')
                 ORDER BY id DESC LIMIT 1
@@ -121,9 +130,15 @@ class EditorialStore:
             if row:
                 settings = json.loads(row["settings"])
                 db.execute("""UPDATE editorial_jobs SET state='running', owner=?, lease=?, revision=revision+1
-                              WHERE id=?""", (owner, now + settings["timeout"] + 25, row["id"]))
+                              WHERE id=?""", (owner, now + 15, row["id"]))
                 return row["id"], json.loads(row["source"]), settings
             return None
+
+    def renew(self, job, owner):
+        with self.connect(write=True) as db:
+            row = db.execute("""UPDATE editorial_jobs SET lease=? WHERE id=? AND owner=? AND state='running'
+                              RETURNING cancel_requested""", (time.time() + 15, job, owner)).fetchone()
+            return row is not None and not row[0]
 
     def finish(self, job, owner, state, result, error, elapsed):
         with self.connect(write=True) as db:

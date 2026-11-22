@@ -351,7 +351,7 @@ class TikTokStudio:
             try:
                 media = live_clips.live_clip_path(self.root, project[5:], filename)
                 state = projects.read_json(media.parent.parent / "live_session.json")
-                if media.suffix == ".mp4" and filename in live_clips.finished_names(state) and media.is_file():
+                if media.suffix == ".mp4" and media.is_file() and live_clips.finished_record(state, media):
                     return media
             except (OSError, ValueError, TypeError, KeyError, AttributeError):
                 pass

@@ -245,6 +245,7 @@ def test_live_automatic_processing_and_phase_one_switch(server):
 
 
 def test_conventional_export_completion_notifies_background_engine(server, monkeypatch):
+    monkeypatch.setattr("subtitle_quality.speech_ranges", lambda *_: [(.2, .9), (1.42, 2.3)])
     httpd, base = server
     project, clip = write_export(httpd.app.root)
 

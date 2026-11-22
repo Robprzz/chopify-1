@@ -13,6 +13,7 @@ import uuid
 
 import branding
 import captions
+import local_process
 import projects
 import render_clips
 import sections
@@ -46,15 +47,15 @@ def _whisper(media, destination, name):
                                         "whisper_segments": count})
 
 
-def transcribe_final(media, destination, name):
+def transcribe_final(media, destination, name, cancellation=None):
     try:
-        result = subprocess.run([sys.executable, str(Path(__file__).resolve()), str(media),
-                                 str(destination), name],
-                                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+        command = [sys.executable, str(Path(__file__).resolve()), str(media), str(destination), name]
+        result = (local_process.run(command, 300, cancellation) if cancellation
+                  else subprocess.run(command, capture_output=True, timeout=300))
     except subprocess.TimeoutExpired:
         raise quality.SubtitleError("La retranscripción local superó 5 minutos. Prueba con un modelo instalado más pequeño.") from None
     if result.returncode == 2:
-        raise quality.SubtitleError(result.stdout.strip())
+        raise quality.SubtitleError(result.stdout.decode("utf-8", errors="replace").strip())
     if result.returncode:
         raise quality.SubtitleError("Faster-Whisper no pudo retranscribir el audio final con el modelo local.")
     return projects.read_json(destination)
@@ -159,7 +160,7 @@ def verify_alignment(original, source, start, duration):
         raise quality.SubtitleError("No se pudo confirmar que la fuente limpia coincide con el audio del clip.")
 
 
-def _rebuild(root, media, project, folder, draft, *, preview):
+def _rebuild(root, media, project, folder, draft, *, preview, export_id=None, check=None):
     duration, streams = quality.probe_media(media)
     meta = projects.read_json(media.with_suffix(".meta.json"))
     manifest = meta.get("subtitles") or {}
@@ -176,7 +177,8 @@ def _rebuild(root, media, project, folder, draft, *, preview):
     brand = branding.load_brand(options["brand"]) if options["brand"] else None
     words = [{**w, "start": w["start"] + start, "end": w["end"] + start} for w in draft["words"]]
     tag = uuid.uuid4().hex[:10]
-    seg = {"id": "subtitulos-" + tag, "hook": meta.get("title", "clip").removesuffix(" #shorts"),
+    seg = {"id": export_id or "subtitulos-" + tag,
+           "hook": "corregido" if export_id else meta.get("title", "clip").removesuffix(" #shorts"),
            "start": start, "end": start + duration, "overall": meta.get("score")}
     with tempfile.TemporaryDirectory(prefix="render-", dir=folder) as staging:
         staging = Path(staging)
@@ -186,7 +188,7 @@ def _rebuild(root, media, project, folder, draft, *, preview):
             caption={**(options["caption"] or {}), **draft["timing"], "words_per_cue": draft["group_size"]},
             mark=mark, fit=options["fit"], layout=options["layout"], centers=options["centers"],
             facecam_box=options["facecam_box"], facecam_height=options["facecam_height"],
-            transcript_info={"model": draft["model"], "origin": "Faster-Whisper sobre el audio del MP4",
+            transcript_info={"model": draft["model"], "origin": draft.get("origin", "Faster-Whisper sobre el audio del MP4"),
                              "transcript_version": 1, "transcript_hash": projects.digest(draft["words"]),
                              "repaired_from": media.name},
             preview=preview, timeout=RENDER_TIMEOUT, allow_model_download=False,
@@ -218,17 +220,37 @@ def _rebuild(root, media, project, folder, draft, *, preview):
         result = quality.diagnose(out)
         if result["errors"]:
             raise quality.SubtitleError("El render corregido no superó la validación. " + result["errors"][0])
-        destination = folder if project.startswith("live/") else media.parent
+        if check:
+            check()
+        destination = folder if project.startswith("live/") and not export_id else media.parent
         for suffix in (".srt", ".ass", ".meta.json", ".png"):
             out.with_suffix(suffix).replace((destination / out.name).with_suffix(suffix))
         out.replace(destination / out.name)
         return {"export": out.name, "in_repair_folder": destination == folder}
 
 
+def make_draft(media, project, folder, evidence, timing, duration, fingerprint):
+    metadata = media.with_suffix(".meta.json")
+    manifest = (projects.read_json(metadata).get("subtitles") or {}) if metadata.is_file() else {}
+    options = _options_for_clip(media.parent.parent, manifest, project)
+    brand = branding.load_brand(options["brand"]) if options["brand"] else None
+    style = render_clips.resolve_caption(options["style"], brand, options["caption"])
+    group_size = style["words_per_cue"]
+    groups = captions.plan_cues(evidence["words"], 0, duration, group_size, **timing)
+    srt = captions.write_srt([], 0, duration, folder / "draft.srt", groups=groups)
+    cues = quality.read_srt(srt)
+    if not cues:
+        raise quality.SubtitleError("El audio no tiene palabras utilizables para regenerar subtítulos.")
+    draft = {**evidence, "duration": duration, "timing": timing, "group_size": group_size,
+             "media_hash": fingerprint, "project": project, "filename": media.name}
+    return draft, cues
+
+
 class Repair:
-    def __init__(self, root, clip_path):
+    def __init__(self, root, clip_path, resources=None):
         self.root = root
         self.clip_path = clip_path
+        self.resources = resources or threading.Lock()
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="subtitle-repair")
         self.lock = threading.Lock()
         self.future = None
@@ -306,7 +328,11 @@ class Repair:
             raise FileNotFoundError(path)
         return path
 
-    def _run(self, status, folder, media, project, model, timing, draft):
+    def _run(self, *args):
+        with self.resources:
+            self._process(*args)
+
+    def _process(self, status, folder, media, project, model, timing, draft):
         started = time.monotonic()
         action = status["action"]
         try:
@@ -320,25 +346,15 @@ class Repair:
                 evidence = transcribe_final(media, folder / "whisper.json", model)
                 if fingerprint != quality.artifact_hash(media):
                     raise quality.SubtitleError("El MP4 cambió durante la retranscripción.")
-                metadata = media.with_suffix(".meta.json")
-                manifest = (projects.read_json(metadata).get("subtitles") or {}) if metadata.is_file() else {}
-                options = _options_for_clip(media.parent.parent, manifest, project)
-                brand = branding.load_brand(options["brand"]) if options["brand"] else None
-                style = render_clips.resolve_caption(options["style"], brand, options["caption"])
-                group_size = style["words_per_cue"]
-                groups = captions.plan_cues(evidence["words"], 0, duration, group_size, **timing)
-                srt = captions.write_srt([], 0, duration, folder / "draft.srt", groups=groups)
-                cues = quality.read_srt(srt)
+                draft, cues = make_draft(media, project, folder, evidence, timing, duration, fingerprint)
                 offset = max(0, float(streams["audio"].get("start_time") or 0))
                 speech = quality.speech_ranges(media, duration, offset)
                 ratio, voiced, longest = quality.coverage(cues, speech)
-                if not cues or quality.speech_deficit(ratio, voiced, longest):
+                if quality.speech_deficit(ratio, voiced, longest):
                     raise quality.SubtitleError("El borrador sigue teniendo voz sin transcribir. Prueba otro modelo local y revisa el audio.")
-                draft = {**evidence, "duration": duration, "timing": timing, "group_size": group_size,
-                         "media_hash": fingerprint, "project": project, "filename": media.name}
                 projects.atomic_json(folder / "draft.json", draft)
                 status["draft"] = {"id": status["id"], "model": evidence["model"], "segments": len(cues),
-                                   "words": sum(len(g) for g in groups), "coverage": ratio,
+                                   "words": sum(len(c[2].split()) for c in cues), "coverage": ratio,
                                    "text": "\n".join(f"{a:.2f}–{b:.2f} s  {text}" for a, b, text in cues[:150])}
             else:
                 if draft["media_hash"] != quality.artifact_hash(media):

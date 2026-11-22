@@ -22,6 +22,7 @@ class OllamaDouble:
         self.release = threading.Event()
         self.mode = "valid"
         self.show = {"capabilities": ["completion"]}
+        self.generate_reply = None
 
 
 @contextmanager
@@ -63,7 +64,10 @@ def mock_ollama():
                 return self.reply({"message": {"content": "{broken"}, "done": True})
             if fake.mode == "incomplete":
                 return self.reply({"message": {"content": "{}"}, "done": False})
-            plan = Rules().generate(None, data["messages"], data["format"], 1, Cancellation())
+            if fake.generate_reply:
+                plan = fake.generate_reply(data)
+            else:
+                plan = Rules().generate(None, data["messages"], data["format"], 1, Cancellation())
             if fake.mode == "ungrounded":
                 plan["variants"]["curiosity"]["title"] = 9999
             self.reply({"message": {"content": json.dumps(plan)}, "done": True})

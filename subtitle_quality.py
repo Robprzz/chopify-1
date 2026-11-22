@@ -99,6 +99,8 @@ def load_track(media):
     meta_path = media.with_suffix(".meta.json")
     meta = json.loads(local_text(meta_path, SIDECAR_LIMIT)) if meta_path.is_file() else {}
     manifest = meta.get("subtitles") or {}
+    if manifest.get("caption_error"):
+        raise SubtitleError("Los tiempos de la transcripción impidieron renderizar los subtítulos.")
     srt = media.with_suffix(".srt")
     transcript = None
     version = manifest.get("transcript_version")

@@ -12,6 +12,7 @@
     <script src="/automation.js" defer></script>
     <script src="/editorial.js" defer></script>
     <script src="/subtitles.js" defer></script>
+    <script src="/production.js" defer></script>
     <script src="/watermark.js" defer></script>
   </head>
   <body>
@@ -278,6 +279,32 @@
           <p id="automation-status" role="status"></p>
           <p id="automation-error" role="alert" hidden></p>
         </form>
+        <section class="panel input-panel production-panel" aria-labelledby="production-heading">
+          <div class="panel-title"><h2 id="production-heading">Centro de operaciones</h2></div>
+          <div class="publication-actions">
+            <button id="production-pause" type="button" disabled>Pausar cola</button>
+            <label for="production-limit">Intentos de reparación por clip</label>
+            <input id="production-limit" type="number" min="0" max="5" value="2" required />
+            <button id="production-save" type="button">Guardar límite</button>
+          </div>
+          <p id="production-status" role="status"></p>
+          <p id="production-error" role="alert" hidden></p>
+          <dl id="production-metrics" class="production-metrics"></dl>
+          <div class="production-table-wrap">
+            <table>
+              <thead><tr><th scope="col">Clip</th><th scope="col">Estado</th><th scope="col">Validación</th>
+                <th scope="col">Reparaciones</th><th scope="col">Acciones</th></tr></thead>
+              <tbody id="production-jobs"></tbody>
+            </table>
+          </div>
+          <p id="production-empty" hidden>Los clips terminados aparecerán aquí al entrar en la cola.</p>
+          <div class="publication-actions">
+            <button id="production-newest" type="button" hidden>Ver recientes</button>
+            <button id="production-older" type="button" hidden>Ver anteriores</button>
+          </div>
+          <div id="production-detail" hidden></div>
+          <details id="production-problems" hidden><summary>Errores recurrentes</summary><ul></ul></details>
+        </section>
         <section class="panel input-panel editorial-panel" aria-labelledby="editorial-heading">
           <div class="panel-title"><h2 id="editorial-heading">AI Engine</h2></div>
           <p id="editorial-ollama" role="status">Buscando Ollama…</p>
@@ -323,6 +350,8 @@
           <div class="publication-actions">
             <button id="editorial-generate" type="button" class="primary">Generar propuestas</button>
             <button id="editorial-regenerate" type="button">Regenerar</button>
+            <button id="editorial-semantic" type="button">Generar propuestas semánticas</button>
+            <button id="production-enqueue" type="button">Añadir a producción</button>
             <button id="editorial-cancel" type="button" hidden>Cancelar procesamiento</button>
           </div>
           <details class="editorial-details" id="subtitle-quality">

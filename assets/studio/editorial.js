@@ -126,7 +126,8 @@ function renderEditorialResult(job) {
   }
   const caseData = job.result;
   const recommended = caseData.variants.find(v => v.style === caseData.recommended_variant
-    && v.score > 0 && caseData.editorial_score > 0 && caseData.confidence > 0);
+    && v.score > 0 && caseData.editorial_score > 0
+    && (caseData.mode === "semantic" || caseData.confidence > 0));
   const chosen = job.selected || recommended?.style;
   const active = caseData.variants.find(v => v.style === chosen);
   const activeText = job.edits[chosen] || active;
@@ -155,16 +156,21 @@ function renderEditorialResult(job) {
   output.insertAdjacentHTML("beforeend", `
     ${activeText ? `<h3>${escapeHTML(activeText.title)}</h3>
     <p>${escapeHTML(activeText.caption)} · ${escapeHTML(activeText.hashtags.join(" "))}</p>` : ""}
-    <p>Puntuación de detección ${caseData.original_score ?? "—"} · Editorial ${caseData.editorial_score}/10 · Confianza ${Math.round(caseData.confidence * 100)}%</p>
+    <p>Puntuación de detección ${caseData.original_score ?? "—"} · Editorial ${caseData.editorial_score}/10${caseData.mode === "semantic" ? "" : ` · Confianza ${Math.round(caseData.confidence * 100)}%`}</p>
     <p>${editorialProvider(caseData.provider)}${caseData.model ? " · " + escapeHTML(caseData.model) : ""}
       · ${editorialPlatforms[caseData.platform]} · Prompt ${escapeHTML(caseData.prompt_version)}</p>
     <p>Tema · ${escapeHTML(caseData.main_topic)}</p>
     <p>${recommended ? `Recomendada · ${editorialStyles[recommended.style]}. ${escapeHTML(caseData.recommendation_reason)}` : "No hay una propuesta editorial válida para recomendar."}</p>
     <details class="editorial-details"><summary>Evaluación y evidencia</summary>
       <p>Temas secundarios · ${secondary}</p>
+      ${caseData.mode === "semantic" ? [
+        ["Mensaje central", caseData.central_message], ["Audiencia", caseData.audience],
+        ["Punto de interés", caseData.interest], ["Personas mencionadas", caseData.people.join(" · ")],
+        ["Acontecimientos", caseData.events.join(" · ")],
+      ].filter(([, value]) => value).map(([label, value]) => `<p>${label} · ${escapeHTML(value)}</p>`).join("") : ""}
       <p>Intención · ${escapeHTML(({explain:"Explicar", tell:"Narrar", react:"Reaccionar", ask:"Preguntar"})[caseData.intent] || "Sin determinar")}</p>
       <p>Emoción · ${escapeHTML(({neutral:"Neutral", joy:"Alegría", surprise:"Sorpresa", concern:"Preocupación", frustration:"Frustración"})[caseData.emotion] || "Sin determinar")}</p>
-      <p>Valor educativo · ${caseData.educational_value}/10 · Contexto independiente · ${caseData.standalone ? "Suficiente" : "Limitado"}</p>
+      <p>${caseData.mode === "semantic" ? "" : `Valor educativo · ${caseData.educational_value}/10 · `}Contexto independiente · ${caseData.standalone ? "Suficiente" : "Limitado"}</p>
       <ul>${criteria}</ul>
       <ul>${caseData.highlights.map(e => `<li>${e.start.toFixed(2)}–${e.end.toFixed(2)} s · ${escapeHTML(e.text)}</li>`).join("")}</ul>
     </details>
@@ -255,14 +261,14 @@ async function openEditorial(clip) {
   if (clip) $("#editorial-heading").scrollIntoView({ block: "start" });
 }
 
-async function generateEditorial(force, test = false) {
+async function generateEditorial(force, test = false, semantic = false) {
   await studioConfig;
   const clip = editorialView.clips.find(item => editorialClipKey(item) === $("#editorial-clip").value);
   if (!test && !clip) throw new Error("Selecciona un clip terminado.");
   let response;
   try {
     response = await editorialApi(test ? "test" : "generate", {
-      project: clip?.project, filename: clip?.filename, platform: $("#editorial-platform").value, force,
+      project: clip?.project, filename: clip?.filename, platform: $("#editorial-platform").value, force, semantic,
     });
   } catch (error) {
     if (/subtítulo|\bSRT\b|transcripci[oó]n/i.test(error.message)) $("#subtitle-quality").open = true;
@@ -307,6 +313,7 @@ $("#editorial-connect").addEventListener("click", editorialSafe(refreshEditorial
 $("#editorial-test").addEventListener("click", editorialSafe(() => generateEditorial(true, true)));
 $("#editorial-generate").addEventListener("click", editorialSafe(() => generateEditorial(false)));
 $("#editorial-regenerate").addEventListener("click", editorialSafe(() => generateEditorial(true)));
+$("#editorial-semantic").addEventListener("click", editorialSafe(() => generateEditorial(true, false, true)));
 $("#editorial-cancel").addEventListener("click", editorialSafe(async () => {
   renderEditorialResult(await editorialApi("cancel", { job_id: editorialView.job.id }));
 }));

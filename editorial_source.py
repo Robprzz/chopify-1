@@ -66,11 +66,11 @@ def read_clip(media, project, filename):
     meta = json.loads(subtitle_quality.local_text(meta_path, subtitle_quality.SIDECAR_LIMIT)) if meta_path.is_file() else {}
     if live:
         state = json.loads(subtitle_quality.local_text(base / "live_session.json", 2 * 1024 * 1024))
-        matches = [record for record in state["triggers"] if not record.get("error")
-                   and record.get("files", {}).get("mp4", "").replace("\\", "/").rsplit("/", 1)[-1] == filename]
-        if len(matches) != 1:
-            raise ValueError("No se encontró un registro Live único para el clip.")
-        score = matches[0].get("score")
+        from live_clips import finished_record
+        record = finished_record(state, media)
+        if record is None:
+            raise ValueError("No se encontró un registro Live para el clip.")
+        score = record.get("score")
     else:
         score = meta.get("score")
     if type(score) not in (int, float) or not 0 <= score <= 10:
@@ -95,3 +95,63 @@ def read_clip(media, project, filename):
             "original_score": score, "excerpts": entries, "transcript_id": f"{summary['origin']}:{transcript_hash}",
             "transcript_hash": transcript_hash, "excerpt_hash": key(entries),
             "filtered": rejected, "sampled": sampled, "media_version": media_version}
+
+
+def safe_context(value, limit):
+    if not isinstance(value, str) or INSTRUCTIONS.search(value):
+        return ""
+    return " ".join(SENSITIVE.sub("", value).split())[:limit]
+
+
+def semantic_context(media, project, source):
+    cues, _, _ = subtitle_quality.load_track(media)
+    clips = []
+    for left, right, phrase in cues:
+        phrase = safe_context(phrase, 300)
+        if not phrase:
+            continue
+        if clips and left - clips[-1]["end"] <= .65 and len(clips[-1]["text"]) + len(phrase) < 265:
+            clips[-1]["end"] = right
+            clips[-1]["text"] += " " + phrase
+        else:
+            clips.append({"start": left, "end": right, "text": phrase})
+    clips = [row for row in clips if not INSTRUCTIONS.search(row["text"])]
+    if not clips:
+        raise ValueError("El clip no contiene evidencia editorial utilizable.")
+    # Include the complete short clip and sample across long clips within the model's context budget.
+    count = min(len(clips), max(1, int(6200 / (sum(len(row["text"]) + 40 for row in clips) / len(clips)))))
+    evidence = []
+    size = 0
+    for i in range(count):
+        row = clips[i * (len(clips) - 1) // max(1, count - 1)]
+        if size + len(row["text"]) + 40 > 6500:
+            break
+        evidence.append(row)
+        size += len(row["text"]) + 40
+    outside = {}
+    language = "und"
+    base = media.parent.parent
+    if not project.startswith("live/"):
+        try:
+            project_data = json.loads(subtitle_quality.local_text(base / "project.json", 2 * 1024 * 1024))
+            meta = project_data.get("source_meta") or {}
+            for key, limit in (("title", 160), ("description", 450), ("channel", 120)):
+                value = safe_context(meta.get(key), limit)
+                if value:
+                    outside[key] = value
+            transcript = json.loads(subtitle_quality.local_text(base / "transcript.json", 16 * 1024 * 1024))
+            lang = transcript.get("language")
+            if isinstance(lang, str) and re.fullmatch(r"[a-z]{2,3}", lang):
+                language = lang
+            clip_meta = json.loads(subtitle_quality.local_text(media.with_suffix(".meta.json"), 16384))
+            start, end = clip_meta["start"], clip_meta["end"]
+            for label, low, high in (("before", max(0, start - 35), start), ("after", end, end + 35)):
+                snippet = " ".join(w["word"] for w in transcript["words"]
+                                   if low <= w["start"] < high and not w.get("hidden"))
+                value = safe_context(snippet, 390)
+                if value:
+                    outside[label] = value
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            pass
+    return {**source, "semantic_evidence": evidence, "semantic_sampled": len(evidence) < len(clips),
+            "outside_clip": outside, "language_hint": language}

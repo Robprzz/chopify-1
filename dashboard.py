@@ -22,6 +22,7 @@ import editorial
 import editorial_providers
 import editorial_store
 import projects
+import production
 import render_clips
 import subtitle_repair
 import tiktok
@@ -39,6 +40,7 @@ STATIC_FILES = {
     "watermark.js": ("watermark.js", "text/javascript; charset=utf-8"),
     "editorial.js": ("editorial.js", "text/javascript; charset=utf-8"),
     "subtitles.js": ("subtitles.js", "text/javascript; charset=utf-8"),
+    "production.js": ("production.js", "text/javascript; charset=utf-8"),
     "style.css": ("style.css", "text/css; charset=utf-8"),
 }
 
@@ -107,11 +109,12 @@ class Studio:
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="chopify")
         self.lock = threading.RLock()
         self.futures = {}
+        self.resources = threading.Lock()
         self.tiktok = tiktok.TikTokStudio(self.root, self.busy)
         self.automation_settings = automation.SettingsStore(self.root)
         self.watermark = watermark.Store(self.root)
-        self.editorial = editorial.Engine(self.automation_settings, self.tiktok._clip)
-        self.subtitle_repair = subtitle_repair.Repair(self.root, self.tiktok._clip)
+        self.editorial = editorial.Engine(self.automation_settings, self.tiktok._clip, resources=self.resources)
+        self.subtitle_repair = subtitle_repair.Repair(self.root, self.tiktok._clip, resources=self.resources)
         self.processes = set()
         self.live_sessions = {}
         self.live_lock = threading.Lock()
@@ -124,6 +127,36 @@ class Studio:
                     projects.save_project(path.parent, state)
             except (ValueError, OSError, KeyError):
                 continue
+
+        self.production = production.Production(self.root, self.editorial, self.automation_settings,
+                                               self.tiktok._clip, self._production_catalog, self.resources)
+
+    def _production_catalog(self):
+        from live_clips import PRODUCTION_REPAIR, live_exports
+
+        for path in self.root.glob("*/project.json"):
+            try:
+                projects.project_path(self.root, path.parent.name)
+                state = projects.read_project(path.parent)
+                if self.busy(path.parent.name):
+                    continue
+                outputs = set(state.get("last_outputs", [])) | set((state.get("renders") or {}).values())
+                for output in sorted(outputs):
+                    clip = Path(output)
+                    if clip.suffix == ".mp4" and clip.parent.name == "clips" and clip.is_file():
+                        yield path.parent.name, clip.name
+            except (OSError, ValueError, TypeError, KeyError):
+                continue
+        for clip in live_exports(self.root):
+            if not PRODUCTION_REPAIR.fullmatch(clip["filename"]):
+                yield clip["project"], clip["filename"]
+
+    def _production_clip(self, project, filename):
+        try:
+            self.production.enqueue(project, filename)
+        except (sqlite3.Error, automation.SettingsUnavailable, OSError):
+            # The persistent output catalog reconciles events after the database is writable.
+            pass
 
     def busy(self, project_id):
         future = self.futures.get(project_id)
@@ -165,19 +198,19 @@ class Studio:
         if state["status"] != "complete" and state.get("stage") != "render incomplete":
             return
         for output in state.get("last_outputs", []):
-            self.editorial.auto(project_id, Path(output).name)
+            self._production_clip(project_id, Path(output).name)
 
     def _run(self, path, action, preview, pick):
         cmd = [sys.executable, str(HERE / "chopify.py"), "--project", str(path),
                "--action", action, "--out", str(path / ("previews" if preview else "clips"))]
         # Studio jobs run unattended: never wait for interactive CLI questions.
-        cmd.append("--no-input")
+        cmd.extend(["--no-input", "--automation-export"])
         if preview:
             cmd.append("--preview")
         if pick:
             cmd += ["--clips", pick]
         try:
-            with (path / "job.log").open("w", encoding="utf-8") as log:
+            with self.resources, (path / "job.log").open("w", encoding="utf-8") as log:
                 with self.lock:
                     if self.closing:
                         return
@@ -201,7 +234,8 @@ class Studio:
         check_capture_tools()
         resolved = resolve_live_source(source, options)
         session = live.LiveSession(resolved, options, self.root, brief_text=brief_text)
-        session.on_clip = lambda path: self.editorial.auto(f"live/{session.id}", Path(path).name)
+        session.writer.resources = self.resources
+        session.on_clip = lambda path: self._production_clip(f"live/{session.id}", Path(path).name)
         with self.lock:
             if self.closing:
                 raise ValueError("Studio is closing. Restart it before starting a live session.")
@@ -245,6 +279,7 @@ class Studio:
             for child in list(self.processes):
                 child.terminate()
             self.executor.shutdown(wait=False, cancel_futures=True)
+        self.production.close()
         self.editorial.close()
         self.subtitle_repair.close()
 
@@ -330,6 +365,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"projects": self.app.list_projects()})
             if parts == ["api", "automation", "settings"]:
                 return self.automation_settings_action()
+            if len(parts) == 3 and parts[:2] == ["api", "production"]:
+                return self.production_action(parts[2], query=parse_qs(location.query, max_num_fields=1))
             if len(parts) == 3 and parts[:2] == ["api", "editorial"]:
                 return self.editorial_action(parts[2], query=parse_qs(location.query, max_num_fields=4))
             if len(parts) == 3 and parts[:2] == ["api", "subtitle-repair"]:
@@ -397,6 +434,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.tiktok_action(parts[2], body)
             if parts == ["api", "automation", "settings"]:
                 return self.automation_settings_action(body)
+            if len(parts) == 3 and parts[:2] == ["api", "production"]:
+                return self.production_action(parts[2], body=body)
             if len(parts) == 3 and parts[:2] == ["api", "editorial"]:
                 return self.editorial_action(parts[2], body)
             if len(parts) == 3 and parts[:2] == ["api", "subtitle-repair"]:
@@ -500,6 +539,49 @@ class Handler(BaseHTTPRequestHandler):
         except automation.SettingsUnavailable as exc:
             return self.send_json({"error": str(exc)}, 503)
 
+    def production_action(self, action, body=None, query=None):
+        worker = self.app.production
+        store = worker.store
+
+        def identifier(value):
+            if type(value) is not int or not 1 <= value <= 2**63 - 1:
+                raise ValueError("Identificador de producción inválido.")
+            return value
+
+        try:
+            if body is None:
+                if action == "status":
+                    before = query.get("before")
+                    return self.send_json(store.status(identifier(int(before[0])) if before else None))
+                if action == "job":
+                    return self.send_json(store.detail(identifier(int(query.get("id", ["0"])[0]))))
+            elif action in ("pause", "resume"):
+                settings = store.config(paused=action == "pause")
+                worker.wake.set()
+                return self.send_json(settings)
+            elif action == "settings":
+                if body.keys() != {"max_repairs"} or type(body["max_repairs"]) is not int:
+                    raise ValueError("Indica el máximo de reparaciones.")
+                return self.send_json(store.config(max_repairs=body["max_repairs"]))
+            elif action in ("cancel", "retry"):
+                job = identifier(body.get("id"))
+                if action == "cancel":
+                    editorial_id = store.cancel(job)
+                    if editorial_id:
+                        self.app.editorial.cancel(editorial_id)
+                else:
+                    store.retry(job)
+                worker.wake.set()
+                return self.send_json(store.detail(job))
+            elif action == "enqueue":
+                project, filename = body.get("project"), body.get("filename")
+                self.app.tiktok._clip(project, filename)
+                worker.enqueue(project, filename)
+                return self.send_json({"ok": True}, 202)
+        except sqlite3.Error:
+            return self.send_json({"error": "La base de producción no está disponible."}, 503)
+        return self.send_json({"error": "Acción de producción desconocida."}, 404)
+
     def editorial_action(self, action, body=None, query=None):
         engine = self.app.editorial
 
@@ -532,7 +614,8 @@ class Handler(BaseHTTPRequestHandler):
                 if action in ("generate", "test"):
                     return self.send_json(engine.submit(
                         body.get("project"), body.get("filename"), body.get("platform"),
-                        body.get("force", action == "test"), test=action == "test"), 202)
+                        body.get("force", action == "test"), test=action == "test",
+                        semantic=body.get("semantic", False)), 202)
                 engine.ensure()
                 if action == "cancel":
                     return self.send_json(engine.cancel(identifier(body.get("job_id"))))

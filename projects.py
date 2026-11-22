@@ -294,7 +294,7 @@ def validate_segments(segments, duration):
 
 
 def run_project(path, action="all", preview=False, pick=None, resume=True,
-                progress=None, on_detection=None, explicit_keys=None):
+                progress=None, on_detection=None, explicit_keys=None, automation_export=False):
     """Prepare candidates or render saved candidates; checkpoint every successful clip."""
     workspace = Path(path).parent
     path = Path(path).resolve()
@@ -630,6 +630,7 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
                         do_tighten=options["tighten"], loudnorm=options["loudnorm"], preview=preview,
                         brand=brand, layout=options["layout"], centers=options["centers"],
                         caption=options["caption"], source_offset=source_offset, mark=mark,
+                        retain_for_repair=automation_export,
                         transcript_info={"model": data.get("model"), "origin": "project",
                                          "transcript_version": data.get("transcript_version"),
                                          "transcript_hash": digest(data["words"])})
@@ -652,7 +653,7 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
                              error=message + " Successful clips were kept.")
                 save_project(path, state)
                 return state
-            if render_from_sections and not preview:
+            if render_from_sections and not preview and not automation_export:
                 sections.cleanup_sections(path)
             state.update(status="review" if preview else "complete", stage="preview ready" if preview else "complete")
         save_project(path, state)

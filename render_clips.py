@@ -606,7 +606,8 @@ def render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAUL
            do_tighten=False, loudnorm=False, preview=False, brand=None,
            layout="single", centers=(0.25, 0.75), caption=None,
            source_offset=0.0, fit="cover", facecam_box=None,
-           facecam_height=0.34, mark=None, transcript_info=None, timeout=None, allow_model_download=True):
+           facecam_height=0.34, mark=None, transcript_info=None, timeout=None, allow_model_download=True,
+           retain_for_repair=False):
     out_dir = (Path(out_dir) if out_dir else default_out()).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     source = Path(source).resolve()
@@ -654,8 +655,15 @@ def render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAUL
               f"{(end - start) - dur:.1f}s removed", flush=True)
         start = 0.0
         local_start = 0.0
-    groups = captions.plan_cues(cap_words, start, start + dur, resolved["words_per_cue"],
-                                **{k: resolved[k] for k in captions.TIMING_FIELDS})
+    caption_error = None
+    try:
+        groups = captions.plan_cues(cap_words, start, start + dur, resolved["words_per_cue"],
+                                    **{k: resolved[k] for k in captions.TIMING_FIELDS})
+    except ValueError as exc:
+        if not retain_for_repair or preview:
+            raise
+        caption_error = str(exc)
+        groups = []
     if layout == "stacked":
         box, warning = resolve_facecam_box(source, W, H, workdir, facecam_box,
                                            allow_download=allow_model_download, timeout=timeout)
@@ -780,6 +788,7 @@ def render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAUL
             "render_options": {"style": style, "fit": fit, "layout": layout, "centers": centers,
                                "caption": caption, "facecam_box": facecam_box, "facecam_height": facecam_height},
             **(transcript_info or {}),
+            **({"caption_error": caption_error} if caption_error else {}),
         }
 
     for tmpf in (out_dir / "_caption.ass", out_dir / "_crop.cmd"):

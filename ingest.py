@@ -173,12 +173,14 @@ def _probe_url(url, run=None):
     elif duration:
         estimated = int(_default_bitrate(0) * duration / 8)
 
+    from editorial_source import safe_context
+
     return {
         "source": url,
         "url": True,
         "title": str(data.get("title") or url),
-        "description": str(data.get("description") or "")[:1500],
-        "channel": str(data.get("channel") or data.get("uploader") or "")[:150],
+        "description": safe_context(data.get("description"), 1500),
+        "channel": safe_context(data.get("channel") or data.get("uploader"), 150),
         "duration": duration,
         "size": None,
         "estimated_size": estimated or None,

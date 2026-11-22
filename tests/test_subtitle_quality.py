@@ -41,8 +41,8 @@ def words(*items):
     return [{"word": text, "start": start, "end": end} for text, start, end in items]
 
 
-def media_file(path, duration=3, audio="aevalsrc=0.2*sin(2*PI*(180*t+60*t*t))"):
-    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=black:size=320x180:rate=25",
+def media_file(path, duration=3, audio="aevalsrc=0.2*sin(2*PI*(180*t+60*t*t))", size="320x180"):
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", f"color=c=black:size={size}:rate=25",
                     "-f", "lavfi", "-i", audio, "-t", str(duration), "-pix_fmt", "yuv420p",
                     "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", str(path)],
                    check=True, capture_output=True)

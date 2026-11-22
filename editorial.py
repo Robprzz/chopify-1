@@ -13,7 +13,7 @@ import subtitle_quality
 from editorial_content import PLATFORMS, PROMPT_VERSION, Rules, assemble, messages, plan_schema, validate_config
 from editorial_providers import Cancelled, Cancellation, Ollama, ProviderError
 from editorial_source import key, read_clip, semantic_context
-from editorial_store import EditorialStore, MAX_PENDING
+from editorial_store import EditorialStore, MAX_PENDING, QueueFull
 from local_process import use_resources
 
 
@@ -132,50 +132,89 @@ class Engine:
                 return
             self.wake.set()
 
-    def submit(self, project, filename, platform, force, *, test=False, auto=False, production=None, semantic=False):
-        if type(semantic) is not bool or type(force) is not bool:
+    def submit(self, project, filename, platform, force, *, test=False, auto=False, production=None,
+               semantic=None, previous=None, target=None, regenerate=False):
+        if (semantic is not None and type(semantic) is not bool) or type(force) is not bool:
             raise ValueError("La opción de regenerar debe ser booleana.")
         if not test and (not isinstance(project, str) or not isinstance(filename, str)):
             raise ValueError("Selecciona un clip terminado de Studio.")
         if not auto:
             self.ensure()
         config = self.store.config()["settings"]
-        if platform is None:
-            platform = config["platform"]
+        platform = config["platform"] if platform is None else platform
         if not isinstance(platform, str) or platform not in PLATFORMS:
             raise ValueError("Selecciona un perfil editorial válido.")
+        model = config["model"]
+        status = self.refresh_models(force=not auto and not production) if model or semantic is not False else self.model_status
+        if (production or semantic is not False) and not model:
+            model = next((item["name"] for item in status["models"]
+                          if item["name"] == "qwen3:4b" and item["digest"]), "")
+        if semantic is True and not model:
+            raise ValueError("Selecciona un modelo local para generar propuestas semánticas.")
+        use_semantic = bool(model and (production or semantic is not False))
         try:
             if test:
                 source = TEST_SOURCE
             else:
                 path = self.clip_path(project, filename)
                 source = read_clip(path, project, filename)
-                if production or semantic:
+                if use_semantic:
                     source = semantic_context(path, project, source)
         except (OSError, TypeError, KeyError, AttributeError, UnicodeError):
             raise ValueError("La transcripción del clip no se puede leer.") from None
-        model = config["model"]
-        status = self.refresh_models(force=not auto and not production) if model or production or semantic else self.model_status
-        if (production or semantic) and not model:
-            model = next((item["name"] for item in status["models"]
-                          if item["name"] == "qwen3:4b" and item["digest"]), "")
-        if semantic and not model:
-            raise ValueError("Selecciona un modelo local para generar propuestas semánticas.")
         digest = next((item["digest"] for item in status["models"] if item["name"] == model), None)
         settings = {"platform": platform, "profile": config["profiles"][platform], "weights": config["weights"],
                     "timeout": config["timeout"], "model": model, "model_digest": digest,
-                    "prompt_version": editorial_semantic.VERSION if model and (production or semantic) else PROMPT_VERSION}
+                    "prompt_version": editorial_semantic.VERSION if use_semantic else PROMPT_VERSION}
         if production:
             settings["production"] = list(production)
-        if model and (production or semantic):
-            settings["semantic"] = True
-        fingerprint = key([source["clip_id"], source["transcript_id"], source["original_score"],
-                           source["sampled"], source["filtered"], source.get("media_version"),
-                           captions.TIMELINE_VERSION, source.get("outside_clip"),
-                           source.get("semantic_evidence"), source.get("language_hint"), settings])
-        job, cached = self.store.submit(source, settings, fingerprint, force)
+        if use_semantic:
+            settings.update(semantic=True, repair_attempts=config["repair_attempts"])
+        if target:
+            old = self.store.detail(previous)
+            if (not use_semantic or (old["result"] or {}).get("prompt_version") != editorial_semantic.VERSION
+                    or not old["result"].get("analysis") or target not in old["result"].get("drafts", {})
+                    or self.store.prior_source(previous) != source or any(
+                        old["settings"].get(field) != settings[field] for field in ("profile", "weights", "model_digest"))):
+                raise ValueError("El clip, el modelo o el perfil cambió. Genera un nuevo análisis completo.")
+            settings.update(target=target, regenerate=regenerate, seed_id=previous)
+        cache_parts = [source, captions.TIMELINE_VERSION, settings]
+        if previous is not None:
+            cache_parts.append(previous)
+        fingerprint = key(cache_parts)
+        job, cached = self.store.submit(source, settings, fingerprint, force, previous_id=previous)
         self.wake.set()
         return {"job_id": job, "reused": cached}
+
+    def reprocess(self, mode, clip_id=None):
+        self.ensure()
+        if clip_id is not None and (not isinstance(clip_id, str) or len(clip_id) > 512):
+            raise ValueError("Identificador de clip inválido.")
+        jobs, skipped, deferred = [], [], 0
+        candidates = self.store.reprocess_candidates(mode, clip_id)
+        for index, previous in enumerate(candidates):
+            origin = self.store.detail(previous)
+            source = self.store.prior_source(previous)
+            try:
+                job = self.submit(source["project"], source["filename"], origin["settings"]["platform"],
+                                  True, semantic=True, previous=previous)
+                jobs.append(job["job_id"])
+            except QueueFull:
+                deferred = len(candidates) - index
+                break
+            except (ValueError, OSError):
+                skipped.append(previous)
+        return {"queued": jobs, "skipped": skipped, "deferred": deferred}
+
+    def revise_variant(self, job, style, regenerate):
+        from editorial_content import STYLES
+        if not isinstance(style, str) or style not in STYLES or type(regenerate) is not bool:
+            raise ValueError("Selecciona una variante editorial.")
+        self.ensure()
+        origin = self.store.detail(job)
+        source = self.store.prior_source(job)
+        return self.submit(source["project"], source["filename"], origin["settings"]["platform"], True,
+                           semantic=True, previous=job, target=style, regenerate=regenerate)
 
     def cancel(self, job):
         result = self.store.cancel(job)
@@ -197,26 +236,33 @@ class Engine:
             self.last_auto_error = str(exc) if isinstance(exc, ValueError) else "No se pudo registrar el análisis automático."
         return True
 
-    def _semantic(self, source, settings, cancellation):
+    def _semantic(self, source, settings, cancellation, job, telemetry):
         def progress(stage):
+            self.store.stage(job, self.owner, stage)
             if self.production_stage and "production" in settings:
                 self.production_stage(*settings["production"], stage)
 
         status = self.refresh_models(force=True)
         local = next((item for item in status["models"] if item["name"] == settings["model"]), None)
-        if not status["available"] or not local or not local["digest"]:
+        if not status["available"]:
             raise ProviderError("offline", "Conecta Ollama local con el modelo seleccionado para reintentar.")
+        if not local or not local["digest"]:
+            raise ProviderError("model_missing", "El modelo local seleccionado no está instalado.")
         if local["digest"] != settings["model_digest"]:
             raise ProviderError("model_changed", "Cambió el modelo local. Reintenta con la versión actual.")
-        result = editorial_semantic.generate(self.provider, source, settings, cancellation, progress)
+        seed = self.store.detail(settings["seed_id"])["result"] if "seed_id" in settings else None
+        result = editorial_semantic.generate(self.provider, source, settings, cancellation, progress,
+                                             telemetry=telemetry, seed=seed, target=settings.get("target"),
+                                             regenerate=settings.get("regenerate", False))
         result["model_version"] = local["digest"]
         return result, None
 
-    def _generate(self, source, settings, cancellation):
+    def _generate(self, source, settings, cancellation, job, telemetry):
         if settings.get("semantic"):
-            return self._semantic(source, settings, cancellation)
+            return self._semantic(source, settings, cancellation, job, telemetry)
         if self.production_stage and "production" in settings:
             self.production_stage(*settings["production"], "generating")
+        self.store.stage(job, self.owner, "generating")
         started = time.monotonic()
         model = settings["model"]
         schema = plan_schema(len(source["excerpts"]))
@@ -244,6 +290,8 @@ class Engine:
                         result = assemble(plan, source, settings, self.provider.name, model)
                         result["model_version"] = local["digest"]
                         result["attempts"] = attempts
+                        result["mode"] = "extractive"
+                        telemetry["model_calls"] = attempts
                         return result, None
                     except ProviderError as exc:
                         if not exc.retryable or attempt:
@@ -254,6 +302,8 @@ class Engine:
         result = assemble(plan, source, settings, self.fallback.name, None)
         result["model_version"] = None
         result["attempts"] = attempts
+        result["mode"] = "extractive"
+        telemetry["model_calls"] = attempts
         if diagnostic:
             result["warnings"].append(diagnostic)
         return result, diagnostic
@@ -295,6 +345,7 @@ class Engine:
         renewer = threading.Thread(target=self._renew, args=(job, cancellation, done), daemon=True)
         renewer.start()
         state, result, error = "failed", None, None
+        telemetry = {"issues": []}
         try:
             if self.store.cancel_requested(job):
                 cancellation.cancel()
@@ -315,22 +366,33 @@ class Engine:
                         raise subtitle_quality.SubtitleError("El clip cambió durante el diagnóstico. Repite el análisis.")
                     if settings.get("semantic"):
                         current = semantic_context(path, source["project"], before)
-                        if current != source:
+                        if settings.get("prompt_version") == editorial_semantic.VERSION and current != source:
                             raise subtitle_quality.SubtitleError("El contexto cambió. Vuelve a solicitar el análisis.")
-                result, error = self._generate(source, settings, cancellation)
+                        source = {**current, "transcript_coverage": {
+                            **current["transcript_coverage"], "speech_coverage": diagnostic.get("speech_coverage"),
+                            "voiced_seconds": diagnostic.get("voiced_seconds"), "technical": diagnostic["state"],
+                        }}
+                result, error = self._generate(source, settings, cancellation, job, telemetry)
                 cancellation.check()
             state = "done"
         except Cancelled:
             # Closing Studio preserves outstanding work. User cancellation is terminal.
             state = "queued" if self.stopping.is_set() else "cancelled"
             result = None
-        except (subtitle_quality.SubtitleError, ProviderError) as exc:
+        except subtitle_quality.SubtitleError as exc:
             error = str(exc)
+            telemetry["issues"].append({"stage": "transcript", "code": "subtitle_quality"})
+        except ProviderError as exc:
+            error = str(exc)
+            telemetry["issues"].append({"stage": "execution", "code": exc.code})
+            if exc.code == "quality":
+                state = "done"
         except (ValueError, OSError, TypeError, KeyError, AttributeError, sqlite3.Error):
             error = "No se pudo completar el análisis editorial."
+            telemetry["issues"].append({"stage": "execution", "code": "execution"})
         finally:
             done.set()
             renewer.join(timeout=2)
             with self.lock:
                 self.active = None
-        self.store.finish(job, self.owner, state, result, error, time.monotonic() - started)
+        self.store.finish(job, self.owner, state, result, error, time.monotonic() - started, telemetry)

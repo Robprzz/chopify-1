@@ -320,6 +320,7 @@
           <form id="editorial-config">
             <div class="form-grid">
               <label>Modelo de Ollama<select id="editorial-model"><option value="">Reglas locales</option></select></label>
+              <label>Intentos de autocorrección<input id="editorial-repair-attempts" type="number" min="0" max="3" value="2" required /></label>
               <label>Tiempo máximo (s)<input id="editorial-timeout" type="number" min="5" max="180" value="60" required /></label>
               <label>Plataforma predeterminada<select id="editorial-default-platform">
                 <option value="tiktok">TikTok</option><option value="facebook">Facebook Reels</option><option value="youtube">YouTube Shorts</option>
@@ -356,6 +357,15 @@
             <button id="production-enqueue" type="button">Añadir a producción</button>
             <button id="editorial-cancel" type="button" hidden>Cancelar procesamiento</button>
           </div>
+          <details class="editorial-details">
+            <summary>Opciones de generación y recuperación</summary>
+            <div class="publication-actions">
+              <button id="editorial-extractive" type="button">Generar extractos</button>
+              <button data-editorial-reprocess="failed" type="button">Reprocesar trabajos fallidos</button>
+              <button data-editorial-reprocess="zero" type="button">Reprocesar resultados con puntuación cero</button>
+            </div>
+            <p class="muted">El reprocesamiento usa los MP4 terminados y conserva las versiones anteriores.</p>
+          </details>
           <details class="editorial-details" id="subtitle-quality">
             <summary>Calidad de subtítulos</summary>
             <div class="publication-actions">

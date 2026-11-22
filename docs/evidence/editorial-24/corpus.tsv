@@ -1,0 +1,33 @@
+id	category	lang	eligible	anchor	fault	transcript
+entrevista-huerto	entrevista	es	yes	albahaca	none	La albahaca necesita luz y conviene revisar la humedad de la tierra antes de regar. La persona entrevistada cuenta que mira la superficie primero.
+podcast-parada	podcast	es	yes	parada	external	En el podcast un viajero cuenta que perdió la parada del autobús por mirar el teléfono. Desde entonces se fija en los lugares antes de bajar.
+noticia-acceso	noticias	es	yes	biblioteca	number	La locutora informa que la biblioteca abrió una entrada lateral mientras reparan la puerta. El fragmento indica que el resto del edificio sigue abierto.
+debate-patio	debate	es	yes	patio	similar	En el debate una voz propone abrir el patio para ensayar. La otra prefiere usarlo en silencio durante los recreos.
+conversacion-guiso	conversación	es	yes	guiso	none	Dos amigos cuentan que dejaron enfriar el guiso y lo probaron otra vez. Les pareció más fácil notar la sal entonces.
+educacion-sombras	educación	es	yes	sombra	duplicate	En el taller acercan una figura a la lámpara para comparar su sombra con la que obtuvo el grupo anterior. Describen qué cambia cuando mueven la figura.
+psicologia-pausa	psicología	es	yes	pausa	generic	La invitada cuenta que hacer una pausa antes de contestar le ayuda a ordenar sus ideas. Presenta la pausa como una preferencia personal.
+desarrollo-agenda	desarrollo personal	es	yes	agenda	none	La persona entrevistada reserva un momento en la agenda para revisar tareas pendientes. Describe cómo prioriza una tarea al empezar.
+motivacion-bicicleta	motivación	es	yes	bicicleta	tags	Empezó a practicar con la bicicleta en la plaza y cuenta que las vueltas cortas le dieron confianza. La historia se centra en cómo empezó.
+sensible-rumor	caso sensible	es	yes	rumor	entity	La voz entrevistada cuenta que en el pueblo circuló un rumor sobre la muerte. Dice expresamente que no pudo confirmar lo que escuchó.
+sensible-salud	caso sensible	es	yes	sueño	none	La invitada describe su propia experiencia con el sueño y cuenta que empezó a anotar cuándo se despertaba. El relato se limita a su experiencia personal.
+nombre-tildes	nombres ficticios	es	yes	luz	acute	La jardinera Inés Valcera habla de la luz que recibe la planta. Explica que observa el lugar en distintos momentos.
+nombre-fragmentado	nombres ficticios	es	yes	taller	split	En el taller Iris| Brisal enseña cómo usa los retazos para ensayar costuras. El grupo practica primero con tela sobrante.
+nombre-fallo-asr	error ASR	es	yes	tablero	entity	La persona se identifica como Ren Valce. Luego explica que revisa el tablero antes de cerrar la puerta. El apellido suena entrecortado.
+sin-antecedente	contexto incompleto	es	no	historia	insufficient	Bueno, ya sabes.
+ruido	información insuficiente	es	no	ruido	insufficient	Sí… eh.
+deictico	información insuficiente	es	no	lugar	insufficient	Allí, eso.
+entrevista-libro	entrevista	es	yes	cuaderno	number	La invitada dice que usa un cuaderno para anotar frases de los libros. Muestra cómo vuelve a sus notas cuando quiere comentar una lectura.
+podcast-turnos	podcast	es	yes	turno	none	En el podcast comentan que pasar el turno les permitió escuchar las ideas pendientes. El ejemplo ocurre durante un ensayo del grupo.
+noticia-mercado	noticias	es	yes	mercado	none	La locutora informa que el mercado cambió el punto de carga a la entrada norte. Explica que los puestos siguen en el mismo lugar.
+debate-aceras	debate	es	yes	acera	similar	En el debate alguien sugiere ampliar la acera y otra voz pregunta cómo organizarían las entregas. El fragmento conserva los dos puntos de vista.
+conversacion-mate	conversación	es	yes	mate	generic	Una amiga describe cómo prepara mate para compartir y la otra dice que prefiere esperar antes de cebar otra vez. Comparan dos costumbres.
+educacion-lupa	educación	es	yes	lupa	none	El docente usa una lupa para mostrar detalles de una hoja. Pide a la clase que dibuje las líneas que logra observar.
+psicologia-escucha	psicología	es	yes	escucha	none	El entrevistado llama escucha a repetir con tus palabras lo que entendiste. Explica por qué esa práctica le es útil en conversaciones difíciles.
+desarrollo-cocina	desarrollo personal	es	yes	cocina	external	La persona separa las tareas de cocina por momentos del día. Comenta que dejar listo lo que usará después le facilita empezar a preparar la cena.
+motivacion-montaña	motivación	es	yes	sendero	none	La caminante cuenta que volvió al sendero despacio tras una pausa larga. Fue ajustando el ritmo a lo que podía completar cada vez.
+cocina-medidas	educación	es	yes	harina	number	Para la masa usaron 250 gramos de harina y añadieron agua poco a poco. La demostración explica cómo reconocer la consistencia antes de seguir mezclando.
+en-estudio	podcast	en	yes	notes	none	The guest says that handwritten notes help them revisit questions after a recording. The conversation explains how they pick one point for the next episode.
+zh-plantas	educación	zh	yes	泥土	none	种植罗勒时，先检查泥土是否干燥。阳光也很重要，采访讨论怎么用泥土判断是否该浇水。
+ja-estacion	conversación	ja	yes	駅	none	駅で道を聞いたとき、地図を見せてもらいました。会話では駅から市場までの道順を振り返ります。
+ar-plantas	educación	ar	yes	الماء	none	تحتاج النباتات إلى الضوء والجذور تمتص الماء من التربة. يناقش المقطع متى ينبغي فحص التربة قبل الري.
+mezcla-idiomas	conversación	es	yes	suelo	tags	Una voz dice que el suelo puede secarse con el calor. The other speaker asks how to check the soil before watering.

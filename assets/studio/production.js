@@ -2,6 +2,7 @@
 
 const productionNames = {
   generated: "Generado", validating: "Validando", repairing: "Reparando", revalidating: "Revalidando",
+  understanding: "Comprendiendo el contenido", autocorrecting: "Autocorrigiendo propuestas",
   analyzing: "Analizando contenido", generating: "Generando propuestas", validating_proposals: "Validando propuestas",
   ready: "Listo para aprobación", review: "Revisión requerida", rejected: "Rechazado",
   failed: "Fallido", cancelled: "Cancelado",
@@ -156,14 +157,7 @@ $("#production-jobs").addEventListener("click", event => {
       return;
     }
     if (action === "publication") {
-      await showPublications();
-      const menu = $("#tiktok-clip");
-      const key = job.project + "/" + (job.active_filename || job.filename);
-      const option = [...menu.options].find(item => item.dataset.key === key);
-      if (option) {
-        menu.value = option.value;
-        menu.dispatchEvent(new Event("change"));
-      }
+      await reviewPublicationClip(job.project + "/" + (job.active_filename || job.filename));
       return;
     }
     await openEditorial({ project: job.project, filename: job.active_filename || job.filename });

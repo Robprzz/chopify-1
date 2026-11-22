@@ -67,3 +67,7 @@ Abre **Automation → AI Engine** para seleccionar el modelo local, comprobar Ol
 ## Verificación de la Fase 1
 
 Las pruebas unitarias y de integración cubren los valores aprobados, persistencia, reintentos, concurrencia, validación y rechazo de solicitudes sin autorización. Chromium abre el panel sobre el servidor HTTP real, guarda ajustes, verifica la recuperación tras reiniciar Studio y comprueba la navegación a Live clipping y Publicaciones. Las comprobaciones de esta fase se ejecutan localmente y no requieren conectarse a Ollama, TikTok ni YouTube.
+
+## Automation 2.4 · Comprensión y revisión editorial
+
+AI Engine y el Centro de operaciones comparten un motor de redacción basado en evidencia. El panel permite consultar diagnósticos, corregir una variante y reprocesar resultados fallidos o de puntuación cero a partir del MP4 terminado. [Arquitectura, benchmark y validación en Windows](EDITORIAL-24.md)

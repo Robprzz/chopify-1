@@ -129,7 +129,7 @@ def test_editorial_http_cache_revisions_edits_provider_versions_and_fallback(ser
     httpd, base = server
     engine = httpd.app.editorial
     project, clip = write_export(httpd.app.root)
-    args = {"project": project, "filename": clip.name, "platform": "tiktok"}
+    args = {"project": project, "filename": clip.name, "platform": "tiktok", "semantic": False}
     original = hashlib.sha256(clip.read_bytes()).hexdigest()
     token = httpd.app.token
     with mock_ollama() as (fake, provider):
@@ -209,7 +209,9 @@ def test_stopped_and_uninstalled_ollama_keep_rules_available(tmp_path):
         engine.ensure()
         assert not engine.refresh_models()["available"]
         configured(engine.store)
-        ident = engine.submit(None, None, None, True, test=True)["job_id"]
+        semantic_job = engine.submit(None, None, None, True, test=True)["job_id"]
+        assert wait_job(engine, semantic_job, expected="failed")["diagnostics"]["issues"][0]["code"] == "offline"
+        ident = engine.submit(None, None, None, True, test=True, semantic=False)["job_id"]
         assert wait_job(engine, ident)["result"]["provider"] == "rules"
     finally:
         engine.close()
@@ -298,7 +300,8 @@ def test_editorial_browser_generation_and_history_after_restart(tmp_path, chromi
         page.get_by_role("button", name="Guardar configuración de AI Engine").click()
         expect(page.locator("#notice")).to_contain_text("AI Engine guardados")
         page.locator("#editorial-clip").select_option(f"{project}/{clip.name}")
-        page.get_by_role("button", name="Generar propuestas", exact=True).click()
+        page.get_by_text("Opciones de generación y recuperación", exact=True).click()
+        page.get_by_role("button", name="Generar extractos", exact=True).click()
         output = page.locator("#editorial-result")
         expect(output).to_contain_text("Editorial", timeout=10000)
         expect(output).to_contain_text("8.3")

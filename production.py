@@ -10,6 +10,7 @@ import time
 import automation
 import branding
 import captions
+from editorial_semantic import eligible
 from editorial_providers import Cancellation, Cancelled
 from editorial_store import QueueFull, dump
 from local_process import run, use_resources
@@ -353,7 +354,7 @@ class Production:
                    editorial_seconds=elapsed)
             return
         result = job.get("result") or {}
-        if result.get("mode") == "semantic" and result.get("recommended_variant"):
+        if eligible(result):
             change("ready", editorial_seconds=elapsed)
         else:
             change("review", code="editorial_review", editorial_seconds=elapsed,

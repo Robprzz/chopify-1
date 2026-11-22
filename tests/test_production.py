@@ -1,4 +1,4 @@
-"""Automation 2.2 through SQLite, the real Studio server, media tools and Chromium."""
+"""Automation 2.4 through SQLite, the real Studio server, media tools and Chromium."""
 from collections import Counter
 import sys
 import threading
@@ -77,21 +77,47 @@ class SemanticDouble:
         cancellation.check()
         assert model == MODEL
         content = json.loads(messages[1]["content"])
-        if "clip_evidence" in content:
+        if "passages" in content:
             self.current = content["outside_clip"].get("title", "live")
+            self.calls[self.current, "analysis"] += 1
+            self.questions.append((self.current, messages[0]["content"], content))
+            return comprehension()
+        if "repair" in content:
+            self.calls[self.current, "repair"] += 1
+            self.questions.append((self.current, messages[0]["content"], content))
+            return {style: {field: ("La pista de la tierra antes de regar" if field == "title"
+                                    and self.current != "editorial_fail"
+                                    else content["current_proposals"][style].get(field))
+                            for field in fields} for style, fields in content["repair"].items()}
+        if "requested_angles" in content:
+            assert "outside_clip" not in content
             self.calls[self.current, "proposal"] += 1
             self.questions.append((self.current, messages[0]["content"], content))
-            result = proposal()
-            if self.current == "editorial_fail":
-                result["variants"]["curiosity"]["title"] = "Descubre las 47 albahacas"
+            result = {style: proposal()["variants"][style] for style in content["requested_angles"]}
+            for style, variant in result.items():
+                variant.pop("score")
+                variant.pop("evidence")
+                variant.update(claims=[0], strategy="Enfoque de " + style)
+                if self.current == "editorial_fail":
+                    variant["title"] = "Descubre las 47 albahacas"
             return result
         assert "outside_clip" not in content
         self.calls[self.current, "review"] += 1
         review = {name: 8 for name in semantic.CRITERIA}
-        review.update(grounded=True, sensational=False)
-        if self.current == "editorial_retry" and self.calls[self.current, "review"] == 1:
-            review.update(grounded=False)
-        return {style: review for style in proposal()["variants"]}
+        review.update(grounded=True, sensational=False, uncertainty="low", fields=[])
+        return {style: ({**review, "grounded": False, "fields": ["title"]}
+                        if self.current == "editorial_retry" and self.calls[self.current, "review"] == 1
+                        and style == "curiosity" else review) for style in content["variants_to_review"]}
+
+
+def comprehension():
+    return {"language": "es", "theme": "Cuidado de la albahaca", "secondary": ["Luz", "Riego"],
+            "message": "Observa la tierra antes de regar.", "intent": "explain", "emotion": "neutral",
+            "tone": "práctico", "audience": "Personas que cultivan hierbas", "value": "educational",
+            "standalone": True, "context_needed": "", "uncertainty": "low", "ambiguities": [],
+            "claims": [{"text": "Cuidados de la albahaca.", "quote": "La albahaca necesita luz.",
+                        "kind": "attributed_fact", "refs": [0], "ambiguity": ""}],
+            "entities": [], "highlights": [0], "sensitive": False}
 
 
 def setup_asset(root, source, kind):
@@ -194,7 +220,7 @@ def test_twenty_jobs_automatic_quality_repair_and_semantic_gate(server, monkeypa
         detail = request(base, "/api/production/job?id=" + str(row["id"]))
         phases = {event["state"] for event in detail["events"]}
         if row["state"] == "ready":
-            assert {"validating", "analyzing", "generating", "validating_proposals", "ready"} <= phases
+            assert {"validating", "analyzing", "understanding", "generating", "validating_proposals", "ready"} <= phases
             editorial = app.editorial.store.detail(row["editorial_id"])
             assert editorial["result"]["mode"] == "semantic"
             assert editorial["result"]["confidence"] is None
@@ -207,13 +233,16 @@ def test_twenty_jobs_automatic_quality_repair_and_semantic_gate(server, monkeypa
             assert row["attempts"] == 2 and row["editorial_id"] is None
         summary.append({key: row[key] for key in ("filename", "state", "code", "attempts", "seconds",
                                                    "repair_seconds", "editorial_seconds")})
-    assert double.calls["editorial_retry", "proposal"] == 2
+    assert double.calls["editorial_retry", "proposal"] == 1
+    assert double.calls["editorial_retry", "repair"] == 1
     assert double.calls["editorial_retry", "review"] == 2
-    assert double.calls["editorial_fail", "proposal"] == 2
+    assert double.calls["editorial_fail", "proposal"] == 1
+    assert double.calls["editorial_fail", "repair"] == 2
     assert double.calls["editorial_fail", "review"] == 0
-    assert any("Mejora fidelidad" in instruction for title, instruction, _ in double.questions if title == "editorial_retry")
+    assert any(list(data["repair"]) == ["curiosity"] and list(data["repair"]["curiosity"]) == ["title"]
+               for title, _, data in double.questions if title == "editorial_retry" and "repair" in data)
     assert any(data["outside_clip"].get("channel") == "Cultivo local" and "Patio 68" not in
-               str(data["clip_evidence"]) for _, _, data in double.questions)
+               str(data["passages"]) for _, _, data in double.questions if "passages" in data)
     assert not any("de agua" in str(data) for _, _, data in double.questions)
     with pytest.raises(HTTPError) as rejected:
         request(base, "/api/tiktok/upload", {"review_id": "example", "description": "albahaca", "approved": False}, token)
@@ -258,8 +287,8 @@ def test_operations_chromium_pause_and_semantic_result(server, chromium_page, tm
     monkeypatch.setattr(subtitle_quality, "speech_ranges", lambda *_: [(.2, .9), (1.42, 2.6)])
     httpd, base = server
     app = httpd.app
-    source = media_file(app.root / "clean.mp4")
-    project, file = setup_asset(app.root, source, "valid")
+    source = media_file(app.root / "clean.mp4", size="640x360")
+    project, file = setup_asset(app.root, source, "editorial_retry")
     app.editorial.provider = SemanticDouble()
     app.editorial.ensure()
     configured(app.editorial.store)
@@ -288,16 +317,20 @@ def test_operations_chromium_pause_and_semantic_result(server, chromium_page, tm
     page.locator(".production-panel").screenshot(path=str(tmp_path / "operations-chromium.png"))
     page.get_by_role("button", name="Ver propuestas", exact=True).click()
     output = page.locator("#editorial-result")
-    expect(output).to_contain_text("Mayor puntuación tras la revisión editorial")
+    expect(output).to_contain_text("Mayor puntuación entre las propuestas")
     expect(output.locator(".editorial-variant")).to_have_count(3)
     output.locator("summary").filter(has_text="Evaluación y evidencia").click()
     expect(output).to_contain_text("Mensaje central")
+    output.locator("summary").filter(has_text="Diagnóstico de ejecución").click()
+    expect(output).to_contain_text("Campos corregidos · Curiosidad / Título")
     output.screenshot(path=str(tmp_path / "semantic-chromium.png"))
-    page.get_by_role("button", name="Revisar en Publicaciones").click()
+    output.get_by_role("button", name="Revisar en Publicaciones").click()
     expect(page.locator("#publications-view")).to_be_visible()
+    expect(page.locator("#tiktok-description")).to_have_value("El clip explica cómo usar la tierra como señal para regar la albahaca.\n\n#Albahaca")
     expect(page.locator("#tiktok-send")).to_be_disabled()
     expect(page.locator("#tiktok-consent")).not_to_be_checked()
     assert not errors
+    page.locator("#publications-view").screenshot(path=str(tmp_path / "consent-chromium.png"))
 
 
 
@@ -318,7 +351,7 @@ def test_semantic_jobs_use_bounded_loopback_transport(server, monkeypatch):
                       {"project": project, "filename": file.name, "semantic": True}, app.token)["job_id"]
         result = wait_job(app.editorial, job)["result"]
         assert result["mode"] == "semantic" and result["attempts"] == 2
-        assert result["model_calls"] == len(fake.calls) == 4
+        assert result["model_calls"] == len(fake.calls) == 5
         assert all(call["options"]["num_ctx"] == 6144 and call["stream"] is False
                    and call["think"] is False and "tools" not in call for call in fake.calls)
 

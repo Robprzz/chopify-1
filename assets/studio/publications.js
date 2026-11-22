@@ -170,7 +170,7 @@ $("#tiktok-privacy-check").addEventListener("click", safe(async () => {
   }
 }));
 
-$("#tiktok-clip").addEventListener("change", safe(async () => {
+async function inspectPublicationClip(description) {
   clearPublicationReview();
   const value = $("#tiktok-clip").value;
   if (value === "") return;
@@ -184,7 +184,7 @@ $("#tiktok-clip").addEventListener("change", safe(async () => {
     preview.src = review.url;
     $("#tiktok-media-info").textContent = `${review.width} × ${review.height} · ${review.duration} s` +
       (review.vertical_9_16 ? "" : " · Formato recomendado para TikTok: 9:16");
-    $("#tiktok-description").value = review.description;
+    $("#tiktok-description").value = description ?? review.description;
     $("#tiktok-review").hidden = false;
   } catch (error) {
     $("#tiktok-clip").value = "";
@@ -193,7 +193,18 @@ $("#tiktok-clip").addEventListener("change", safe(async () => {
     publication.busy = false;
     updatePublicationControls();
   }
-}));
+}
+
+async function reviewPublicationClip(key, description) {
+  await showPublications();
+  const menu = $("#tiktok-clip");
+  const option = [...menu.options].find(item => item.dataset.key === key);
+  if (!option) throw new Error("El clip ya no está disponible en Publicaciones.");
+  menu.value = option.value;
+  await inspectPublicationClip(description);
+}
+
+$("#tiktok-clip").addEventListener("change", safe(() => inspectPublicationClip()));
 
 $("#tiktok-description").addEventListener("input", () => {
   $("#tiktok-consent").checked = false;

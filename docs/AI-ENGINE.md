@@ -31,7 +31,7 @@ Para probar el modelo mediano usa `ollama pull qwen3:8b` en lugar del primero. S
 | Respuesta inválida | El motor admite hasta un reintento dentro del mismo plazo. Si falla, el resultado se identifica como generado mediante reglas locales. |
 | Clip sin diálogo | Revisa el SRT o vuelve a preparar el fragmento. El motor necesita texto verificable. |
 
-El respaldo determinista se usa si eliges **Reglas locales** o si Ollama no puede completar el trabajo. Puedes regenerar con Ollama más adelante. Studio consulta y usa modelos instalados desde `http://127.0.0.1:11434`. El panel permite seleccionar modelos y configurar tiempos. La instalación y las descargas se hacen manualmente.
+El respaldo extractivo está disponible en **Opciones de generación y recuperación**. Los botones principales redactan en modo semántico con el modelo configurado o con Qwen3:4b instalado. Si un modelo seleccionado no está disponible, el trabajo semántico registra el error. [Motor Automation 2.4 y diagnóstico](EDITORIAL-24.md) Studio consulta y usa modelos instalados desde `http://127.0.0.1:11434`. El panel permite seleccionar modelos y configurar tiempos. La instalación y las descargas se hacen manualmente.
 
 ## Uso editorial
 
@@ -45,7 +45,7 @@ La casilla existente **Generar captions automáticamente para nuevas exportacion
 
 ## Propuestas semánticas de Fase 2.2
 
-La cola de producción usa Ollama local para redactar y evaluar propuestas basadas en pasajes del clip. Puedes abrir el mismo modo manualmente con **Generar propuestas semánticas**. [Control técnico, reposición y revisión editorial](PRODUCTION.md)
+La cola de producción usa Ollama local para redactar y evaluar propuestas basadas en pasajes del clip. Puedes usar el mismo motor manualmente con **Generar propuestas** o forzarlo con **Generar propuestas semánticas**. [Control técnico, reposición y revisión editorial](PRODUCTION.md)
 
 ## Calidad de subtítulos
 

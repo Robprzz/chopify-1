@@ -98,7 +98,7 @@ def read_clip(media, project, filename):
 
 
 def safe_context(value, limit):
-    if not isinstance(value, str) or INSTRUCTIONS.search(value):
+    if not isinstance(value, str) or INSTRUCTIONS.search(value) or re.search(r"[\ud800-\udfff]", value):
         return ""
     return " ".join(SENSITIVE.sub("", value).split())[:limit]
 
@@ -106,28 +106,39 @@ def safe_context(value, limit):
 def semantic_context(media, project, source):
     cues, _, _ = subtitle_quality.load_track(media)
     clips = []
+    total = sum(len(phrase) for _, _, phrase in cues)
+    safe_chars = covered = 0
     for left, right, phrase in cues:
-        phrase = safe_context(phrase, 300)
-        if not phrase:
+        if INSTRUCTIONS.search(phrase):
             continue
-        if clips and left - clips[-1]["end"] <= .65 and len(clips[-1]["text"]) + len(phrase) < 265:
-            clips[-1]["end"] = right
-            clips[-1]["text"] += " " + phrase
-        else:
-            clips.append({"start": left, "end": right, "text": phrase})
-    clips = [row for row in clips if not INSTRUCTIONS.search(row["text"])]
-    if not clips:
-        raise ValueError("El clip no contiene evidencia editorial utilizable.")
-    # Include the complete short clip and sample across long clips within the model's context budget.
-    count = min(len(clips), max(1, int(6200 / (sum(len(row["text"]) + 40 for row in clips) / len(clips)))))
-    evidence = []
-    size = 0
-    for i in range(count):
-        row = clips[i * (len(clips) - 1) // max(1, count - 1)]
-        if size + len(row["text"]) + 40 > 6500:
-            break
-        evidence.append(row)
-        size += len(row["text"]) + 40
+        speaker = re.match(r"^\s*\[([^\[\]\n]{1,60})\]\s+", phrase)
+        label = safe_context(speaker[1], 60) if speaker else ""
+        dialogue = phrase[speaker.end():] if speaker else phrase
+        dialogue = re.sub(r"<(?:/?[ibu]|/?font[^>]*)>", "", dialogue)
+        words = " ".join(SENSITIVE.sub("", dialogue).split())
+        if not words:
+            continue
+        safe_chars += len(words)
+        covered += 1
+        # Split oversized cues on whitespace, or on characters for scripts without spaces.
+        pieces = []
+        while len(words) > 480:
+            boundary = words.rfind(" ", 0, 481)
+            cut = boundary if boundary > 0 else 480
+            pieces.append(words[:cut])
+            words = words[cut:].lstrip()
+        pieces.append(words)
+        for text in pieces:
+            row = {"start": left, "end": right, "text": text}
+            if label:
+                row["speaker"] = label
+            if (clips and -.01 <= left - clips[-1]["end"] <= .65 and clips[-1].get("speaker") == row.get("speaker")
+                    and len(clips[-1]["text"]) + len(text) < 465):
+                clips[-1]["end"] = right
+                clips[-1]["text"] += " " + text
+            else:
+                clips.append(row)
+    evidence = [row for row in clips if not INSTRUCTIONS.search(row["text"])]
     outside = {}
     language = "und"
     base = media.parent.parent
@@ -153,5 +164,7 @@ def semantic_context(media, project, source):
                     outside[label] = value
         except (OSError, ValueError, KeyError, TypeError, AttributeError):
             pass
-    return {**source, "semantic_evidence": evidence, "semantic_sampled": len(evidence) < len(clips),
-            "outside_clip": outside, "language_hint": language}
+    return {**source, "semantic_evidence": evidence, "outside_clip": outside, "language_hint": language,
+            "transcript_coverage": {"cues": len(cues), "safe_cues": covered, "source_chars": total,
+                                    "safe_chars": safe_chars, "passages": len(evidence),
+                                    "filtered_cues": len(cues) - covered, "filtered_passages": len(clips) - len(evidence)}}

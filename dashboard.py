@@ -757,8 +757,13 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json(engine.submit(
                         body.get("project"), body.get("filename"), body.get("platform"),
                         body.get("force", action == "test"), test=action == "test",
-                        semantic=body.get("semantic", False)), 202)
+                        semantic=body.get("semantic")), 202)
                 engine.ensure()
+                if action == "reprocess":
+                    return self.send_json(engine.reprocess(body.get("mode"), body.get("clip_id")), 202)
+                if action == "variant":
+                    return self.send_json(engine.revise_variant(identifier(body.get("job_id")), body.get("style"),
+                                                                body.get("regenerate", False)), 202)
                 if action == "cancel":
                     return self.send_json(engine.cancel(identifier(body.get("job_id"))))
                 if action == "edit":

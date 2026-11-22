@@ -5,7 +5,7 @@ import time
 from editorial_store import dump
 
 
-ACTIVE = ("validating", "repairing", "revalidating", "analyzing", "generating", "validating_proposals")
+ACTIVE = ("validating", "repairing", "revalidating", "analyzing", "understanding", "generating", "validating_proposals", "autocorrecting")
 TERMINAL = ("ready", "review", "rejected", "failed", "cancelled")
 LEASE_SECONDS = 12
 
@@ -134,7 +134,7 @@ class Store:
                        (editorial_id, job, owner))
 
     def editorial_stage(self, job, run, state):
-        if state not in {"generating", "validating_proposals"}:
+        if state not in {"understanding", "generating", "validating_proposals", "autocorrecting"}:
             raise ValueError("Etapa editorial desconocida.")
         with self.connect(write=True) as db:
             row = db.execute("""UPDATE production_jobs SET state=?, updated=?

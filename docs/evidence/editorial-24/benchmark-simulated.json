@@ -1,0 +1,2733 @@
+{
+  "provider": "simulated",
+  "model": null,
+  "digest": null,
+  "comparison_base": "43b4755efce066cdb20755b680edd2f4d5a94107",
+  "timeout_seconds": 90,
+  "totals": {
+    "extractive": {
+      "n": 32,
+      "eligible": 29,
+      "criteria_passed": {
+        "fidelity": 29,
+        "title": 28,
+        "caption": 21,
+        "description": 27,
+        "standalone": 27
+      },
+      "errors": {},
+      "ineligible_rejected": 0,
+      "calls": 0,
+      "repairs_with_usable_result": 0,
+      "fidelity_errors": 0,
+      "median_seconds": 0.000165,
+      "p95_seconds": 0.000384
+    },
+    "2.2": {
+      "n": 32,
+      "eligible": 29,
+      "criteria_passed": {
+        "fidelity": 19,
+        "title": 19,
+        "caption": 19,
+        "description": 19,
+        "hashtags": 19,
+        "originality": 19,
+        "differentiation": 19,
+        "standalone": 19,
+        "usable": 18
+      },
+      "errors": {
+        "quality": 13
+      },
+      "ineligible_rejected": 3,
+      "calls": 66,
+      "repairs_with_usable_result": 2,
+      "fidelity_errors": 0,
+      "median_seconds": 0.0005059999999999999,
+      "p95_seconds": 0.000964
+    },
+    "2.4": {
+      "n": 32,
+      "eligible": 29,
+      "criteria_passed": {
+        "fidelity": 29,
+        "title": 29,
+        "caption": 29,
+        "description": 29,
+        "hashtags": 29,
+        "originality": 29,
+        "differentiation": 29,
+        "standalone": 29,
+        "usable": 28
+      },
+      "errors": {},
+      "ineligible_rejected": 3,
+      "calls": 115,
+      "repairs_with_usable_result": 12,
+      "fidelity_errors": 0,
+      "median_seconds": 0.0027375000000000003,
+      "p95_seconds": 0.007875
+    }
+  },
+  "cases": [
+    {
+      "id": "entrevista-huerto",
+      "engine": "extractive",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": true,
+        "usable": false
+      },
+      "seconds": 0.000384,
+      "calls": 0,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "La albahaca necesita luz y conviene revisar la humedad de la…",
+        "caption": "La albahaca necesita luz y conviene revisar la humedad de la tierra antes de regar.",
+        "description": "La albahaca necesita luz y conviene revisar la humedad de la tierra antes de regar."
+      }
+    },
+    {
+      "id": "entrevista-huerto",
+      "engine": "2.2",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.000725,
+      "calls": 2,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "¿Qué detalle cambia la forma de ver el tema: albahaca?",
+        "caption": "El fragmento pone el foco en albahaca.",
+        "description": "La albahaca necesita luz y conviene revisar la humedad de la tierra antes de regar."
+      }
+    },
+    {
+      "id": "entrevista-huerto",
+      "engine": "2.4",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.003632,
+      "calls": 3,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "¿Qué detalle cambia la forma de ver el tema: albahaca?",
+        "caption": "El fragmento pone el foco en albahaca.",
+        "description": "La albahaca necesita luz y conviene revisar la humedad de la tierra antes de regar."
+      }
+    },
+    {
+      "id": "podcast-parada",
+      "engine": "extractive",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": true,
+        "usable": false
+      },
+      "seconds": 0.000228,
+      "calls": 0,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "En el podcast un viajero cuenta que perdió la parada del…",
+        "caption": "En el podcast un viajero cuenta que perdió la parada del autobús por mirar el teléfono.",
+        "description": "En el podcast un viajero cuenta que perdió la parada del autobús por mirar el teléfono."
+      }
+    },
+    {
+      "id": "podcast-parada",
+      "engine": "2.2",
+      "eligible": true,
+      "criteria": {
+        "fidelity": false,
+        "title": false,
+        "caption": false,
+        "description": false,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": false,
+        "usable": false
+      },
+      "seconds": 0.000347,
+      "calls": 2,
+      "error": "quality",
+      "accepted": false,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": null
+    },
+    {
+      "id": "podcast-parada",
+      "engine": "2.4",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.003069,
+      "calls": 5,
+      "error": null,
+      "accepted": true,
+      "issues": [
+        "unsupported_entity"
+      ],
+      "repaired": true,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "¿Qué detalle cambia la forma de ver el tema: parada?",
+        "caption": "El fragmento pone el foco en parada.",
+        "description": "En el podcast un viajero cuenta que perdió la parada del autobús por mirar el teléfono."
+      }
+    },
+    {
+      "id": "noticia-acceso",
+      "engine": "extractive",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": true,
+        "usable": false
+      },
+      "seconds": 0.00021,
+      "calls": 0,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "La locutora informa que la biblioteca abrió una entrada lateral…",
+        "caption": "La locutora informa que la biblioteca abrió una entrada lateral mientras reparan la puerta.",
+        "description": "La locutora informa que la biblioteca abrió una entrada lateral mientras reparan la puerta."
+      }
+    },
+    {
+      "id": "noticia-acceso",
+      "engine": "2.2",
+      "eligible": true,
+      "criteria": {
+        "fidelity": false,
+        "title": false,
+        "caption": false,
+        "description": false,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": false,
+        "usable": false
+      },
+      "seconds": 0.000129,
+      "calls": 2,
+      "error": "quality",
+      "accepted": false,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": null
+    },
+    {
+      "id": "noticia-acceso",
+      "engine": "2.4",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.002925,
+      "calls": 5,
+      "error": null,
+      "accepted": true,
+      "issues": [
+        "structure"
+      ],
+      "repaired": true,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "¿Qué detalle cambia la forma de ver el tema: biblioteca?",
+        "caption": "El fragmento pone el foco en biblioteca.",
+        "description": "La locutora informa que la biblioteca abrió una entrada lateral mientras reparan la puerta."
+      }
+    },
+    {
+      "id": "debate-patio",
+      "engine": "extractive",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": false,
+        "description": true,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": true,
+        "usable": false
+      },
+      "seconds": 0.007343,
+      "calls": 0,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "En el debate una voz propone abrir el patio para ensayar.",
+        "caption": "En el debate una voz propone abrir el patio para ensayar.",
+        "description": "En el debate una voz propone abrir el patio para ensayar."
+      }
+    },
+    {
+      "id": "debate-patio",
+      "engine": "2.2",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.008456,
+      "calls": 3,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": true,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "¿Qué detalle cambia la forma de ver el tema: patio?",
+        "caption": "El fragmento pone el foco en patio.",
+        "description": "En el debate una voz propone abrir el patio para ensayar."
+      }
+    },
+    {
+      "id": "debate-patio",
+      "engine": "2.4",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.002645,
+      "calls": 5,
+      "error": null,
+      "accepted": true,
+      "issues": [
+        "duplicate_variants"
+      ],
+      "repaired": true,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "¿Qué detalle cambia la forma de ver el tema: patio?",
+        "caption": "El fragmento pone el foco en patio.",
+        "description": "En el debate una voz propone abrir el patio para ensayar."
+      }
+    },
+    {
+      "id": "conversacion-guiso",
+      "engine": "extractive",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": true,
+        "usable": false
+      },
+      "seconds": 0.000171,
+      "calls": 0,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "Dos amigos cuentan que dejaron enfriar el guiso y lo probaron…",
+        "caption": "Dos amigos cuentan que dejaron enfriar el guiso y lo probaron otra vez.",
+        "description": "Dos amigos cuentan que dejaron enfriar el guiso y lo probaron otra vez."
+      }
+    },
+    {
+      "id": "conversacion-guiso",
+      "engine": "2.2",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.000554,
+      "calls": 2,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "¿Qué detalle cambia la forma de ver el tema: guiso?",
+        "caption": "El fragmento pone el foco en guiso.",
+        "description": "Dos amigos cuentan que dejaron enfriar el guiso y lo probaron otra vez."
+      }
+    },
+    {
+      "id": "conversacion-guiso",
+      "engine": "2.4",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.005717,
+      "calls": 3,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "¿Qué detalle cambia la forma de ver el tema: guiso?",
+        "caption": "El fragmento pone el foco en guiso.",
+        "description": "Dos amigos cuentan que dejaron enfriar el guiso y lo probaron otra vez."
+      }
+    },
+    {
+      "id": "educacion-sombras",
+      "engine": "extractive",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": false,
+        "caption": true,
+        "description": true,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": true,
+        "usable": false
+      },
+      "seconds": 0.000181,
+      "calls": 0,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "En el taller acercan una figura a la lámpara para comparar su…",
+        "caption": "En el taller acercan una figura a la lámpara para comparar su sombra con la que obtuvo el grupo anterior.",
+        "description": "En el taller acercan una figura a la lámpara para comparar su sombra con la que obtuvo el grupo anterior."
+      }
+    },
+    {
+      "id": "educacion-sombras",
+      "engine": "2.2",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.000573,
+      "calls": 2,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "¿Qué detalle cambia la forma de ver el tema: sombra?",
+        "caption": "¿Qué detalle cambia la forma de ver el tema: sombra?",
+        "description": "En el taller acercan una figura a la lámpara para comparar su sombra con la que obtuvo el grupo anterior."
+      }
+    },
+    {
+      "id": "educacion-sombras",
+      "engine": "2.4",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.007149,
+      "calls": 5,
+      "error": null,
+      "accepted": true,
+      "issues": [
+        "duplicate_copy"
+      ],
+      "repaired": true,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "¿Qué detalle cambia la forma de ver el tema: sombra?",
+        "caption": "El fragmento pone el foco en sombra.",
+        "description": "En el taller acercan una figura a la lámpara para comparar su sombra con la que obtuvo el grupo anterior."
+      }
+    },
+    {
+      "id": "psicologia-pausa",
+      "engine": "extractive",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": true,
+        "usable": false
+      },
+      "seconds": 0.00016,
+      "calls": 0,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "La invitada cuenta que hacer una pausa antes de contestar le…",
+        "caption": "La invitada cuenta que hacer una pausa antes de contestar le ayuda a ordenar sus ideas.",
+        "description": "La invitada cuenta que hacer una pausa antes de contestar le ayuda a ordenar sus ideas."
+      }
+    },
+    {
+      "id": "psicologia-pausa",
+      "engine": "2.2",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.000537,
+      "calls": 2,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "Muy importante",
+        "caption": "El fragmento pone el foco en pausa.",
+        "description": "La invitada cuenta que hacer una pausa antes de contestar le ayuda a ordenar sus ideas."
+      }
+    },
+    {
+      "id": "psicologia-pausa",
+      "engine": "2.4",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.006739,
+      "calls": 5,
+      "error": null,
+      "accepted": true,
+      "issues": [
+        "generic"
+      ],
+      "repaired": true,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "¿Qué detalle cambia la forma de ver el tema: pausa?",
+        "caption": "El fragmento pone el foco en pausa.",
+        "description": "La invitada cuenta que hacer una pausa antes de contestar le ayuda a ordenar sus ideas."
+      }
+    },
+    {
+      "id": "desarrollo-agenda",
+      "engine": "extractive",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": true,
+        "usable": false
+      },
+      "seconds": 0.000166,
+      "calls": 0,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "La persona entrevistada reserva un momento en la agenda para…",
+        "caption": "La persona entrevistada reserva un momento en la agenda para revisar tareas pendientes.",
+        "description": "La persona entrevistada reserva un momento en la agenda para revisar tareas pendientes."
+      }
+    },
+    {
+      "id": "desarrollo-agenda",
+      "engine": "2.2",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.000512,
+      "calls": 2,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "¿Qué detalle cambia la forma de ver el tema: agenda?",
+        "caption": "El fragmento pone el foco en agenda.",
+        "description": "La persona entrevistada reserva un momento en la agenda para revisar tareas pendientes."
+      }
+    },
+    {
+      "id": "desarrollo-agenda",
+      "engine": "2.4",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.033784,
+      "calls": 3,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "¿Qué detalle cambia la forma de ver el tema: agenda?",
+        "caption": "El fragmento pone el foco en agenda.",
+        "description": "La persona entrevistada reserva un momento en la agenda para revisar tareas pendientes."
+      }
+    },
+    {
+      "id": "motivacion-bicicleta",
+      "engine": "extractive",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": true,
+        "usable": false
+      },
+      "seconds": 0.00018,
+      "calls": 0,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "Empezó a practicar con la bicicleta en la plaza y cuenta que…",
+        "caption": "Empezó a practicar con la bicicleta en la plaza y cuenta que las vueltas cortas le dieron confianza.",
+        "description": "Empezó a practicar con la bicicleta en la plaza y cuenta que las vueltas cortas le dieron confianza."
+      }
+    },
+    {
+      "id": "motivacion-bicicleta",
+      "engine": "2.2",
+      "eligible": true,
+      "criteria": {
+        "fidelity": false,
+        "title": false,
+        "caption": false,
+        "description": false,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": false,
+        "usable": false
+      },
+      "seconds": 0.000103,
+      "calls": 2,
+      "error": "quality",
+      "accepted": false,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": null
+    },
+    {
+      "id": "motivacion-bicicleta",
+      "engine": "2.4",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.007875,
+      "calls": 5,
+      "error": null,
+      "accepted": true,
+      "issues": [
+        "structure"
+      ],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "Una pregunta para conversar acerca de bicicleta",
+        "caption": "¿Qué parte del ejemplo sobre bicicleta te llamó la atención?",
+        "description": "La historia se centra en cómo empezó."
+      }
+    },
+    {
+      "id": "sensible-rumor",
+      "engine": "extractive",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": true,
+        "usable": false
+      },
+      "seconds": 0.00018,
+      "calls": 0,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "La voz entrevistada cuenta que en el pueblo circuló un rumor…",
+        "caption": "La voz entrevistada cuenta que en el pueblo circuló un rumor sobre la muerte.",
+        "description": "La voz entrevistada cuenta que en el pueblo circuló un rumor sobre la muerte."
+      }
+    },
+    {
+      "id": "sensible-rumor",
+      "engine": "2.2",
+      "eligible": true,
+      "criteria": {
+        "fidelity": false,
+        "title": false,
+        "caption": false,
+        "description": false,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": false,
+        "usable": false
+      },
+      "seconds": 0.000192,
+      "calls": 2,
+      "error": "quality",
+      "accepted": false,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": null
+    },
+    {
+      "id": "sensible-rumor",
+      "engine": "2.4",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.003608,
+      "calls": 5,
+      "error": null,
+      "accepted": true,
+      "issues": [
+        "unsupported_entity"
+      ],
+      "repaired": true,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "El rumor que la voz entrevistada dice que oyó",
+        "caption": "La persona entrevistada cuenta cómo oyó el rumor.",
+        "description": "La voz entrevistada cuenta que en el pueblo circuló un rumor sobre la muerte."
+      }
+    },
+    {
+      "id": "sensible-salud",
+      "engine": "extractive",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": true,
+        "usable": false
+      },
+      "seconds": 0.000174,
+      "calls": 0,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "La invitada describe su propia experiencia con el sueño y…",
+        "caption": "La invitada describe su propia experiencia con el sueño y cuenta que empezó a anotar cuándo se despertaba.",
+        "description": "La invitada describe su propia experiencia con el sueño y cuenta que empezó a anotar cuándo se despertaba."
+      }
+    },
+    {
+      "id": "sensible-salud",
+      "engine": "2.2",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.000557,
+      "calls": 2,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "¿Qué detalle cambia la forma de ver el tema: sueño?",
+        "caption": "El fragmento pone el foco en sueño.",
+        "description": "La invitada describe su propia experiencia con el sueño y cuenta que empezó a anotar cuándo se despertaba."
+      }
+    },
+    {
+      "id": "sensible-salud",
+      "engine": "2.4",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.002041,
+      "calls": 3,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "¿Qué detalle cambia la forma de ver el tema: sueño?",
+        "caption": "El fragmento pone el foco en sueño.",
+        "description": "La invitada describe su propia experiencia con el sueño y cuenta que empezó a anotar cuándo se despertaba."
+      }
+    },
+    {
+      "id": "nombre-tildes",
+      "engine": "extractive",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": false,
+        "description": true,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": true,
+        "usable": false
+      },
+      "seconds": 0.000151,
+      "calls": 0,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "La jardinera Inés Valcera habla de la luz que recibe la planta.",
+        "caption": "La jardinera Inés Valcera habla de la luz que recibe la planta.",
+        "description": "La jardinera Inés Valcera habla de la luz que recibe la planta."
+      }
+    },
+    {
+      "id": "nombre-tildes",
+      "engine": "2.2",
+      "eligible": true,
+      "criteria": {
+        "fidelity": false,
+        "title": false,
+        "caption": false,
+        "description": false,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": false,
+        "usable": false
+      },
+      "seconds": 0.00037,
+      "calls": 2,
+      "error": "quality",
+      "accepted": false,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": null
+    },
+    {
+      "id": "nombre-tildes",
+      "engine": "2.4",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.00172,
+      "calls": 3,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "La luz que observa Ines Valcera",
+        "caption": "El fragmento pone el foco en luz.",
+        "description": "La jardinera Inés Valcera habla de la luz que recibe la planta."
+      }
+    },
+    {
+      "id": "nombre-fragmentado",
+      "engine": "extractive",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": true,
+        "usable": false
+      },
+      "seconds": 0.000255,
+      "calls": 0,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "En el taller Iris Brisal enseña cómo usa los retazos para…",
+        "caption": "En el taller Iris Brisal enseña cómo usa los retazos para ensayar costuras.",
+        "description": "En el taller Iris Brisal enseña cómo usa los retazos para ensayar costuras."
+      }
+    },
+    {
+      "id": "nombre-fragmentado",
+      "engine": "2.2",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.000517,
+      "calls": 2,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "Iris Brisal muestra cómo se ensaya en el taller",
+        "caption": "El fragmento pone el foco en taller.",
+        "description": "En el taller Iris"
+      }
+    },
+    {
+      "id": "nombre-fragmentado",
+      "engine": "2.4",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.001561,
+      "calls": 3,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "Iris Brisal muestra cómo se ensaya en el taller",
+        "caption": "El fragmento pone el foco en taller.",
+        "description": "En el taller Iris"
+      }
+    },
+    {
+      "id": "nombre-fallo-asr",
+      "engine": "extractive",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": false,
+        "description": true,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": true,
+        "usable": false
+      },
+      "seconds": 0.000153,
+      "calls": 0,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "Luego explica que revisa el tablero antes de cerrar la puerta.",
+        "caption": "Luego explica que revisa el tablero antes de cerrar la puerta.",
+        "description": "Luego explica que revisa el tablero antes de cerrar la puerta."
+      }
+    },
+    {
+      "id": "nombre-fallo-asr",
+      "engine": "2.2",
+      "eligible": true,
+      "criteria": {
+        "fidelity": false,
+        "title": false,
+        "caption": false,
+        "description": false,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": false,
+        "usable": false
+      },
+      "seconds": 0.000183,
+      "calls": 2,
+      "error": "quality",
+      "accepted": false,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": null
+    },
+    {
+      "id": "nombre-fallo-asr",
+      "engine": "2.4",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.002923,
+      "calls": 5,
+      "error": null,
+      "accepted": true,
+      "issues": [
+        "unsupported_entity"
+      ],
+      "repaired": true,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "¿Qué detalle cambia la forma de ver el tema: tablero?",
+        "caption": "El fragmento pone el foco en tablero.",
+        "description": "La persona se identifica como Ren Valce."
+      }
+    },
+    {
+      "id": "sin-antecedente",
+      "engine": "extractive",
+      "eligible": false,
+      "criteria": {
+        "fidelity": true,
+        "title": false,
+        "caption": false,
+        "description": false,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": false,
+        "usable": false
+      },
+      "seconds": 0.000102,
+      "calls": 0,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "Bueno, ya sabes.",
+        "caption": "👀 Bueno, ya sabes.",
+        "description": "Bueno, ya sabes."
+      }
+    },
+    {
+      "id": "sin-antecedente",
+      "engine": "2.2",
+      "eligible": false,
+      "criteria": {
+        "fidelity": false,
+        "title": false,
+        "caption": false,
+        "description": false,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": false,
+        "usable": false
+      },
+      "seconds": 0.000232,
+      "calls": 2,
+      "error": "quality",
+      "accepted": false,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": null
+    },
+    {
+      "id": "sin-antecedente",
+      "engine": "2.4",
+      "eligible": false,
+      "criteria": {
+        "fidelity": false,
+        "title": false,
+        "caption": false,
+        "description": false,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": false,
+        "usable": false
+      },
+      "seconds": 2.1e-05,
+      "calls": 0,
+      "error": null,
+      "accepted": false,
+      "issues": [
+        "insufficient_evidence"
+      ],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": null
+    },
+    {
+      "id": "ruido",
+      "engine": "extractive",
+      "eligible": false,
+      "criteria": {
+        "fidelity": true,
+        "title": false,
+        "caption": false,
+        "description": false,
+        "hashtags": true,
+        "originality": false,
+        "differentiation": false,
+        "standalone": false,
+        "usable": false
+      },
+      "seconds": 8.8e-05,
+      "calls": 0,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "Sí… eh.",
+        "caption": "👀 Sí… eh.",
+        "description": "Sí… eh."
+      }
+    },
+    {
+      "id": "ruido",
+      "engine": "2.2",
+      "eligible": false,
+      "criteria": {
+        "fidelity": false,
+        "title": false,
+        "caption": false,
+        "description": false,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": false,
+        "usable": false
+      },
+      "seconds": 0.000233,
+      "calls": 2,
+      "error": "quality",
+      "accepted": false,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": null
+    },
+    {
+      "id": "ruido",
+      "engine": "2.4",
+      "eligible": false,
+      "criteria": {
+        "fidelity": false,
+        "title": false,
+        "caption": false,
+        "description": false,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": false,
+        "usable": false
+      },
+      "seconds": 2e-05,
+      "calls": 0,
+      "error": null,
+      "accepted": false,
+      "issues": [
+        "insufficient_evidence"
+      ],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": null
+    },
+    {
+      "id": "deictico",
+      "engine": "extractive",
+      "eligible": false,
+      "criteria": {
+        "fidelity": true,
+        "title": false,
+        "caption": false,
+        "description": false,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": false,
+        "usable": false
+      },
+      "seconds": 8.4e-05,
+      "calls": 0,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "Allí, eso.",
+        "caption": "👀 Allí, eso.",
+        "description": "Allí, eso."
+      }
+    },
+    {
+      "id": "deictico",
+      "engine": "2.2",
+      "eligible": false,
+      "criteria": {
+        "fidelity": false,
+        "title": false,
+        "caption": false,
+        "description": false,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": false,
+        "usable": false
+      },
+      "seconds": 0.000223,
+      "calls": 2,
+      "error": "quality",
+      "accepted": false,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": null
+    },
+    {
+      "id": "deictico",
+      "engine": "2.4",
+      "eligible": false,
+      "criteria": {
+        "fidelity": false,
+        "title": false,
+        "caption": false,
+        "description": false,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": false,
+        "usable": false
+      },
+      "seconds": 1.8e-05,
+      "calls": 0,
+      "error": null,
+      "accepted": false,
+      "issues": [
+        "insufficient_evidence"
+      ],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": null
+    },
+    {
+      "id": "entrevista-libro",
+      "engine": "extractive",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": true,
+        "usable": false
+      },
+      "seconds": 0.000188,
+      "calls": 0,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "La invitada dice que usa un cuaderno para anotar frases de los…",
+        "caption": "La invitada dice que usa un cuaderno para anotar frases de los libros.",
+        "description": "La invitada dice que usa un cuaderno para anotar frases de los libros."
+      }
+    },
+    {
+      "id": "entrevista-libro",
+      "engine": "2.2",
+      "eligible": true,
+      "criteria": {
+        "fidelity": false,
+        "title": false,
+        "caption": false,
+        "description": false,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": false,
+        "usable": false
+      },
+      "seconds": 7.8e-05,
+      "calls": 2,
+      "error": "quality",
+      "accepted": false,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": null
+    },
+    {
+      "id": "entrevista-libro",
+      "engine": "2.4",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.002697,
+      "calls": 5,
+      "error": null,
+      "accepted": true,
+      "issues": [
+        "structure"
+      ],
+      "repaired": true,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "¿Qué detalle cambia la forma de ver el tema: cuaderno?",
+        "caption": "El fragmento pone el foco en cuaderno.",
+        "description": "La invitada dice que usa un cuaderno para anotar frases de los libros."
+      }
+    },
+    {
+      "id": "podcast-turnos",
+      "engine": "extractive",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": true,
+        "usable": false
+      },
+      "seconds": 0.000155,
+      "calls": 0,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "En el podcast comentan que pasar el turno les permitió escuchar…",
+        "caption": "En el podcast comentan que pasar el turno les permitió escuchar las ideas pendientes.",
+        "description": "En el podcast comentan que pasar el turno les permitió escuchar las ideas pendientes."
+      }
+    },
+    {
+      "id": "podcast-turnos",
+      "engine": "2.2",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.000553,
+      "calls": 2,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "¿Qué detalle cambia la forma de ver el tema: turno?",
+        "caption": "El fragmento pone el foco en turno.",
+        "description": "En el podcast comentan que pasar el turno les permitió escuchar las ideas pendientes."
+      }
+    },
+    {
+      "id": "podcast-turnos",
+      "engine": "2.4",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.001693,
+      "calls": 3,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "¿Qué detalle cambia la forma de ver el tema: turno?",
+        "caption": "El fragmento pone el foco en turno.",
+        "description": "En el podcast comentan que pasar el turno les permitió escuchar las ideas pendientes."
+      }
+    },
+    {
+      "id": "noticia-mercado",
+      "engine": "extractive",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": true,
+        "usable": false
+      },
+      "seconds": 0.000254,
+      "calls": 0,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "La locutora informa que el mercado cambió el punto de carga a…",
+        "caption": "La locutora informa que el mercado cambió el punto de carga a la entrada norte.",
+        "description": "La locutora informa que el mercado cambió el punto de carga a la entrada norte."
+      }
+    },
+    {
+      "id": "noticia-mercado",
+      "engine": "2.2",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.000543,
+      "calls": 2,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "¿Qué detalle cambia la forma de ver el tema: mercado?",
+        "caption": "El fragmento pone el foco en mercado.",
+        "description": "La locutora informa que el mercado cambió el punto de carga a la entrada norte."
+      }
+    },
+    {
+      "id": "noticia-mercado",
+      "engine": "2.4",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.001612,
+      "calls": 3,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "¿Qué detalle cambia la forma de ver el tema: mercado?",
+        "caption": "El fragmento pone el foco en mercado.",
+        "description": "La locutora informa que el mercado cambió el punto de carga a la entrada norte."
+      }
+    },
+    {
+      "id": "debate-aceras",
+      "engine": "extractive",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": true,
+        "usable": false
+      },
+      "seconds": 0.000161,
+      "calls": 0,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "En el debate alguien sugiere ampliar la acera y otra voz…",
+        "caption": "En el debate alguien sugiere ampliar la acera y otra voz pregunta cómo organizarían las entregas.",
+        "description": "En el debate alguien sugiere ampliar la acera y otra voz pregunta cómo organizarían las entregas."
+      }
+    },
+    {
+      "id": "debate-aceras",
+      "engine": "2.2",
+      "eligible": true,
+      "criteria": {
+        "fidelity": false,
+        "title": false,
+        "caption": false,
+        "description": false,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": false,
+        "usable": false
+      },
+      "seconds": 0.000964,
+      "calls": 2,
+      "error": "quality",
+      "accepted": false,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": null
+    },
+    {
+      "id": "debate-aceras",
+      "engine": "2.4",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.003187,
+      "calls": 5,
+      "error": null,
+      "accepted": true,
+      "issues": [
+        "duplicate_variants"
+      ],
+      "repaired": true,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "¿Qué detalle cambia la forma de ver el tema: acera?",
+        "caption": "El fragmento pone el foco en acera.",
+        "description": "En el debate alguien sugiere ampliar la acera y otra voz pregunta cómo organizarían las entregas."
+      }
+    },
+    {
+      "id": "conversacion-mate",
+      "engine": "extractive",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": true,
+        "usable": false
+      },
+      "seconds": 0.000172,
+      "calls": 0,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "Una amiga describe cómo prepara mate para compartir y la otra…",
+        "caption": "Una amiga describe cómo prepara mate para compartir y la otra dice que prefiere esperar antes de cebar otra vez.",
+        "description": "Una amiga describe cómo prepara mate para compartir y la otra dice que prefiere esperar antes de cebar otra vez."
+      }
+    },
+    {
+      "id": "conversacion-mate",
+      "engine": "2.2",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.000528,
+      "calls": 2,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "Muy importante",
+        "caption": "El fragmento pone el foco en mate.",
+        "description": "Una amiga describe cómo prepara mate para compartir y la otra dice que prefiere esperar antes de cebar otra vez."
+      }
+    },
+    {
+      "id": "conversacion-mate",
+      "engine": "2.4",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.002778,
+      "calls": 5,
+      "error": null,
+      "accepted": true,
+      "issues": [
+        "generic"
+      ],
+      "repaired": true,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "¿Qué detalle cambia la forma de ver el tema: mate?",
+        "caption": "El fragmento pone el foco en mate.",
+        "description": "Una amiga describe cómo prepara mate para compartir y la otra dice que prefiere esperar antes de cebar otra vez."
+      }
+    },
+    {
+      "id": "educacion-lupa",
+      "engine": "extractive",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": false,
+        "description": true,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": true,
+        "usable": false
+      },
+      "seconds": 0.000154,
+      "calls": 0,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "El docente usa una lupa para mostrar detalles de una hoja.",
+        "caption": "El docente usa una lupa para mostrar detalles de una hoja.",
+        "description": "El docente usa una lupa para mostrar detalles de una hoja."
+      }
+    },
+    {
+      "id": "educacion-lupa",
+      "engine": "2.2",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.0005,
+      "calls": 2,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "¿Qué detalle cambia la forma de ver el tema: lupa?",
+        "caption": "El fragmento pone el foco en lupa.",
+        "description": "El docente usa una lupa para mostrar detalles de una hoja."
+      }
+    },
+    {
+      "id": "educacion-lupa",
+      "engine": "2.4",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.001516,
+      "calls": 3,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "¿Qué detalle cambia la forma de ver el tema: lupa?",
+        "caption": "El fragmento pone el foco en lupa.",
+        "description": "El docente usa una lupa para mostrar detalles de una hoja."
+      }
+    },
+    {
+      "id": "psicologia-escucha",
+      "engine": "extractive",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": true,
+        "usable": false
+      },
+      "seconds": 0.000157,
+      "calls": 0,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "El entrevistado llama escucha a repetir con tus palabras lo que…",
+        "caption": "El entrevistado llama escucha a repetir con tus palabras lo que entendiste.",
+        "description": "El entrevistado llama escucha a repetir con tus palabras lo que entendiste."
+      }
+    },
+    {
+      "id": "psicologia-escucha",
+      "engine": "2.2",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.000515,
+      "calls": 2,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "¿Qué detalle cambia la forma de ver el tema: escucha?",
+        "caption": "El fragmento pone el foco en escucha.",
+        "description": "El entrevistado llama escucha a repetir con tus palabras lo que entendiste."
+      }
+    },
+    {
+      "id": "psicologia-escucha",
+      "engine": "2.4",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.00358,
+      "calls": 3,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "¿Qué detalle cambia la forma de ver el tema: escucha?",
+        "caption": "El fragmento pone el foco en escucha.",
+        "description": "El entrevistado llama escucha a repetir con tus palabras lo que entendiste."
+      }
+    },
+    {
+      "id": "desarrollo-cocina",
+      "engine": "extractive",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": true,
+        "usable": false
+      },
+      "seconds": 0.000316,
+      "calls": 0,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "Comenta que dejar listo lo que usará después le facilita…",
+        "caption": "Comenta que dejar listo lo que usará después le facilita empezar a preparar la cena.",
+        "description": "Comenta que dejar listo lo que usará después le facilita empezar a preparar la cena."
+      }
+    },
+    {
+      "id": "desarrollo-cocina",
+      "engine": "2.2",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.000692,
+      "calls": 3,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": true,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "¿Qué detalle cambia la forma de ver el tema: cocina?",
+        "caption": "El fragmento pone el foco en cocina.",
+        "description": "La persona separa las tareas de cocina por momentos del día."
+      }
+    },
+    {
+      "id": "desarrollo-cocina",
+      "engine": "2.4",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.003045,
+      "calls": 5,
+      "error": null,
+      "accepted": true,
+      "issues": [
+        "unsupported_entity"
+      ],
+      "repaired": true,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "¿Qué detalle cambia la forma de ver el tema: cocina?",
+        "caption": "El fragmento pone el foco en cocina.",
+        "description": "La persona separa las tareas de cocina por momentos del día."
+      }
+    },
+    {
+      "id": "motivacion-montaña",
+      "engine": "extractive",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": true,
+        "usable": false
+      },
+      "seconds": 0.000159,
+      "calls": 0,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "La caminante cuenta que volvió al sendero despacio tras una…",
+        "caption": "La caminante cuenta que volvió al sendero despacio tras una pausa larga.",
+        "description": "La caminante cuenta que volvió al sendero despacio tras una pausa larga."
+      }
+    },
+    {
+      "id": "motivacion-montaña",
+      "engine": "2.2",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.000549,
+      "calls": 2,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "¿Qué detalle cambia la forma de ver el tema: sendero?",
+        "caption": "El fragmento pone el foco en sendero.",
+        "description": "La caminante cuenta que volvió al sendero despacio tras una pausa larga."
+      }
+    },
+    {
+      "id": "motivacion-montaña",
+      "engine": "2.4",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.001675,
+      "calls": 3,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "¿Qué detalle cambia la forma de ver el tema: sendero?",
+        "caption": "El fragmento pone el foco en sendero.",
+        "description": "La caminante cuenta que volvió al sendero despacio tras una pausa larga."
+      }
+    },
+    {
+      "id": "cocina-medidas",
+      "engine": "extractive",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": true,
+        "usable": false
+      },
+      "seconds": 0.000164,
+      "calls": 0,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "Para la masa usaron 250 gramos de harina y añadieron agua poco…",
+        "caption": "Para la masa usaron 250 gramos de harina y añadieron agua poco a poco.",
+        "description": "Para la masa usaron 250 gramos de harina y añadieron agua poco a poco."
+      }
+    },
+    {
+      "id": "cocina-medidas",
+      "engine": "2.2",
+      "eligible": true,
+      "criteria": {
+        "fidelity": false,
+        "title": false,
+        "caption": false,
+        "description": false,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": false,
+        "usable": false
+      },
+      "seconds": 0.000246,
+      "calls": 2,
+      "error": "quality",
+      "accepted": false,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": null
+    },
+    {
+      "id": "cocina-medidas",
+      "engine": "2.4",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.003288,
+      "calls": 5,
+      "error": null,
+      "accepted": true,
+      "issues": [
+        "unsupported_number"
+      ],
+      "repaired": true,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "¿Qué detalle cambia la forma de ver el tema: harina?",
+        "caption": "El fragmento pone el foco en harina.",
+        "description": "Para la masa usaron 250 gramos de harina y añadieron agua poco a poco."
+      }
+    },
+    {
+      "id": "en-estudio",
+      "engine": "extractive",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": true,
+        "usable": false
+      },
+      "seconds": 0.000168,
+      "calls": 0,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "The guest says that handwritten notes help them revisit…",
+        "caption": "The guest says that handwritten notes help them revisit questions after a recording.",
+        "description": "The guest says that handwritten notes help them revisit questions after a recording."
+      }
+    },
+    {
+      "id": "en-estudio",
+      "engine": "2.2",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.000468,
+      "calls": 2,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "What detail matters when revisiting notes?",
+        "caption": "The clip focuses on how the guest uses notes.",
+        "description": "The guest says that handwritten notes help them revisit questions after a recording."
+      }
+    },
+    {
+      "id": "en-estudio",
+      "engine": "2.4",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.001538,
+      "calls": 3,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "What detail matters when revisiting notes?",
+        "caption": "The clip focuses on how the guest uses notes.",
+        "description": "The guest says that handwritten notes help them revisit questions after a recording."
+      }
+    },
+    {
+      "id": "zh-plantas",
+      "engine": "extractive",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": false,
+        "description": false,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": false,
+        "usable": false
+      },
+      "seconds": 0.000143,
+      "calls": 0,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "种植罗勒时，先检查泥土是否干燥。 阳光也很重要，采访讨论怎么用泥土判断是否该浇水。",
+        "caption": "👀 种植罗勒时，先检查泥土是否干燥。 阳光也很重要，采访讨论怎么用泥土判断是否该浇水。",
+        "description": "种植罗勒时，先检查泥土是否干燥。 阳光也很重要，采访讨论怎么用泥土判断是否该浇水。"
+      }
+    },
+    {
+      "id": "zh-plantas",
+      "engine": "2.2",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.00041,
+      "calls": 2,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "怎么用泥土判断浇水时机？",
+        "caption": "先留意泥土的干燥程度，也要留意阳光。",
+        "description": "种植罗勒时，先检查泥土是否干燥。"
+      }
+    },
+    {
+      "id": "zh-plantas",
+      "engine": "2.4",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.001051,
+      "calls": 3,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "怎么用泥土判断浇水时机？",
+        "caption": "先留意泥土的干燥程度，也要留意阳光。",
+        "description": "种植罗勒时，先检查泥土是否干燥。"
+      }
+    },
+    {
+      "id": "ja-estacion",
+      "engine": "extractive",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": false,
+        "description": false,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": false,
+        "usable": false
+      },
+      "seconds": 0.000121,
+      "calls": 0,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "駅で道を聞いたとき、地図を見せてもらいました。 会話では駅から市場までの道順を振り返ります。",
+        "caption": "👀 駅で道を聞いたとき、地図を見せてもらいました。 会話では駅から市場までの道順を振り返ります。",
+        "description": "駅で道を聞いたとき、地図を見せてもらいました。 会話では駅から市場までの道順を振り返ります。"
+      }
+    },
+    {
+      "id": "ja-estacion",
+      "engine": "2.2",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": false
+      },
+      "seconds": 0.000304,
+      "calls": 2,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "地図は駅でどう役立った？",
+        "caption": "駅で道を聞いたときの話です。",
+        "description": "駅で道を聞いたとき、地図を見せてもらいました。"
+      }
+    },
+    {
+      "id": "ja-estacion",
+      "engine": "2.4",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": false
+      },
+      "seconds": 0.001051,
+      "calls": 3,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "地図は駅でどう役立った？",
+        "caption": "駅で道を聞いたときの話です。",
+        "description": "駅で道を聞いたとき、地図を見せてもらいました。"
+      }
+    },
+    {
+      "id": "ar-plantas",
+      "engine": "extractive",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": false,
+        "description": true,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": true,
+        "usable": false
+      },
+      "seconds": 0.000162,
+      "calls": 0,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "تحتاج النباتات إلى الضوء والجذور تمتص الماء من التربة.",
+        "caption": "تحتاج النباتات إلى الضوء والجذور تمتص الماء من التربة.",
+        "description": "تحتاج النباتات إلى الضوء والجذور تمتص الماء من التربة."
+      }
+    },
+    {
+      "id": "ar-plantas",
+      "engine": "2.2",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.00053,
+      "calls": 2,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "متى نفحص التربة قبل إضافة الماء؟",
+        "caption": "يناقش المقطع صلة التربة بحصول الجذور على الماء.",
+        "description": "تحتاج النباتات إلى الضوء والجذور تمتص الماء من التربة."
+      }
+    },
+    {
+      "id": "ar-plantas",
+      "engine": "2.4",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.00151,
+      "calls": 3,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "متى نفحص التربة قبل إضافة الماء؟",
+        "caption": "يناقش المقطع صلة التربة بحصول الجذور على الماء.",
+        "description": "تحتاج النباتات إلى الضوء والجذور تمتص الماء من التربة."
+      }
+    },
+    {
+      "id": "mezcla-idiomas",
+      "engine": "extractive",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": false,
+        "description": true,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": true,
+        "usable": false
+      },
+      "seconds": 0.000148,
+      "calls": 0,
+      "error": null,
+      "accepted": true,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "The other speaker asks how to check the soil before watering.",
+        "caption": "The other speaker asks how to check the soil before watering.",
+        "description": "The other speaker asks how to check the soil before watering."
+      }
+    },
+    {
+      "id": "mezcla-idiomas",
+      "engine": "2.2",
+      "eligible": true,
+      "criteria": {
+        "fidelity": false,
+        "title": false,
+        "caption": false,
+        "description": false,
+        "hashtags": false,
+        "originality": false,
+        "differentiation": false,
+        "standalone": false,
+        "usable": false
+      },
+      "seconds": 8.9e-05,
+      "calls": 2,
+      "error": "quality",
+      "accepted": false,
+      "issues": [],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": null
+    },
+    {
+      "id": "mezcla-idiomas",
+      "engine": "2.4",
+      "eligible": true,
+      "criteria": {
+        "fidelity": true,
+        "title": true,
+        "caption": true,
+        "description": true,
+        "hashtags": true,
+        "originality": true,
+        "differentiation": true,
+        "standalone": true,
+        "usable": true
+      },
+      "seconds": 0.003487,
+      "calls": 5,
+      "error": null,
+      "accepted": true,
+      "issues": [
+        "structure"
+      ],
+      "repaired": false,
+      "fidelity_errors": 0,
+      "example": {
+        "title": "Una pregunta para conversar acerca de suelo",
+        "caption": "¿Qué parte del ejemplo sobre suelo te llamó la atención?",
+        "description": "The other speaker asks how to check the soil before watering."
+      }
+    }
+  ]
+}

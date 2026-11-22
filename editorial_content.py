@@ -1,5 +1,6 @@
 """Provider-independent editorial planning, grounding and copy formatting."""
 import re
+import json
 from collections import Counter
 from copy import deepcopy
 
@@ -21,7 +22,7 @@ PLATFORMS = {
     "youtube": {"label": "YouTube Shorts", "title_limit": 78, "caption_limit": 190, "max_tags": 3,
                 "instructions": "Prioriza un título claro y los términos del tema."},
 }
-DEFAULT_CONFIG = {"model": "", "timeout": 60, "platform": "tiktok", "weights": WEIGHTS,
+DEFAULT_CONFIG = {"model": "", "timeout": 60, "repair_attempts": 2, "platform": "tiktok", "weights": WEIGHTS,
                   "profiles": {name: {k: v for k, v in profile.items() if k != "label"}
                                for name, profile in PLATFORMS.items()}}
 INTENTS = ("explain", "tell", "react", "ask", "undetermined")
@@ -36,8 +37,11 @@ COPY_FIELDS = {"title": 160, "caption": 650, "description": 1300, "call_to_actio
 
 
 def validate_config(data):
-    if not isinstance(data, dict) or data.keys() != DEFAULT_CONFIG.keys():
+    if not isinstance(data, dict) or (data.keys() | {"repair_attempts"}) != DEFAULT_CONFIG.keys():
         raise ValueError("Configuración editorial incompleta.")
+    data = {"repair_attempts": 2, **data}
+    if type(data["repair_attempts"]) is not int or not 0 <= data["repair_attempts"] <= 3:
+        raise ValueError("El límite editorial de correcciones debe estar entre 0 y 3.")
     if data["model"] != "" and not local_model(data["model"]):
         raise ValueError("Selecciona un modelo local de Ollama.")
     if type(data["timeout"]) is not int or not 5 <= data["timeout"] <= 180:
@@ -98,7 +102,7 @@ def _validate(value, schema):
     if kind == "array":
         return (isinstance(value, list) and schema.get("minItems", 0) <= len(value) <= schema["maxItems"]
                 and all(_validate(item, schema["items"]) for item in value)
-                and len(value) == len(set(value)))
+                and len(value) == len({json.dumps(item, sort_keys=True) for item in value}))
     if kind == "string":
         return isinstance(value, str) and (
             value in schema["enum"] if "enum" in schema

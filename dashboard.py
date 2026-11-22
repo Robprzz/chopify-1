@@ -33,6 +33,7 @@ import studio_windows
 import tiktok
 import video_types
 import watermark
+from unicode_io import configure_utf8, utf8_environment
 
 HERE = Path(__file__).resolve().parent
 STATIC = HERE / "assets" / "studio"
@@ -85,8 +86,14 @@ def project_detail(root, project_id):
                                       "url": f"/media/{project_id}/{directory}/{file.name}"})
     if (path / "job.log").exists():
         with (path / "job.log").open("rb") as log:
-            log.seek(max(0, (path / "job.log").stat().st_size - 12000))
-            data["log"] = log.read().decode("utf-8", errors="replace")
+            offset = max(0, os.fstat(log.fileno()).st_size - 12000)
+            log.seek(max(0, offset - 3))
+            tail = log.read()
+            start = min(offset, 3)
+            # The displayed tail may start inside a multibyte character.
+            while start and start < len(tail) and (tail[start] & 0xC0) == 0x80:
+                start -= 1
+            data["log"] = tail[start:].decode("utf-8", errors="backslashreplace")
     transcript = data.get("transcript") or {}
     source_meta = state.get("source_meta") or {}
     render_from_sections = bool(
@@ -214,7 +221,7 @@ class Studio:
             self._production_clip(project_id, Path(output).name)
 
     def _run(self, path, action, preview, pick):
-        cmd = [sys.executable, str(HERE / "chopify.py"), "--project", str(path),
+        cmd = [sys.executable, "-X", "utf8", str(HERE / "chopify.py"), "--project", str(path),
                "--action", action, "--out", str(path / ("previews" if preview else "clips"))]
         # Studio jobs run unattended: never wait for interactive CLI questions.
         cmd.extend(["--no-input", "--automation-export"])
@@ -228,7 +235,8 @@ class Studio:
                     if self.closing:
                         return
                     child = subprocess.Popen(cmd, cwd=HERE, stdin=subprocess.DEVNULL, stdout=log,
-                                             stderr=subprocess.STDOUT, start_new_session=os.name != "nt")
+                                             stderr=subprocess.STDOUT, env=utf8_environment(),
+                                             start_new_session=os.name != "nt")
                     self.processes.add(child)
                 code = child.wait()
                 with self.lock:
@@ -362,7 +370,7 @@ class Handler(BaseHTTPRequestHandler):
         super().end_headers()
 
     def send_json(self, data, status=200):
-        body = json.dumps(data, ensure_ascii=False, allow_nan=False).encode()
+        body = json.dumps(data, ensure_ascii=False, allow_nan=False).encode("utf-8")
         self.send_content(body, "application/json; charset=utf-8", status)
 
     def send_content(self, body, content_type, status=200):
@@ -857,6 +865,7 @@ def make_server(root="projects", port=8765, installation=None):
 
 
 def main():
+    configure_utf8()
     parser = argparse.ArgumentParser(description="Open Chopify Studio on your own computer.")
     parser.add_argument("--projects-dir")
     parser.add_argument("--port", type=int, default=8765)
@@ -867,7 +876,12 @@ def main():
     installation = studio_settings.Settings(HERE)
     try:
         prefs = installation.read()
-        studio_settings.tool_path(studio_settings.find_ffmpeg(HERE, prefs["ffmpeg_dir"]), os.environ)
+        print("Studio: verificando FFmpeg y FFprobe.", flush=True)
+        media = studio_settings.find_ffmpeg(HERE, prefs["ffmpeg_dir"])
+        studio_settings.tool_path(media, os.environ)
+        if not media:
+            print("FFmpeg y FFprobe pendientes de configurar.", flush=True)
+        print(f"Studio: preparando el servidor local en 127.0.0.1:{args.port}.", flush=True)
         server = make_server(args.projects_dir or installation.projects(prefs), args.port, installation)
     except ValueError as exc:
         parser.exit(1, f"{exc}\n")

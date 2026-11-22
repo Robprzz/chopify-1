@@ -6,4 +6,6 @@ if not exist "%~dp0.venv\Scripts\pythonw.exe" (
   pause
   exit /b 1
 )
-start "" "%~dp0.venv\Scripts\pythonw.exe" "%~dp0studio_launcher.py"
+set "PYTHONUTF8=1"
+set "PYTHONIOENCODING=utf-8"
+start "" "%~dp0.venv\Scripts\pythonw.exe" -X utf8 "%~dp0studio_launcher.py"

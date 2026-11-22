@@ -12,6 +12,8 @@ import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
+from unicode_io import utf8_environment
+
 LONG_SECONDS = 2 * 60 * 60
 LONG_BYTES = 8 * 1024**3
 AUDIO_EXTS = {".m4a", ".mp3", ".opus", ".ogg", ".wav", ".aac", ".flac", ".webm"}
@@ -34,7 +36,7 @@ def _kill_tree(proc):
     if os.name == "nt":
         try:
             subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
-                           capture_output=True, text=True, check=False)
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
         except OSError:
             pass
     try:
@@ -45,12 +47,17 @@ def _kill_tree(proc):
 
 def _run(cmd, timeout=None, **kwargs):
     kwargs.setdefault("capture_output", True)
-    kwargs.setdefault("text", True)
+    kwargs.setdefault("encoding", "utf-8")
+    kwargs.setdefault("errors", "backslashreplace")
+    kwargs["env"] = utf8_environment(kwargs.get("env"))
     kwargs.setdefault("check", True)
     if timeout is None:
         return subprocess.run(cmd, **kwargs)
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE, text=True)
+    capture = kwargs.pop("capture_output")
+    check = kwargs.pop("check")
+    if capture:
+        kwargs.update(stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc = subprocess.Popen(cmd, **kwargs)
     try:
         stdout, stderr = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -58,7 +65,7 @@ def _run(cmd, timeout=None, **kwargs):
         stdout, stderr = proc.communicate()
         raise subprocess.TimeoutExpired(
             cmd, timeout, output=stdout, stderr=stderr)
-    if kwargs.get("check", True) and proc.returncode:
+    if check and proc.returncode:
         raise subprocess.CalledProcessError(
             proc.returncode, cmd, output=stdout, stderr=stderr)
     return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)

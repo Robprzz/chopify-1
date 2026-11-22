@@ -26,7 +26,8 @@ def shortcut(checkout, action):
     path = Path(checkout).resolve()
     pythonw = venv_python(path, windowless=True)
     launcher = path / "studio_launcher.py"
-    args = '"' + str(launcher) + '"'
+    previous_args = '"' + str(launcher) + '"'
+    args = "-X utf8 " + previous_args
     if action == "create" and not pythonw.is_file():
         raise ValueError("Falta pythonw.exe en el entorno .venv de Chopify.")
     result = _powershell("""
@@ -37,7 +38,7 @@ def shortcut(checkout, action):
         $exists = Test-Path -LiteralPath $link -PathType Leaf
         $shortcut = $shell.CreateShortcut($link)
         $ours = $exists -and $shortcut.TargetPath -eq $env:CS_DESKTOP_TARGET -and
-          $shortcut.Arguments -eq $env:CS_DESKTOP_ARGS
+          ($shortcut.Arguments -eq $env:CS_DESKTOP_ARGS -or $shortcut.Arguments -eq $env:CS_DESKTOP_PREVIOUS_ARGS)
         if ($exists -and -not $ours -and $env:CS_DESKTOP_ACTION -ne 'status') {
           Write-Output 'occupied'; exit
         }
@@ -56,7 +57,8 @@ def shortcut(checkout, action):
         elseif ($exists) { Write-Output 'occupied' }
         else { Write-Output 'missing' }
     """, {"CS_DESKTOP_ACTION": action, "CS_DESKTOP_TARGET": str(pythonw),
-          "CS_DESKTOP_ARGS": args, "CS_DESKTOP_WORKDIR": str(path),
+          "CS_DESKTOP_ARGS": args, "CS_DESKTOP_PREVIOUS_ARGS": previous_args,
+          "CS_DESKTOP_WORKDIR": str(path),
           "CS_DESKTOP_ICON": str(path / "assets" / "studio" / "chopify.ico") + ",0"})
     if result not in {"created", "missing", "occupied"}:
         raise ValueError("Windows no confirmó el estado del acceso directo.")

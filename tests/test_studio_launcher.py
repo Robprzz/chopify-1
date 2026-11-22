@@ -24,6 +24,7 @@ from secure_vault import DPAPI, Vault, VaultError
 import studio_launcher
 import studio_ollama
 import studio_settings
+import studio_windows
 from studio_updates import BRANCH, Repository
 import tiktok
 from test_dashboard import request
@@ -156,6 +157,81 @@ def test_health_rejects_other_services_and_confirms_only_this_instance(tmp_path)
         finally:
             other.shutdown()
             thread.join()
+
+
+def test_reuses_an_existing_studio_listener_as_soon_as_it_is_ready(tmp_path, monkeypatch):
+    store = studio_settings.Settings(CHECKOUT, tmp_path / "user")
+    store.save({"projects_dir": str(tmp_path / "projects"), "open_browser": True})
+    app = dashboard.make_server(store.projects(store.read()), port=0, installation=store)
+    allow_http = threading.Event()
+    serving_started = threading.Event()
+
+    def delayed_http():
+        allow_http.wait()
+        serving_started.set()
+        app.serve_forever()
+
+    thread = threading.Thread(target=delayed_http)
+    thread.start()
+    original_probe = studio_launcher.probe
+    states = []
+    browsers = []
+
+    def probe_then_resume(port, key):
+        result = original_probe(port, key)
+        states.append(result)
+        if result == "pending":
+            allow_http.set()
+        return result
+
+    def open_after_ready(url):
+        assert states[-1] == "ours"
+        browsers.append(url)
+        return True
+
+    monkeypatch.setattr(studio_launcher, "probe", probe_then_resume)
+    monkeypatch.setattr(studio_launcher.webbrowser, "open", open_after_ready)
+    monkeypatch.setattr(studio_launcher.subprocess, "Popen", lambda *a, **kw: pytest.fail("Duplicate instance"))
+    try:
+        url = studio_launcher.launch(store, port=app.server_port, timeout=4)
+        assert states == ["pending", "ours"]
+        assert browsers == [url]
+    finally:
+        allow_http.set()
+        assert serving_started.wait(3)
+        app.shutdown()
+        thread.join(timeout=3)
+        app.app.close()
+        app.server_close()
+
+
+def test_unresponsive_listener_times_out_without_starting_another_process(tmp_path, monkeypatch):
+    store = studio_settings.Settings(CHECKOUT, tmp_path / "user")
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        monkeypatch.setattr(studio_launcher.subprocess, "Popen", lambda *a, **kw: pytest.fail("Unexpected process"))
+        with pytest.raises(ValueError, match="no confirmó el arranque en 127.0.0.1"):
+            studio_launcher.launch(store, port=listener.getsockname()[1], browser=False, timeout=.2)
+        assert listener.getsockopt(socket.SOL_SOCKET, socket.SO_ACCEPTCONN)
+
+
+def test_desktop_shortcut_bootstraps_python_utf8_and_recognizes_previous_target(tmp_path, monkeypatch):
+    checkout = tmp_path / "Chopify 治 العربية"
+    pythonw = checkout / ".venv" / "Scripts" / "pythonw.exe"
+    pythonw.parent.mkdir(parents=True)
+    pythonw.touch()
+    monkeypatch.setattr(studio_windows, "venv_python", lambda root, *, windowless: pythonw)
+
+    def powershell(script, env):
+        assert env["CS_DESKTOP_ARGS"] == '-X utf8 "' + str(checkout / "studio_launcher.py") + '"'
+        assert env["CS_DESKTOP_PREVIOUS_ARGS"] == '"' + str(checkout / "studio_launcher.py") + '"'
+        assert "$env:CS_DESKTOP_PREVIOUS_ARGS" in script
+        assert env["CS_DESKTOP_TARGET"] == str(pythonw)
+        return "created"
+
+    monkeypatch.setattr(studio_windows, "_powershell", powershell)
+    assert studio_windows.shortcut(checkout, "create") == "created"
 
 
 def test_real_launcher_first_and_second_start(tmp_path, monkeypatch):

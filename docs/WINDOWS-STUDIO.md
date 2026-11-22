@@ -19,6 +19,12 @@
 
 Si iniciaste Studio con el navegador desactivado, la dirección para abrirlo es `http://127.0.0.1:8765/`. Si moviste la carpeta del repositorio, vuelve a ejecutar el asistente en la carpeta nueva. Un acceso directo existente de otra instalación conserva su destino hasta que el usuario lo retire. Para esta instalación, **System Settings** permite recrear o eliminar el acceso directo.
 
+## Texto multilingüe y arranque
+
+Chopify inicia los procesos Python del launcher y Studio en UTF-8 y transmite la configuración a los procesos de transcripción, descarga y procesamiento. Las transcripciones, los subtítulos SRT y ASS y los registros nuevos conservan los caracteres Unicode. El servidor abre el navegador al confirmar la identidad de Studio por HTTP. Si el puerto 8765 acepta conexiones mientras Studio todavía se inicializa, el launcher espera la respuesta hasta 60 segundos. Si recibe una respuesta de otro servicio, indica el conflicto.
+
+Después de actualizar, cierra la instancia anterior de Studio y abre el acceso directo habitual. Si el arranque sigue pendiente, abre el registro `studio.log` que indica el launcher para ver si se detuvo al verificar FFmpeg o al preparar el servidor. La apariencia de los subtítulos incrustados también depende de las fuentes que FFmpeg encuentra en Windows.
+
 ## Credenciales y autorización
 
 Studio elige pares completos por perfil. La precedencia es **variables de entorno → credenciales temporales introducidas en Studio → credenciales protegidas almacenadas**. Un par incompleto de variables se ignora. Se mantienen `CHOPIFY_TIKTOK_CLIENT_KEY` y `CHOPIFY_TIKTOK_CLIENT_SECRET` para sesiones temporales. Para asociar ese par con Sandbox, define `CHOPIFY_TIKTOK_PROFILE=sandbox` en la sesión que abre Studio. Si omites el perfil temporal, Studio lo interpreta como Production. Las credenciales temporales y su autorización viven en memoria.

@@ -167,7 +167,8 @@ def dependency_report():
 
 def _version(executable):
     try:
-        result = subprocess.run([str(executable), "-version"], capture_output=True, text=True, errors="replace",
+        result = subprocess.run([str(executable), "-version"], capture_output=True, encoding="utf-8",
+                                errors="backslashreplace",
                                 timeout=5, check=True, creationflags=HIDDEN)
         return result.stdout.splitlines()[0][:200]
     except (OSError, subprocess.SubprocessError, IndexError):

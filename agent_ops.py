@@ -11,6 +11,7 @@ import uuid
 from pathlib import Path
 
 from agent_contract import TERMINAL_STATUSES, AgentError, emit
+from unicode_io import utf8_environment
 
 
 def _path(value):
@@ -248,7 +249,7 @@ def live_start(args, ctx):
     with open(log_path, "w", encoding="utf-8") as log:
         kwargs = {"stdin": subprocess.DEVNULL, "stdout": log,
                   "stderr": subprocess.STDOUT,
-                  "cwd": str(Path(__file__).resolve().parent)}
+                  "cwd": str(Path(__file__).resolve().parent), "env": utf8_environment()}
         if os.name == "nt":
             flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
             flags |= getattr(subprocess, "DETACHED_PROCESS", 0)

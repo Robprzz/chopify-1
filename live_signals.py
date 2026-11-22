@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from codecs import getincrementaldecoder
 from collections import defaultdict, deque
 from pathlib import Path
 
@@ -296,12 +297,16 @@ class ChatAnalyzer(BaseAnalyzer):
             sock.sendall(f"JOIN #{self.channel}\r\n".encode())
             sock.settimeout(2)
             messages = 0
+            decoder = getincrementaldecoder("utf-8")(errors="backslashreplace")
             deadline = time.time() + 2.0
             while time.time() < deadline:
                 try:
-                    line = sock.recv(4096).decode("utf-8", "replace")
+                    chunk = sock.recv(4096)
                 except (socket.timeout, OSError):
                     break
+                if not chunk:
+                    break
+                line = decoder.decode(chunk)
                 messages += len(re.findall(r"PRIVMSG", line))
                 for word in CHAT_WORDS:
                     messages += line.lower().count(word)

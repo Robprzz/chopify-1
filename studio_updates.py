@@ -47,7 +47,7 @@ class Repository:
         env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
         try:
             result = subprocess.run([str(executable), *flags, *args], cwd=self.checkout,
-                                    env=env, capture_output=True, text=True, errors="replace",
+                                    env=env, capture_output=True, encoding="utf-8", errors="backslashreplace",
                                     timeout=timeout, creationflags=HIDDEN)
         except (OSError, subprocess.SubprocessError):
             raise ValueError("Git no respondió. Revisa tu instalación o la conexión a GitHub.") from None

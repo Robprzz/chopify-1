@@ -35,6 +35,7 @@ from pathlib import Path
 import evidence
 import visual
 import campaign
+from unicode_io import configure_utf8
 
 OLLAMA_HOST = "http://localhost:11434"
 
@@ -1823,4 +1824,5 @@ def main():
 
 
 if __name__ == "__main__":
+    configure_utf8()
     main()

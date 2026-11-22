@@ -19,6 +19,7 @@ import render_clips
 import sections
 import subtitle_quality as quality
 import watermark
+from unicode_io import configure_utf8, utf8_environment
 
 
 MODELS = {"tiny", "base", "small", "medium", "large-v2", "large-v3", "turbo", "distil-large-v3"}
@@ -51,11 +52,11 @@ def transcribe_final(media, destination, name, cancellation=None):
     try:
         command = [sys.executable, str(Path(__file__).resolve()), str(media), str(destination), name]
         result = (local_process.run(command, 300, cancellation) if cancellation
-                  else subprocess.run(command, capture_output=True, timeout=300))
+                  else subprocess.run(command, env=utf8_environment(), capture_output=True, timeout=300))
     except subprocess.TimeoutExpired:
         raise quality.SubtitleError("La retranscripción local superó 5 minutos. Prueba con un modelo instalado más pequeño.") from None
     if result.returncode == 2:
-        raise quality.SubtitleError(result.stdout.decode("utf-8", errors="replace").strip())
+        raise quality.SubtitleError(result.stdout.decode("utf-8", errors="backslashreplace").strip())
     if result.returncode:
         raise quality.SubtitleError("Faster-Whisper no pudo retranscribir el audio final con el modelo local.")
     return projects.read_json(destination)
@@ -371,6 +372,7 @@ class Repair:
 
 
 if __name__ == "__main__":
+    configure_utf8()
     try:
         _whisper(Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3])
     except quality.SubtitleError as exc:

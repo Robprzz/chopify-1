@@ -33,6 +33,7 @@ import captions
 import branding
 import tighten  # local module: filler/silence removal
 import watermark
+from unicode_io import configure_utf8
 
 # aspect -> (target_w, target_h, caption_font_size, caption_margin_v)
 ASPECTS = {
@@ -290,7 +291,7 @@ def ffprobe_dims(path):
     out = subprocess.run(
         ["ffprobe", "-v", "error", "-select_streams", "v:0",
          "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", str(path)],
-        capture_output=True, text=True, check=True).stdout.strip()
+        capture_output=True, encoding="utf-8", errors="backslashreplace", check=True).stdout.strip()
     w, h = out.split("x")[:2]
     return int(w), int(h)
 
@@ -961,4 +962,5 @@ def resolve_facecam_box(source, W, H, workdir, box, detector=None, allow_downloa
 
 
 if __name__ == "__main__":
+    configure_utf8()
     main()

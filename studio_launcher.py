@@ -13,14 +13,16 @@ import webbrowser
 
 import studio_settings as system
 import studio_windows
+from unicode_io import configure_utf8, utf8_environment
 
 
 CHECKOUT = Path(__file__).resolve().parent
 PORT = 8765
+STARTUP_TIMEOUT = 60
 
 
 def probe(port, key):
-    """Distinguish this installation, an occupied port, and a free port."""
+    """Verify identity and distinguish a listener still awaiting an HTTP response."""
     nonce = secrets.token_hex(24)
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=.65)
     connected = False
@@ -35,13 +37,28 @@ def probe(port, key):
                         and hmac.compare_digest(data["proof"], system.instance_proof(key, nonce))):
                     return "ours"
     except ConnectionRefusedError:
-        if not connected:
-            return "free"
-    except (ValueError, TypeError, OSError, http.client.HTTPException):
-        pass
+        return "pending" if connected else "free"
+    except (OSError, http.client.HTTPException):
+        return "pending"
+    except (ValueError, TypeError):
+        return "occupied"
     finally:
         conn.close()
     return "occupied"
+
+
+def wait_for_studio(port, key, timeout, child=None):
+    """Wait for the challenge response, including when the socket is already bound."""
+    deadline = time.monotonic() + timeout
+    while True:
+        status = probe(port, key)
+        if status in {"ours", "occupied"} or (status == "free" and child is None):
+            return status
+        if child is not None and child.poll() is not None:
+            raise ValueError("Studio no pudo iniciar. Abre studio.log en la carpeta de registros.")
+        if time.monotonic() >= deadline:
+            raise ValueError(f"Studio no confirmó el arranque en 127.0.0.1:{port} en {timeout:g} s. Revisa studio.log.")
+        time.sleep(.15)
 
 
 def check_python(path):
@@ -53,7 +70,8 @@ def check_python(path):
             "print(json.dumps([sys.version_info >= (3, 11) and sys.prefix != sys.base_prefix, "
             f"[name for name in {list(system.PACKAGES)!r} if importlib.util.find_spec(name) is None]]))"
         )
-        check = subprocess.run([str(path), "-c", code], capture_output=True, timeout=8, check=True,
+        check = subprocess.run([str(path), "-X", "utf8", "-c", code], env=utf8_environment(),
+                               capture_output=True, timeout=8, check=True,
                                creationflags=system.HIDDEN)
         supported, missing = json.loads(check.stdout)
         if supported:
@@ -63,23 +81,17 @@ def check_python(path):
     raise ValueError("El entorno .venv no funciona con Python 3.11 o posterior.")
 
 
-def launch(store, *, port=PORT, browser=None, timeout=22):
+def launch(store, *, port=PORT, browser=None, timeout=STARTUP_TIMEOUT):
     checkout = store.checkout
-    with system.lock_file(store.directory / "launch.lock", timeout + 8):
+    with system.lock_file(store.directory / "launch.lock", timeout + 15):
         prefs = store.read()
         key = store.identity()
-        status = probe(port, key)
-        if status == "occupied":
-            raise ValueError(f"El puerto {port} está ocupado por otra instancia o aplicación. No se pudo verificar su identidad.")
+        status = wait_for_studio(port, key, timeout)
         if status == "free":
             python = system.venv_python(checkout)
             missing = check_python(python)
             if not (checkout / "dashboard.py").is_file():
                 raise ValueError("Falta dashboard.py. Comprueba la carpeta de instalación.")
-            environment = os.environ.copy()
-            # dashboard.main also applies the saved tools for direct starts.
-            media = system.find_ffmpeg(checkout, prefs["ffmpeg_dir"])
-            system.tool_path(media, environment)
             store.logs.mkdir(parents=True, exist_ok=True)
             log_path = store.logs / "studio.log"
             if log_path.is_file() and log_path.stat().st_size > 4 * 1024**2:
@@ -95,24 +107,25 @@ def launch(store, *, port=PORT, browser=None, timeout=22):
             with log_path.open("ab") as log:
                 if missing:
                     log.write(("Paquetes Python ausentes: " + ", ".join(missing) + "\n").encode())
-                if not media:
-                    log.write(b"FFmpeg y FFprobe pendientes de configurar.\n")
                 log.flush()
-                child = subprocess.Popen([str(python), str(checkout / "dashboard.py"), "--no-browser",
-                                          "--managed-launch", "--port", str(port)], cwd=checkout,
-                                         env=environment, stdin=subprocess.DEVNULL, stdout=log,
-                                         stderr=subprocess.STDOUT, **kwargs)
-                deadline = time.monotonic() + timeout
-                while time.monotonic() < deadline:
-                    if probe(port, key) == "ours":
-                        break
-                    if child.poll() is not None:
-                        raise ValueError("Studio no pudo iniciar. Abre studio.log en la carpeta de registros.")
-                    time.sleep(.15)
-                else:
-                    if child.poll() is None:
-                        child.terminate()
-                    raise ValueError("Studio no confirmó el arranque. Revisa studio.log en la carpeta de registros.")
+                child = subprocess.Popen([str(python), "-X", "utf8", str(checkout / "dashboard.py"),
+                                          "--no-browser", "--managed-launch", "--port", str(port)],
+                                         cwd=checkout, env=utf8_environment(), stdin=subprocess.DEVNULL,
+                                         stdout=log, stderr=subprocess.STDOUT, **kwargs)
+                try:
+                    status = wait_for_studio(port, key, timeout, child)
+                finally:
+                    if status != "ours" and child.poll() is None:
+                        try:
+                            child.terminate()
+                            child.wait(timeout=3)
+                        except subprocess.TimeoutExpired:
+                            child.kill()
+                            child.wait(timeout=3)
+                        except ProcessLookupError:
+                            pass
+        if status == "occupied":
+            raise ValueError(f"El puerto {port} está ocupado por otra instancia o aplicación. No se pudo verificar su identidad.")
     url = f"http://127.0.0.1:{port}/"
     should_open = prefs["open_browser"] if browser is None else browser
     if should_open:
@@ -122,6 +135,7 @@ def launch(store, *, port=PORT, browser=None, timeout=22):
 
 
 def main():
+    configure_utf8()
     parser = argparse.ArgumentParser(description="Inicia Chopify Studio desde su entorno virtual.")
     parser.add_argument("--no-browser", action="store_true")
     args = parser.parse_args()

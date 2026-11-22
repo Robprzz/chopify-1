@@ -17,6 +17,7 @@ from agent_contract import (
     EXIT_FAILED, EXIT_INVALID, EXIT_OK, EXIT_TIMEOUT, AgentError,
     emit, emit_error,
 )
+from unicode_io import configure_utf8
 
 HANDLERS = {
     "describe": agent_ops.describe,
@@ -167,4 +168,5 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    configure_utf8()
     sys.exit(main())

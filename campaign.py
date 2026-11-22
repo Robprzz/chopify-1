@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import urllib.request
 from pathlib import Path
+from unicode_io import utf8_environment
 
 PROVIDERS = {
     "ollama": {"kind": "http"},
@@ -68,8 +69,8 @@ def ask_llm(prompt, provider=None, command=None, timeout=120):
         executable = shutil.which(name)
         if executable:
             argv[0] = executable
-    result = subprocess.run(argv, capture_output=True, text=True,
-                            timeout=timeout, check=True)
+    result = subprocess.run(argv, env=utf8_environment(), capture_output=True,
+                            encoding="utf-8", errors="backslashreplace", timeout=timeout, check=True)
     return result.stdout
 
 

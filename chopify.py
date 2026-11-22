@@ -22,6 +22,7 @@ import argparse
 import subprocess
 import json
 from pathlib import Path
+from unicode_io import configure_utf8
 
 CHOPIFY_VERSION = "1.4.0"
 
@@ -70,7 +71,7 @@ def check_environment(runner=subprocess.run):
     if shutil.which("ffmpeg"):
         try:
             enc = runner(["ffmpeg", "-hide_banner", "-encoders"],
-                         capture_output=True, text=True).stdout
+                         capture_output=True, encoding="utf-8", errors="backslashreplace").stdout
             if "libx264" not in enc:
                 problems.append("ffmpeg build lacks the libx264 (H.264) encoder - "
                                 f"clips would be unplayable. {FFMPEG_HINT}")
@@ -550,6 +551,7 @@ def main():
 
 
 if __name__ == "__main__":
+    configure_utf8()
     try:
         main()
     except KeyboardInterrupt:

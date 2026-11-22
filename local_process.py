@@ -1,6 +1,7 @@
 """Run a bounded local media child that can be interrupted from a Studio job."""
 from contextlib import contextmanager
 import subprocess
+from unicode_io import utf8_environment
 
 
 
@@ -17,7 +18,8 @@ def use_resources(lock, cancellation):
 
 def run(command, timeout, cancellation):
     cancellation.check()
-    with subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as child:
+    with subprocess.Popen(command, env=utf8_environment(), stdin=subprocess.DEVNULL,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE) as child:
         def stop_child():
             try:
                 child.kill()

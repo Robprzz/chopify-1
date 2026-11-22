@@ -16,6 +16,7 @@ import tempfile
 import shutil
 from urllib.parse import urlparse
 from pathlib import Path
+from unicode_io import configure_utf8, utf8_environment
 
 TRANSCRIPT_VERSION = 2
 CHUNK_SECONDS = 1800
@@ -24,7 +25,7 @@ OVERLAP_SECONDS = 30
 
 def run(cmd):
     print(">", " ".join(str(c) for c in cmd), flush=True)
-    subprocess.run(cmd, check=True)
+    subprocess.run(cmd, env=utf8_environment(), check=True)
 
 
 def resolve_source(source, workdir):
@@ -149,7 +150,7 @@ def _probe_duration(path):
     result = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
          "-of", "default=nw=1:nk=1", str(path)],
-        capture_output=True, text=True, check=True)
+        capture_output=True, encoding="utf-8", errors="backslashreplace", check=True)
     return float(result.stdout.strip())
 
 
@@ -366,4 +367,5 @@ def main():
 
 
 if __name__ == "__main__":
+    configure_utf8()
     main()

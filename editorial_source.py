@@ -18,7 +18,7 @@ INSTRUCTIONS = re.compile(
     r"<\|[^|]+\|>|<\/?(?:system|assistant|developer)>", re.IGNORECASE,
 )
 SENSITIVE = re.compile(r"https?://\S+|\b(?:sk-[\w-]{12,}|Bearer\s+[\w.~-]+|"
-                       r"(?:api[_ -]?key|password|secret|token)\s*[:=]\s*\S+)", re.I)
+                       r"(?:api[_ -]?key|password|contraseña|(?:client[_ -]?)?secret|(?:access[_ -]?|refresh[_ -]?)?token)\s*[:=]\s*\S+)", re.I)
 
 
 key = subtitle_quality.content_key

@@ -143,7 +143,7 @@ def test_http_automatic_semantic_history_and_targeted_variant(server, monkeypatc
     args = {"project": clip_id, "filename": media.name, "force": True}
     gen = request(base, "/api/editorial/generate", args, token)["job_id"]
     generated = wait_job(engine, gen)
-    assert generated["settings"]["semantic"] and generated["result"]["prompt_version"] == "2.4"
+    assert generated["settings"]["semantic"] and generated["result"]["prompt_version"] == semantic.VERSION
     edited = request(base, "/api/editorial/variant", {"job_id": gen, "style": "interaction", "regenerate": True}, token)
     revised = wait_job(engine, edited["job_id"])
     assert revised["previous_id"] == gen
@@ -154,6 +154,12 @@ def test_http_automatic_semantic_history_and_targeted_variant(server, monkeypatc
     metrics = request(base, "/api/editorial/status")["metrics"]
     assert metrics["valid"] >= 2 and metrics["repaired"] >= 1
     assert engine.store.detail(old)["result"]["editorial_score"] == 0
+    identity = {**config["settings"]["identity"], "tone": "Sobrio"}
+    engine.store.save_config({**config["settings"], "identity": identity}, config["revision"])
+    updated_id = request(base, "/api/editorial/generate", {**args, "force": False}, token)["job_id"]
+    assert updated_id != gen
+    updated = wait_job(engine, updated_id)
+    assert updated["result"]["editorial_identity"] == identity
 
 
 def test_long_clip_analyzes_all_windows_and_preserves_temporal_references():
@@ -170,6 +176,7 @@ def test_long_clip_analyzes_all_windows_and_preserves_temporal_references():
             cancellation.check()
             data = json.loads(messages[1]["content"])
             response = comprehension()
+            response["message"] = "El cuidado de la albahaca ocupa tiempo."
             if "passages" in data:
                 refs = list(map(int, data["passages"]))
                 seen.extend(refs)

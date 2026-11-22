@@ -179,7 +179,10 @@ def test_twenty_jobs_automatic_quality_repair_and_semantic_gate(server, monkeypa
     double = SemanticDouble()
     app.editorial.provider = double
     app.editorial.ensure()
-    configured(app.editorial.store)
+    config = configured(app.editorial.store)
+    settings = config["settings"]
+    identity = {**settings["identity"], "tone": "Sobrio y explicativo"}
+    app.editorial.store.save_config({**settings, "identity": identity}, config["revision"])
     token = app.token
     request(base, "/api/production/pause", {}, token)
     source = media_file(app.root / "clean.mp4")
@@ -224,6 +227,7 @@ def test_twenty_jobs_automatic_quality_repair_and_semantic_gate(server, monkeypa
             editorial = app.editorial.store.detail(row["editorial_id"])
             assert editorial["result"]["mode"] == "semantic"
             assert editorial["result"]["confidence"] is None
+            assert editorial["result"]["editorial_identity"] == identity
             assert not any(variant["title"] in PASSAGE for variant in editorial["result"]["variants"])
         if row["active_filename"]:
             assert {"repairing", "revalidating"} <= phases
@@ -243,6 +247,8 @@ def test_twenty_jobs_automatic_quality_repair_and_semantic_gate(server, monkeypa
                for title, _, data in double.questions if title == "editorial_retry" and "repair" in data)
     assert any(data["outside_clip"].get("channel") == "Cultivo local" and "Patio 68" not in
                str(data["passages"]) for _, _, data in double.questions if "passages" in data)
+    assert all(data["editorial_identity"] == identity for _, _, data in double.questions)
+    assert any(title == "live" for title, _, _ in double.questions)
     assert not any("de agua" in str(data) for _, _, data in double.questions)
     with pytest.raises(HTTPError) as rejected:
         request(base, "/api/tiktok/upload", {"review_id": "example", "description": "albahaca", "approved": False}, token)

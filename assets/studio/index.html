@@ -327,6 +327,28 @@
               </select></label>
             </div>
             <details class="editorial-details">
+              <summary>Identidad editorial</summary>
+              <div id="editorial-identity" class="form-grid">
+                <label>Nombre editorial<input data-identity="name" maxlength="100" required /></label>
+                <label>Tipo de organización<input data-identity="organization" maxlength="100" required /></label>
+                <label>Perspectiva<select data-identity="perspective">
+                  <option value="third_person">Tercera persona</option><option value="impersonal">Impersonal</option>
+                </select></label>
+                <label>Idioma editorial<select data-identity="language">
+                  <option value="es">Español</option><option value="en">Inglés</option><option value="source">Idioma del clip</option>
+                </select></label>
+                <label>Estilo<input data-identity="style" maxlength="100" required /></label>
+                <label>Tono<input data-identity="tone" maxlength="100" required /></label>
+                <label>Objetividad<select data-identity="objectivity">
+                  <option value="high">Alta</option><option value="balanced">Equilibrada</option>
+                </select></label>
+                <label>Creatividad<select data-identity="creativity">
+                  <option value="low">Baja</option><option value="moderate">Moderada</option><option value="moderate_high">Moderada-alta</option>
+                </select></label>
+              </div>
+              <p class="muted">Fidelidad obligatoria. Sensacionalismo engañoso prohibido.</p>
+            </details>
+            <details class="editorial-details">
               <summary>Pesos y perfiles editoriales</summary>
               <div id="editorial-weights" class="form-grid"></div>
               <div class="form-grid">

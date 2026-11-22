@@ -169,14 +169,14 @@ class Engine:
         if production:
             settings["production"] = list(production)
         if use_semantic:
-            settings.update(semantic=True, repair_attempts=config["repair_attempts"])
+            settings.update(semantic=True, repair_attempts=config["repair_attempts"], identity=config["identity"])
         if target:
             old = self.store.detail(previous)
             if (not use_semantic or (old["result"] or {}).get("prompt_version") != editorial_semantic.VERSION
                     or not old["result"].get("analysis") or target not in old["result"].get("drafts", {})
                     or self.store.prior_source(previous) != source or any(
-                        old["settings"].get(field) != settings[field] for field in ("profile", "weights", "model_digest"))):
-                raise ValueError("El clip, el modelo o el perfil cambió. Genera un nuevo análisis completo.")
+                        old["settings"].get(field) != settings[field] for field in ("profile", "weights", "model_digest", "identity"))):
+                raise ValueError("Cambió el clip, el modelo, el perfil o la identidad editorial. Genera un nuevo análisis completo.")
             settings.update(target=target, regenerate=regenerate, seed_id=previous)
         cache_parts = [source, captions.TIMELINE_VERSION, settings]
         if previous is not None:

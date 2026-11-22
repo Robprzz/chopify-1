@@ -119,3 +119,76 @@ def probable_names(value):
 
 def present_name(name, value):
     return contains(name, value)
+
+
+# Compare a number with its role and surface form. The digits of a name do not
+# corroborate a count, street address, or date with the same digits.
+MONTHS = ("enero febrero marzo abril mayo junio julio agosto septiembre setiembre octubre noviembre diciembre "
+          "january february march april may june july august september october november december").replace(" ", "|")
+NUMERIC_FORMS = (
+    ("date", re.compile(rf"\b(?:\d{{4}}[-/]\d{{1,2}}[-/]\d{{1,2}}|\d{{1,2}}[-/]\d{{1,2}}[-/]\d{{2,4}}|"
+                        rf"\d{{1,2}} (?:de )?(?:{MONTHS})(?: (?:de )?\d{{4}})?)\b", re.I)),
+    ("address", re.compile(r"\b(?:calle|avenida|av\.?|carretera|carrer|street|road)\s+"
+                           r"(?:[^\W\d_]+\s+){0,4}(?:n[.º°]?\s*)?\d+\b", re.I)),
+    ("identifier", re.compile(r"\b(?:(?i:expediente|folio|caso|registro|sku|id)\s+[\w-]*\d[\w-]*|"
+                              r"[A-Z]{1,8}-\d[\w-]*)\b")),
+    ("statistic", re.compile(r"\b\d+(?:[.,]\d+)*\s*(?:%|por ciento|percent\b)", re.I)),
+    ("quantity", re.compile(r"\b\d+(?:[.,]\d+)*\s+(?:personas?|v[ií]ctimas?|fallecid[oa]s?|"
+                            r"habitantes?|muert[oa]s?|a[nñ]os?|mes(?:es)?|d[ií]as?|horas?|minutos?|"
+                            r"segundos?|veces|metros?|kil[oó]metros?|euros?|d[oó]lares?|visitas?|casos?|"
+                            r"manzanas?|dosis|litros?|kilos?|grams?|years?|people|deaths?|meters?|"
+                            r"hours?|minutes?|seconds?|views?|cases?)\b", re.I)),
+    ("entity", re.compile(r"\b(?:[Tt]orre|[Ee]dificio|[Mm]arca|[Rr]uta|[Ss]ector|[Bb]loque)\s+"
+                          r"[^\W\d_][\w-]*(?:\s+[^\W\d_][\w-]*)?\s+\d+\b(?![.,]\d)")),
+)
+NUMERIC_LABEL = re.compile(r"\b[A-ZÁÉÍÓÚÑ][^\W\d_]+(?:[- ]\d+|\d+)\b(?![.,]\d)")
+LABEL_EXCLUSIONS = frozenset("a al con del de desde el en entre fue hay hace hoy la las los para por son the to un via".split())
+
+
+def _numeric_tokens(value):
+    """Normalize accents and whitespace while preserving decimal and date delimiters."""
+    normalized = unicodedata.normalize("NFKD", value.casefold()).replace("n\u0303", "ñ")
+    return re.sub(r"\s+", " ", "".join(c for c in normalized if not unicodedata.combining(c))).strip()
+
+
+def number_uses(value, entities=()):
+    value = " ".join(value.split())
+    uses, occupied = [], set()
+
+    def add(kind, match):
+        span = set(range(*match.span()))
+        if span & occupied:
+            return
+        occupied.update(span)
+        uses.append((kind, _numeric_tokens(match[0]), match[0]))
+
+    # Explicit date, count or percent syntax takes precedence over a matching name prefix.
+    for kind, pattern in NUMERIC_FORMS[:-1]:
+        for match in pattern.finditer(value):
+            add(kind, match)
+    nominal = _numeric_tokens(value)
+    for name in sorted(entities, key=len, reverse=True):
+        if any(c.isdecimal() for c in name) and len(nominal) == len(value):
+            for match in re.finditer(r"(?<!\w)" + re.escape(_numeric_tokens(name)) + r"(?!\w|[.,]\d)", nominal):
+                add("entity", match)
+    for match in NUMERIC_FORMS[-1][1].finditer(value):
+        add("entity", match)
+    for match in NUMERIC_LABEL.finditer(value):
+        words = fold(match[0]).split()
+        if words and words[0] not in LABEL_EXCLUSIONS:
+            add("entity", match)
+    for match in NUMBERS.finditer(value):
+        add("number", match)
+    return uses
+
+
+def numeric_issues(value, rows, entities=()):
+    available = {(kind, key) for span in cited_text(rows) for kind, key, _ in number_uses(span, entities)}
+    errors = set()
+    for kind, key, literal in number_uses(value, entities):
+        if kind == "entity":
+            if not supports_name(literal, rows):
+                errors.add("unsupported_numeric_entity")
+        elif (kind, key) not in available:
+            errors.add("unsupported_number")
+    return errors

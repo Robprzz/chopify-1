@@ -71,3 +71,5 @@ Las pruebas unitarias y de integración cubren los valores aprobados, persistenc
 ## Automation 2.4 · Comprensión y revisión editorial
 
 AI Engine y el Centro de operaciones comparten un motor de redacción basado en evidencia. El panel permite consultar diagnósticos, corregir una variante y reprocesar resultados fallidos o de puntuación cero a partir del MP4 terminado. [Arquitectura, benchmark y validación en Windows](EDITORIAL-24.md)
+
+[Automation 2.4.1 · Identidad editorial y comprensión temática](EDITORIAL-241.md)

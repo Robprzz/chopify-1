@@ -4,6 +4,7 @@ import json
 from collections import Counter
 from copy import deepcopy
 
+from editorial_identity import DEFAULT_IDENTITY, validate_identity
 from editorial_providers import ProviderError, local_model
 from editorial_source import INSTRUCTIONS
 
@@ -23,6 +24,7 @@ PLATFORMS = {
                 "instructions": "Prioriza un título claro y los términos del tema."},
 }
 DEFAULT_CONFIG = {"model": "", "timeout": 60, "repair_attempts": 2, "platform": "tiktok", "weights": WEIGHTS,
+                  "identity": DEFAULT_IDENTITY,
                   "profiles": {name: {k: v for k, v in profile.items() if k != "label"}
                                for name, profile in PLATFORMS.items()}}
 INTENTS = ("explain", "tell", "react", "ask", "undetermined")
@@ -37,9 +39,10 @@ COPY_FIELDS = {"title": 160, "caption": 650, "description": 1300, "call_to_actio
 
 
 def validate_config(data):
-    if not isinstance(data, dict) or (data.keys() | {"repair_attempts"}) != DEFAULT_CONFIG.keys():
+    if not isinstance(data, dict) or (data.keys() | {"repair_attempts", "identity"}) != DEFAULT_CONFIG.keys():
         raise ValueError("Configuración editorial incompleta.")
-    data = {"repair_attempts": 2, **data}
+    data = {"repair_attempts": 2, "identity": DEFAULT_IDENTITY, **data}
+    data["identity"] = validate_identity(data["identity"])
     if type(data["repair_attempts"]) is not int or not 0 <= data["repair_attempts"] <= 3:
         raise ValueError("El límite editorial de correcciones debe estar entre 0 y 3.")
     if data["model"] != "" and not local_model(data["model"]):

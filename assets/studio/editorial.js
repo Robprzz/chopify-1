@@ -15,6 +15,10 @@ const editorialOutcomes = {
   rejected_evidence: "Evidencia insuficiente", extractive: "Extractos para revisión",
 };
 const editorialIssues = {
+  unsafe_localization: "Traducción temática sin respaldo",
+  generic_theme: "Tema genérico o saludo", ungrounded_theme: "Tema sin respaldo en el diálogo",
+  ungrounded_message: "Mensaje sin respaldo en el diálogo", incidental_theme: "Tema incidental",
+  narrative_perspective: "Perspectiva del protagonista", unsupported_numeric_entity: "Nombre con cifra sin respaldo",
   structure: "Formato de respuesta", missing_evidence: "Evidencia ausente",
   insufficient_evidence: "Transcripción insuficiente", unsupported_entity: "Entidad sin respaldo",
   unsupported_name: "Nombre sin respaldo", unsupported_number: "Cifra sin respaldo",
@@ -25,6 +29,14 @@ const editorialIssues = {
   timeout: "Tiempo agotado", offline: "Ollama sin conexión", model_missing: "Modelo ausente",
   sensational: "Tono sensacionalista", attribution: "Atribución pendiente",
   fidelity: "Fidelidad pendiente", uncertainty: "Incertidumbre",
+};
+const editorialRepairLabels = {
+  theme: "Comprensión temática", copy: "Redacción",
+  verified: "Tema validado", still_invalid: "Tema pendiente de revisión", applied: "Cambios aplicados",
+  no_changes: "La respuesta no cambió los campos", no_valid_fields: "Respuesta sin campos válidos",
+  attempt_limit: "Límite de intentos alcanzado", time_budget: "Presupuesto de tiempo agotado",
+  insufficient_evidence: "Evidencia insuficiente", unavailable: "Respuesta estructurada no disponible",
+  interrupted: "Interrumpida", evaluated: "Evaluada",
 };
 const editorialIssueLabel = (code) => editorialIssues[code] || code;
 const editorialEvidenceLabels = { attributed_fact: "Hecho atribuido", opinion: "Opinión", question: "Pregunta", interpretation: "Interpretación" };
@@ -116,6 +128,9 @@ function applyEditorialConfig(config) {
   $("#editorial-repair-attempts").value = config.settings.repair_attempts;
   $("#editorial-default-platform").value = config.settings.platform;
   $("#editorial-platform").value = config.settings.platform;
+  for (const field of $("#editorial-identity").querySelectorAll("[data-identity]")) {
+    field.value = config.settings.identity[field.dataset.identity];
+  }
   const weights = $("#editorial-weights");
   weights.replaceChildren();
   for (const [criterion, value] of Object.entries(config.settings.weights)) {
@@ -155,14 +170,30 @@ function renderEditorialResult(job) {
   const reasons = (diagnostic.issues || []).map(item => `<li>${formatIssue(item)}</li>`).join("");
   const fields = (items) => (items || []).map(item =>
     escapeHTML([editorialStyles[item.style || item.variant], editorialTextFields[item.field]?.[0] || item.field].filter(Boolean).join(" / "))).join(", ");
+  const repairLabel = (code) => editorialRepairLabels[code] || editorialIssueLabel(code);
+  const repairPayload = (label, data) => data && Object.keys(data).length
+    ? `<p>${label} <code>${escapeHTML(JSON.stringify(data))}</code></p>` : "";
+  const attempts = (diagnostic.repair_trace || []).map(attempt => `
+    <details class="editorial-details">
+      <summary>${repairLabel(attempt.area)} · Intento ${attempt.attempt} · ${repairLabel(attempt.outcome)}</summary>
+      <p>Presupuesto restante ${attempt.remaining_before} s antes · ${attempt.remaining_after ?? "—"} s después</p>
+      ${repairPayload("Diagnóstico", attempt.diagnosis)}
+      ${repairPayload("Respuesta del modelo", attempt.model_response)}
+      ${repairPayload("Errores de esquema o evidencia", attempt.schema_errors)}
+      ${repairPayload("Defectos pendientes", attempt.unresolved)}
+    </details>`).join("");
+  const stops = Object.entries(diagnostic.repair_stops || {}).map(([area, stop]) =>
+    `<li>${repairLabel(area)} · ${repairLabel(stop.reason)} · ${stop.remaining_seconds} s restantes</li>`).join("");
   const digest = job.settings?.model_digest;
   output.insertAdjacentHTML("beforeend", `
-    <p>${job.settings?.semantic ? "Redacción semántica" : "Modo extractivo"} · ${escapeHTML(job.settings?.model || "Reglas locales")} · Prompt ${escapeHTML(job.settings?.prompt_version || "—")}</p>
+    <p>${job.settings?.semantic ? "Redacción semántica" : "Modo extractivo"} · ${escapeHTML(job.settings?.model || "Reglas locales")} · Prompt ${escapeHTML(job.result?.prompt_version || job.settings?.prompt_version || "—")}</p>
     ${job.previous_id ? `<p>Versión anterior #${job.previous_id} · Editorial ${job.previous?.score ?? "—"}/10 · Prompt ${escapeHTML(job.previous?.version || "—")}</p>` : ""}
     ${Object.keys(diagnostic).length ? `<details class="editorial-details"><summary>Diagnóstico de ejecución</summary>
-      <p>Llamadas al modelo ${diagnostic.model_calls ?? 0} · Intentos de autocorrección ${diagnostic.retries ?? 0} · Variantes válidas ${diagnostic.valid_variants ?? 0}</p>
+      <p>Llamadas al modelo ${diagnostic.model_calls ?? 0} · Reintentos totales ${diagnostic.retries ?? 0} · Variantes válidas ${diagnostic.valid_variants ?? 0}</p>
+      ${diagnostic.theme_repair_calls !== undefined ? `<p>Intentos de comprensión temática ${diagnostic.theme_repair_calls} · Intentos de redacción ${diagnostic.repair_calls}</p>` : ""}
       ${digest ? `<p>Identificador del modelo <code>${escapeHTML(digest)}</code></p>` : ""}
       ${timeline ? `<ul>${timeline}</ul>` : ""}${reasons ? `<ul>${reasons}</ul>` : ""}
+      ${attempts || stops ? `<h4>Intentos de reparación</h4>${attempts}${stops ? `<ul>${stops}</ul>` : ""}` : ""}
       <p>Campos corregidos · ${fields(diagnostic.corrected_fields) || "—"}</p>
       <p>Campos pendientes de revisión · ${fields(diagnostic.rejected_fields) || "—"}</p>
     </details>` : ""}`);
@@ -184,6 +215,9 @@ function renderEditorialResult(job) {
     const citation = item.evidence || item;
     return `<li>${escapeHTML(editorialEvidenceLabels[item.kind] || "")} · ${citation.start ?? "—"}–${citation.end ?? "—"} s · ${escapeHTML(item.quote || citation.text || "")}</li>`;
   }).join("");
+  const contextAssessment = (analysis.provenance?.context_assessment || []).map(item =>
+    `<li>${escapeHTML(editorialContextLabels[item.key] || item.key)} · ${item.status === "topic_corroborated"
+      ? "Coincidencia temática con el diálogo" : "Contexto auxiliar sin corroborar"}</li>`).join("");
   const criteria = Object.entries(caseData.criteria).map(([name, item]) =>
     `<li>${escapeHTML(editorialLabels[name])} · ${item.score}/10 · ${escapeHTML(item.justification)}</li>`).join("");
   const variants = caseData.variants.map(variant => {
@@ -225,7 +259,9 @@ function renderEditorialResult(job) {
     <details class="editorial-details"><summary>Evaluación y evidencia</summary>
       <p>Temas secundarios · ${secondary}</p>
       ${coverage.cues !== undefined ? `<p>Cobertura · ${coverage.safe_cues}/${coverage.cues} subtítulos · ${coverage.passages} ${coverage.passages === 1 ? "pasaje" : "pasajes"}${Number.isFinite(coverage.speech_coverage) ? ` · ${Math.round(coverage.speech_coverage * 100)}% del habla` : ""}</p>` : ""}
-      ${analysis.provenance?.project_context?.length ? `<p>Contexto auxiliar · ${analysis.provenance.project_context.map(key => escapeHTML(editorialContextLabels[key] || key)).join(", ")}</p>` : ""}
+      ${contextAssessment ? `<h4>Contexto del proyecto</h4><ul>${contextAssessment}</ul>` :
+        (analysis.provenance?.project_context?.length ? `<p>Contexto auxiliar · ${analysis.provenance.project_context.map(key => escapeHTML(editorialContextLabels[key] || key)).join(", ")}</p>` : "")}
+      ${analysis.topic_changes?.length ? "<p>Comprensión temática reparada y verificada contra la transcripción.</p>" : ""}
       ${analysis.context_needed ? `<p>Contexto pendiente · ${escapeHTML(analysis.context_needed)}</p>` : ""}
       ${analysis.uncertainty ? `<p>Incertidumbre · ${escapeHTML(({low:"Baja", medium:"Media", high:"Alta"})[analysis.uncertainty] || analysis.uncertainty)}</p>` : ""}
       ${evidence ? `<h4>Registro de evidencia</h4><ul>${evidence}</ul>` : ""}
@@ -446,6 +482,8 @@ $("#editorial-config").addEventListener("submit", editorialSafe(async (event) =>
     ...editorialView.config.settings,
     model: $("#editorial-model").value, timeout: $("#editorial-timeout").valueAsNumber,
     platform: $("#editorial-default-platform").value, repair_attempts: $("#editorial-repair-attempts").valueAsNumber,
+    identity: Object.fromEntries([...$("#editorial-identity").querySelectorAll("[data-identity]")]
+      .map(field => [field.dataset.identity, field.value])),
     weights: Object.fromEntries([...$("#editorial-weights").querySelectorAll("input")]
       .map(input => [input.name, input.valueAsNumber])),
   };

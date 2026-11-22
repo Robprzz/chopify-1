@@ -1,5 +1,7 @@
 # Chopify Studio · Automation 2.4
 
+[Actualización 2.4.1 y reprocesamiento en Windows](EDITORIAL-241.md)
+
 AI Engine y el Centro de operaciones comparten el motor semántico local. La generación automática distingue la calidad del archivo, el resultado editorial y la revisión de publicación. Las propuestas aptas pasan a la revisión humana de Publicaciones. El envío al buzón de TikTok conserva su inspección de MP4 y el consentimiento por clip.
 
 ## Auditoría de la versión anterior

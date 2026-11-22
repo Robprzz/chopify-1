@@ -1,4 +1,4 @@
-"""Compare the pinned pre-2.4 engines and Automation 2.4 on a labelled local corpus."""
+"""Compare the earlier editorial engines with the current version on a labelled local corpus."""
 import argparse
 from collections import Counter
 import csv
@@ -134,6 +134,14 @@ class Scripted:
                     "uncertainty": "low", "ambiguities": [], "claims": [
                         {"text": first, "quote": first, "refs": refs, "kind": "attributed_fact", "ambiguity": ""}],
                     "entities": entities, "highlights": refs, "sensitive": row["category"] == "caso sensible"}
+        if "theme_repair" in data:
+            candidates = data["transcript_quotes"]
+            quote = next((item for item in candidates if row["anchor"].casefold() in item["quote"].casefold()),
+                         candidates[0])
+            speech = quote["quote"]
+            return {"theme": row["anchor"], "message": speech, "secondary": [], "standalone": True,
+                    "context_needed": "", "uncertainty": "low", "ambiguities": [],
+                    "focus": {**quote, "text": speech[:160], "kind": "attributed_fact", "ambiguity": ""}}
         if "requested_angles" in data:
             return self.bad({name: dict(self.clean[name]) for name in data["requested_angles"]})
         if "repair" in data:
@@ -231,10 +239,11 @@ def main():
     entries = []
     for row in corpus:
         source = source_for(row)
-        for engine in ("extractive", "2.2", "2.4"):
+        for engine in ("extractive", "2.2", current.VERSION):
             profile = extractive.DEFAULT_CONFIG["profiles"]["tiktok"]
             settings = {"platform": "tiktok", "profile": profile, "model": args.model, "timeout": args.timeout,
-                        "weights": extractive.DEFAULT_CONFIG["weights"], "repair_attempts": 2}
+                        "weights": extractive.DEFAULT_CONFIG["weights"], "repair_attempts": 2,
+                        "identity": {**extractive.DEFAULT_CONFIG["identity"], "language": "source"}}
             provider = Counted(ollama or Scripted(row, source, prior))
             start = time.perf_counter()
             cancellation = Cancellation()
@@ -265,7 +274,7 @@ def main():
                             "repaired": bool(diagnostics.get("verified_corrections") or (engine == "2.2" and (result or {}).get("attempts", 0) > 1)), "fidelity_errors": errors,
                             "example": {k: example[k] for k in ("title", "caption", "description")} if example else None})
     totals = {}
-    for engine in ("extractive", "2.2", "2.4"):
+    for engine in ("extractive", "2.2", current.VERSION):
         subset = [line for line in entries if line["engine"] == engine]
         timings = sorted(line["seconds"] for line in subset)
         eligible = [line for line in subset if line["eligible"]]

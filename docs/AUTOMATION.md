@@ -54,6 +54,10 @@ Abre **Automation → AI Engine** para seleccionar el modelo local, comprobar Ol
 
 **Automation → AI Engine → Calidad de subtítulos** diagnostica un clip existente, permite retranscribir su audio final con Faster-Whisper y genera una versión nueva desde una fuente limpia verificada. AI Engine comprueba los subtítulos antes de generar propuestas. [Auditoría, evidencia y reparación en Windows](SUBTITLE-QUALITY.md)
 
+## Fase 2.2 · Producción supervisada
+
+**Automation → Centro de operaciones** enlaza los clips terminados con el control técnico, la reparación local y AI Engine semántico. SQLite conserva los trabajos y permite recuperarlos tras reiniciar Studio. [Flujo, pruebas y validación en Windows](PRODUCTION.md)
+
 ## Arquitectura para las fases siguientes
 
 1. **Subtítulos, calidad y duplicados.** Guardar el original junto a una revisión separada. Conservar timestamps y validar sentido, orden y rangos de subtítulos antes de usar la revisión. Mantener la puntuación de detección y la revisión editorial en campos distintos. La admisión automática exige la puntuación mínima configurada y que pasen las comprobaciones de audio, duración, continuidad, contexto, subtítulos y archivo final. Comparar SHA-256, intervalos de la misma fuente y similitud textual con alcance por cuenta para detectar duplicados.

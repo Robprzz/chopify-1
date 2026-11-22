@@ -1,0 +1,182 @@
+[
+  {
+    "filename": "valid.mp4",
+    "state": "ready",
+    "code": null,
+    "attempts": 0,
+    "seconds": 0.487,
+    "repair_seconds": null,
+    "editorial_seconds": 0.11717417199997726
+  },
+  {
+    "filename": "valid.mp4",
+    "state": "ready",
+    "code": null,
+    "attempts": 0,
+    "seconds": 0.465,
+    "repair_seconds": null,
+    "editorial_seconds": 0.07072622400005457
+  },
+  {
+    "filename": "valid.mp4",
+    "state": "ready",
+    "code": null,
+    "attempts": 0,
+    "seconds": 0.444,
+    "repair_seconds": null,
+    "editorial_seconds": 0.07295514899999489
+  },
+  {
+    "filename": "valid.mp4",
+    "state": "ready",
+    "code": null,
+    "attempts": 0,
+    "seconds": 0.46,
+    "repair_seconds": null,
+    "editorial_seconds": 0.07008257899997261
+  },
+  {
+    "filename": "valid.mp4",
+    "state": "ready",
+    "code": null,
+    "attempts": 0,
+    "seconds": 0.449,
+    "repair_seconds": null,
+    "editorial_seconds": 0.08799193599998034
+  },
+  {
+    "filename": "valid.mp4",
+    "state": "ready",
+    "code": null,
+    "attempts": 0,
+    "seconds": 0.462,
+    "repair_seconds": null,
+    "editorial_seconds": 0.07096406999994542
+  },
+  {
+    "filename": "valid.mp4",
+    "state": "ready",
+    "code": null,
+    "attempts": 0,
+    "seconds": 0.441,
+    "repair_seconds": null,
+    "editorial_seconds": 0.06479938300003596
+  },
+  {
+    "filename": "live_valid.mp4",
+    "state": "ready",
+    "code": null,
+    "attempts": 0,
+    "seconds": 0.445,
+    "repair_seconds": null,
+    "editorial_seconds": 0.061812578999933976
+  },
+  {
+    "filename": "cached.mp4",
+    "state": "ready",
+    "code": null,
+    "attempts": 1,
+    "seconds": 2.079,
+    "repair_seconds": 1.4457275979999622,
+    "editorial_seconds": 0.06430338200004826
+  },
+  {
+    "filename": "cached.mp4",
+    "state": "ready",
+    "code": null,
+    "attempts": 1,
+    "seconds": 2.021,
+    "repair_seconds": 1.386759328999915,
+    "editorial_seconds": 0.06444787700002053
+  },
+  {
+    "filename": "cached.mp4",
+    "state": "ready",
+    "code": null,
+    "attempts": 1,
+    "seconds": 2.041,
+    "repair_seconds": 1.397273997999946,
+    "editorial_seconds": 0.07202356200002669
+  },
+  {
+    "filename": "whisper.mp4",
+    "state": "ready",
+    "code": null,
+    "attempts": 1,
+    "seconds": 2.09,
+    "repair_seconds": 1.4450671750000765,
+    "editorial_seconds": 0.08019944000000123
+  },
+  {
+    "filename": "live_whisper.mp4",
+    "state": "ready",
+    "code": null,
+    "attempts": 1,
+    "seconds": 1.887,
+    "repair_seconds": 1.2642235920000076,
+    "editorial_seconds": 0.07295159099999182
+  },
+  {
+    "filename": "no_source.mp4",
+    "state": "review",
+    "code": "repair_exhausted",
+    "attempts": 2,
+    "seconds": 0.321,
+    "repair_seconds": 0.13008570299996336,
+    "editorial_seconds": null
+  },
+  {
+    "filename": "no_model.mp4",
+    "state": "review",
+    "code": "repair_exhausted",
+    "attempts": 2,
+    "seconds": 0.425,
+    "repair_seconds": 0.24278517499999452,
+    "editorial_seconds": null
+  },
+  {
+    "filename": "av_skew.mp4",
+    "state": "rejected",
+    "code": "av_sync",
+    "attempts": 0,
+    "seconds": 0.062,
+    "repair_seconds": null,
+    "editorial_seconds": null
+  },
+  {
+    "filename": "corrupt.mp4",
+    "state": "rejected",
+    "code": "media_unreadable",
+    "attempts": 0,
+    "seconds": 0.059,
+    "repair_seconds": null,
+    "editorial_seconds": null
+  },
+  {
+    "filename": "editorial_retry.mp4",
+    "state": "ready",
+    "code": null,
+    "attempts": 0,
+    "seconds": 0.441,
+    "repair_seconds": null,
+    "editorial_seconds": 0.06702386399990701
+  },
+  {
+    "filename": "editorial_fail.mp4",
+    "state": "review",
+    "code": "editorial_review",
+    "attempts": 0,
+    "seconds": 0.452,
+    "repair_seconds": null,
+    "editorial_seconds": 0.06713359999992008
+  },
+  {
+    "filename": "cancel.mp4",
+    "state": "cancelled",
+    "code": null,
+    "attempts": 0,
+    "seconds": 0.0,
+    "repair_seconds": null,
+    "editorial_seconds": null
+  }
+]

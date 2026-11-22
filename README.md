@@ -38,7 +38,7 @@ Chopify is an open-source Python app with a local browser dashboard and a CLI. I
 | Feature | How it helps |
 | --- | --- |
 | **Local browser dashboard** | Queue videos, watch job progress, review candidates, edit words and timestamps, and download exports. |
-| **Automation and AI Engine** | Save production preferences, assess finished clips, and generate three editable social post proposals from timestamped subtitles. Ollama and a deterministic local fallback run independently of posting. [Setup and architecture](docs/AI-ENGINE.md) |
+| **Automation and AI Engine** | Validate finished clips, attempt local subtitle repairs, and prepare three grounded proposals for approval in Studio. [Production and operations](docs/PRODUCTION.md) |
 | **Local video input** | Use MP4, MOV, MKV, WebM, M4V, or AVI recordings directly, or download a yt-dlp-supported URL. |
 | **Live clipping** | Watch an HLS/RTMP stream, detect hype from audio, visual motion, transcript, and chat, and auto-save finished captioned clips from the CLI or Studio. Use `--fit contain` for full-frame gameplay clips. |
 | **Gaming facecam layout** | `--layout stacked` puts the streamer's facecam above gameplay in 9:16 with captions at the seam — the Shorts/Reels gaming look — for batch and live clips. |

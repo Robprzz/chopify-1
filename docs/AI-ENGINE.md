@@ -43,6 +43,10 @@ Los límites de título, caption y hashtags son preferencias editoriales configu
 
 La casilla existente **Generar captions automáticamente para nuevas exportaciones** activa el procesamiento al terminar de exportar en Studio. Recibir clips Live depende también de la preferencia **Recibir clips de Live clipping**. Las exportaciones anteriores se pueden seleccionar manualmente. Las propuestas se copian como texto. El envío al buzón de TikTok sigue su flujo oficial de revisión y consentimiento. Los perfiles de Facebook y YouTube solo preparan texto.
 
+## Propuestas semánticas de Fase 2.2
+
+La cola de producción usa Ollama local para redactar y evaluar propuestas basadas en pasajes del clip. Puedes abrir el mismo modo manualmente con **Generar propuestas semánticas**. [Control técnico, reposición y revisión editorial](PRODUCTION.md)
+
 ## Calidad de subtítulos
 
 AI Engine comprueba los tiempos de los subtítulos antes de usar diálogo como evidencia. Si detecta tiempos inválidos o falta relevante de cobertura de voz, muestra el motivo y permite abrir **Calidad de subtítulos**. Allí puedes reparar un clip existente. Una ejecución completada puede quedar sin propuesta válida para recomendar. [Diagnóstico, reparación y pruebas de Fase 2.1](SUBTITLE-QUALITY.md)

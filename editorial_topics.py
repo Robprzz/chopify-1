@@ -3,8 +3,9 @@ from collections import Counter
 import re
 
 from editorial_evidence import (ATTRIBUTION, CJK, SENSITIVE_TOPIC, fold, numeric_issues,
-                                present_name, probable_names, safe, supports_name)
+                                safe, supports_name)
 from editorial_identity import perspective_error
+from editorial_registry import named_mentions
 
 
 SENTENCES = re.compile(r"(?<!\d)[.!?。！？;]+|[.!?。！？;]+(?!\d)")
@@ -102,7 +103,7 @@ class TopicIndex:
         if not grounded_refs.intersection(self.references(value)):
             return "ungrounded_theme"
         if any(not supports_name(name, rows) for name in
-               probable_names(value) | {entity for entity in entities if present_name(entity, value)}):
+               named_mentions(value, entities)):
             return "unsupported_entity"
         numbers = numeric_issues(value, rows, entities)
         return min(numbers) if numbers else None

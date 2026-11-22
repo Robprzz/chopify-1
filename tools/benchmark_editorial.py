@@ -222,6 +222,7 @@ def main():
     parser.add_argument("--provider", choices=("simulated", "ollama"), default="simulated")
     parser.add_argument("--model", default="qwen3:4b")
     parser.add_argument("--timeout", type=int, default=90, choices=range(5, 181), metavar="5–180")
+    parser.add_argument("--clip", type=Path, metavar="MP4", help="Analiza un clip local terminado de un proyecto.")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     ollama, digest = None, None
@@ -233,6 +234,43 @@ def main():
             parser.exit(2, str(exc) + "\n")
         if not digest:
             parser.exit(2, "El modelo solicitado debe estar instalado en Ollama local antes de la prueba.\n")
+    if args.clip:
+        if not ollama:
+            parser.error("--clip requiere --provider ollama.")
+        from editorial_source import read_clip, semantic_context
+        import subtitle_quality
+
+        media = args.clip.resolve()
+        project = media.parent.parent.name
+        if media.parent.parent.parent.name == "live":
+            project = "live/" + project
+        try:
+            source = semantic_context(media, project, read_clip(media, project, media.name))
+            coverage = subtitle_quality.diagnose(media)
+            if coverage["errors"]:
+                parser.error(coverage["errors"][0])
+            source["transcript_coverage"]["speech_coverage"] = coverage["speech_coverage"]
+        except (OSError, ValueError, subtitle_quality.SubtitleError) as exc:
+            parser.error(str(exc))
+        settings = {"platform": "tiktok", "profile": extractive.DEFAULT_CONFIG["profiles"]["tiktok"],
+                    "model": args.model, "timeout": args.timeout, "weights": extractive.DEFAULT_CONFIG["weights"],
+                    "repair_attempts": extractive.DEFAULT_CONFIG["repair_attempts"],
+                    "identity": extractive.DEFAULT_CONFIG["identity"]}
+        provider = Counted(ollama)
+        diagnostics, result, error = {}, None, None
+        start = time.perf_counter()
+        try:
+            result = current.generate(provider, source, settings, Cancellation(), lambda _: None, telemetry=diagnostics)
+        except ProviderError as exc:
+            error = exc.code
+        report = {"provider": "ollama", "engine": current.VERSION, "settings": settings, "digest": digest,
+                  "transcript_id": source["transcript_id"], "clip_id": source["clip_id"],
+                  "seconds": round(time.perf_counter() - start, 3), "calls": provider.calls, "error": error,
+                  "diagnostics": diagnostics, "result": result}
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        print(json.dumps({key: report[key] for key in ("engine", "seconds", "calls", "error")}))
+        return
     prior = pinned()
     with CORPUS.open(encoding="utf-8", newline="") as stream:
         corpus = list(csv.DictReader(stream, delimiter="\t"))

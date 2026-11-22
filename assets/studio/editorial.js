@@ -15,6 +15,7 @@ const editorialOutcomes = {
   rejected_evidence: "Evidencia insuficiente", extractive: "Extractos para revisión",
 };
 const editorialIssues = {
+  event_attribution: "Acontecimiento sin vínculo con el sujeto", event_uncertainty: "Incertidumbre omitida",
   unsafe_localization: "Traducción temática sin respaldo",
   generic_theme: "Tema genérico o saludo", ungrounded_theme: "Tema sin respaldo en el diálogo",
   ungrounded_message: "Mensaje sin respaldo en el diálogo", incidental_theme: "Tema incidental",
@@ -31,6 +32,7 @@ const editorialIssues = {
   fidelity: "Fidelidad pendiente", uncertainty: "Incertidumbre",
 };
 const editorialRepairLabels = {
+  repeated_repair: "La respuesta volvió al mismo problema",
   theme: "Comprensión temática", copy: "Redacción",
   verified: "Tema validado", still_invalid: "Tema pendiente de revisión", applied: "Cambios aplicados",
   no_changes: "La respuesta no cambió los campos", no_valid_fields: "Respuesta sin campos válidos",
@@ -184,6 +186,14 @@ function renderEditorialResult(job) {
     </details>`).join("");
   const stops = Object.entries(diagnostic.repair_stops || {}).map(([area, stop]) =>
     `<li>${repairLabel(area)} · ${repairLabel(stop.reason)} · ${stop.remaining_seconds} s restantes</li>`).join("");
+  const evidenceRejections = (diagnostic.evidence_rejections || []).map(item => `
+    <details class="editorial-details">
+      <summary>${escapeHTML(item.field)} · ${escapeHTML(item.subject || editorialIssueLabel(item.code))}</summary>
+      <p>${escapeHTML(item.fragment)}</p>
+      <p>Motivo · ${escapeHTML(item.reason)} · Control · ${escapeHTML(item.restriction)}</p>
+      <ul>${(item.evidence || []).map(row => `<li>${escapeHTML(row.id || "")} · ${escapeHTML(row.origin || "")} · ${escapeHTML(row.quote)}</li>`).join("")}</ul>
+      <p>${escapeHTML(item.suggestion)}</p>
+    </details>`).join("");
   const digest = job.settings?.model_digest;
   output.insertAdjacentHTML("beforeend", `
     <p>${job.settings?.semantic ? "Redacción semántica" : "Modo extractivo"} · ${escapeHTML(job.settings?.model || "Reglas locales")} · Prompt ${escapeHTML(job.result?.prompt_version || job.settings?.prompt_version || "—")}</p>
@@ -194,6 +204,7 @@ function renderEditorialResult(job) {
       ${digest ? `<p>Identificador del modelo <code>${escapeHTML(digest)}</code></p>` : ""}
       ${timeline ? `<ul>${timeline}</ul>` : ""}${reasons ? `<ul>${reasons}</ul>` : ""}
       ${attempts || stops ? `<h4>Intentos de reparación</h4>${attempts}${stops ? `<ul>${stops}</ul>` : ""}` : ""}
+      ${evidenceRejections ? `<h4>Rechazos de evidencia</h4>${evidenceRejections}` : ""}
       <p>Campos corregidos · ${fields(diagnostic.corrected_fields) || "—"}</p>
       <p>Campos pendientes de revisión · ${fields(diagnostic.rejected_fields) || "—"}</p>
     </details>` : ""}`);

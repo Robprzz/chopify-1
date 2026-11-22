@@ -7,14 +7,15 @@ import time
 
 import editorial_content as legacy
 from editorial_evidence import (ATTRIBUTION, CJK, MAX_WINDOWS, SENSITIVE_TOPIC,
-                                fold, insufficient, numeric_issues, present_name, probable_names, safe,
+                                fold, insufficient, number_uses, numeric_issues, present_name, probable_names, safe,
                                 supports, supports_name, windows)
 from editorial_identity import DEFAULT_IDENTITY, perspective_error, voice_rules
+from editorial_registry import findings, named_mentions, registry
 from editorial_topics import TopicIndex, terms as topic_terms
 from editorial_providers import ProviderError
 
 
-VERSION = "2.4.1"
+VERSION = "2.4.2"
 FIELDS = (*legacy.COPY_FIELDS, "hashtags", "claims", "strategy")
 CRITERIA = (*legacy.WEIGHTS, "fidelity", "originality", "writing", "platform")
 SCORE = {"type": "number", "minimum": 0, "maximum": 10}
@@ -30,6 +31,8 @@ PROBLEMS = {
     "attribution": "Atribuye la afirmación sensible a quien habla. Evita inferir causas o culpabilidad.",
     "narrative_perspective": "Redacta desde fuera del relato y conserva solo las citas textuales atribuidas.",
     "unsupported_numeric_entity": "Verifica el nombre completo con su número o reformula sin esa entidad.",
+    "event_attribution": "Separa acontecimientos sin un vínculo explícito en el diálogo.",
+    "event_uncertainty": "Preserva el carácter de hipótesis o pregunta.",
     "grounding": "Relaciona el texto con el diálogo citado.", "review": "Corrige el problema de fidelidad y redacción.",
 }
 NOTES = (
@@ -76,11 +79,16 @@ def claim_schema(last):
     })
 
 
-def analysis_schema(last):
+def evidence_claim_rule(ids):
+    return legacy._object({"evidence_id": legacy._enum(ids),
+        "kind": legacy._enum(("attributed_fact", "opinion", "question", "hypothesis", "contradiction", "interpretation"))})
+
+
+def analysis_schema(last, ids=()):
     evidence = {"type": "integer", "minimum": 0, "maximum": last}
     refs = {**legacy._list(evidence, 3), "minItems": 1}
     return legacy._object({**summary_schema(),
-        "claims": legacy._list(claim_schema(last), 5),
+        "claims": legacy._list(evidence_claim_rule(ids) if ids else claim_schema(last), 5),
         "entities": legacy._list(legacy._object({
             "name": text(65), "kind": legacy._enum(("person", "organization", "event", "building", "place", "brand", "other")), "refs": refs,
         }), 6),
@@ -166,11 +174,18 @@ class Run:
             stages = self.metrics["stages"]
             stages[stage] = round(stages.get(stage, 0) + time.monotonic() - started, 4)
 
-    def document_shape(self, stage, instruction, data, schema):
+    def document_shape(self, stage, instruction, data, schema, compatible=None):
         while True:
             try:
                 value = self.call(stage, instruction, data, schema)
-                if not legacy._validate(value, schema):
+                if not legacy._validate(value, schema) and not (compatible and legacy._validate(value, compatible)):
+                    if "evidence_index" in data and isinstance(value, dict) and isinstance(value.get("claims"), list):
+                        for row in value["claims"][:5]:
+                            ident = row.get("evidence_id") if isinstance(row, dict) else None
+                            if isinstance(ident, str) and re.fullmatch(r"[\w:. -]{1,64}", ident) and ident not in data["evidence_index"]:
+                                _diagnose(self, {"field": "claims", "code": "structure", "subject": ident,
+                                    "fragment": ident, "evidence": [], "reason": "unknown_or_unoffered_id",
+                                    "restriction": "claim_contract", "suggestion": "Selecciona un ID ofrecido de esta ventana."})
                     raise ProviderError("response", "Ollama devolvió JSON que no coincide con la etapa editorial.", True)
                 return value
             except ProviderError as exc:
@@ -198,32 +213,58 @@ def _verified_claim(record, passages, allowed):
     return None
 
 
+
+def _registered_claim(entry, passages, kind="attributed_fact"):
+    ref = entry["refs"][0]
+    kind = {"question": "question", "hypothesis": "hypothesis"}.get(entry["modality"], kind)
+    return {"text": entry["quote"], "quote": entry["quote"], "kind": kind, "ambiguity": "",
+            "refs": entry["refs"], "support": "registered", "evidence_id": entry["id"],
+            "start": passages[ref]["start"], "end": passages[ref]["end"]}
+
+
+def _diagnose(run, finding):
+    items = run.metrics.setdefault("evidence_rejections", [])
+    if finding not in items and len(items) < 80:
+        items.append(finding)
+
 def analyze(run, source, passages, chunks):
     summaries, claims, people, rejected, highlights = [], [], {}, [], []
     sensitive = any(SENSITIVE_TOPIC.search(row["text"]) for row in passages)
     index = TopicIndex(passages)
     context = source.get("outside_clip", {})
+    entries = registry(passages, context)
     for chunk in chunks:
+        available = set(map(int, chunk))
+        ids = {ident: entry for ident, entry in entries.items() if available.intersection(entry["refs"])}
         response = run.document_shape("understanding",
             TOPIC_INSTRUCTIONS + voice_rules(run.identity, source_language=True) +
             " Extract language, message and narrative meaning. Distinguish attributed facts, opinions, questions "
-            "and interpretations. Each claim needs an exact transcript quote and the numeric passage refs that "
-            "contain it. Report uncertain context and only named entities spoken in the clip. "
+            "and interpretations. Select one existing evidence_id per claim. Never merge distinct events. "
+            "Report uncertain context and only named entities spoken in the clip. "
             "Report the actual transcript language as a short ISO code. Mark sensitive claims about harm, death, accusations, health or vulnerable people.", {
                 "passages": chunk, "outside_clip": context,
+                "evidence_index": {key: {"passage": row["refs"][0], "preview": row["quote"][:96]}
+                                   for key, row in ids.items()},
                 "recurring_terms": index.ranked_terms(map(int, chunk)),
                 "editorial_identity": run.identity,
                 "language_hint": source.get("language_hint", "und"),
-            }, analysis_schema(int(next(reversed(chunk)))))
+            }, analysis_schema(max(available), ids), compatible=analysis_schema(max(available)))
         if not _summary_safe(response):
             raise ProviderError("quality", "El análisis devolvió texto fuera del alcance editorial.")
         summaries.append({name: response[name] for name in SUMMARY_FIELDS})
-        available = set(map(int, chunk))
         for record in response["claims"]:
-            claim = _verified_claim(record, passages, available)
+            claim = (_registered_claim(ids[record["evidence_id"]], passages, record["kind"])
+                     if "evidence_id" in record else _verified_claim(record, passages, available))
             if claim:
                 claims.append(claim)
             else:
+                _diagnose(run, {"field": "claims", "code": "missing_evidence",
+                    "subject": record["text"] if safe(record["text"]) else "",
+                    "fragment": record["quote"] if safe(record["quote"]) else "",
+                    "evidence": [{"id": key, "quote": row["quote"][:160], "refs": row["refs"]}
+                                 for key, row in ids.items() if set(row["refs"]).intersection(record["refs"])][:4],
+                    "reason": "unoffered_passage" if not set(record["refs"]) <= available else "quote_mismatch_or_unsafe",
+                    "restriction": "claim_contract", "suggestion": "Selecciona el identificador de una cita existente."})
                 run.metrics["issues"].append({"stage": "understanding", "code": "missing_evidence"})
         for entity in response["entities"]:
             refs, name = entity["refs"], entity["name"]
@@ -231,6 +272,12 @@ def analyze(run, source, passages, chunks):
                 people[fold(name)] = entity
             elif safe(name):
                 rejected.append(name)
+                for finding in findings("entities", name, passages, set(refs) & available, entries, {name}):
+                    _diagnose(run, finding)
+                matched = sorted({ref for row in ids.values() if present_name(name, row["quote"])
+                                  for ref in row["refs"]})
+                if matched and supports_name(name, [passages[ref] for ref in matched]):
+                    people[fold(name)] = {**entity, "refs": matched}
                 run.metrics["issues"].append({"stage": "understanding", "code": "unsupported_entity"})
         highlights.extend(i for i in response["highlights"] if str(i) in chunk)
         sensitive = sensitive or response["sensitive"]
@@ -239,13 +286,21 @@ def analyze(run, source, passages, chunks):
     grounded_refs = {ref for row in claims if row["kind"] != "interpretation" and topic_terms(row["quote"])
                      for ref in row["refs"]}
     names = {entity["name"] for entity in people.values()} | set(rejected)
-    verified, theme_refs, topic_changes = _validate_topic(run, index, summary, summaries, grounded_refs, claims, names)
+    verified, theme_refs, topic_changes = _validate_topic(run, index, summary, summaries, grounded_refs, claims, names, entries)
     if not verified:
         summary = {**summary, "theme": "Tema por verificar", "message": "", "secondary": [],
                    "uncertainty": "high"}
     else:
         summary["secondary"] = [name for name in summary["secondary"]
-                                if not index.subject_issue(name, grounded_refs, run.identity, names)]
+                                if not index.subject_issue(name, grounded_refs, run.identity, names)
+                                and not findings("secondary", name, passages, grounded_refs, entries, names,
+                                                 require_attribution=False)]
+    for entry in entries.values():
+        entry["entities"] = [{"name": entity["name"], "kind": entity["kind"]} for entity in people.values()
+                             if entry["refs"] and present_name(entity["name"], entry["quote"])]
+        entry["claim_kinds"] = sorted({claim["kind"] for claim in claims
+            if claim.get("evidence_id") == entry["id"] or (set(claim["refs"]).intersection(entry["refs"])
+                                                         and present_name(claim["quote"], entry["quote"]))})
     ledger = [{**row, "id": i, "origin": "model_inference" if row["kind"] == "interpretation"
                else "clip_transcript",
                "entities": [entity["name"] for entity in people.values()
@@ -253,7 +308,7 @@ def analyze(run, source, passages, chunks):
               for i, row in enumerate(claims)]
     return {**summary, "ledger": ledger, "entities": list(people.values()), "highlights": sorted(set(highlights)),
             "sensitive": sensitive, "topic_verified": verified, "topic_refs": theme_refs,
-            "topic_changes": topic_changes, "unsupported_names": list(dict.fromkeys(rejected)),
+            "topic_changes": topic_changes, "evidence_registry": list(entries.values()), "unsupported_names": list(dict.fromkeys(rejected)),
             "provenance": {"project_context": sorted(context),
                            "context_assessment": index.classify_context(context, summary["theme"], theme_refs),
                            "interpretation": "model_inference", "uncertainty": "unknown",
@@ -288,13 +343,60 @@ def _synthesize(run, summaries, index):
         summaries = combined
     return summaries[0]
 
-def _validate_topic(run, index, summary, summaries, refs, claims, names):
+def _validate_topic(run, index, summary, summaries, refs, claims, names, entries):
     current = {key: summary[key] for key in TOPIC_FIELDS}
     original = dict(current)
-    candidates = index.candidates()
+    passages = index.passages
+    eligible = {ident: row for ident, row in entries.items() if row["refs"] and topic_terms(row["quote"])}
+    preferred = {fold(row["quote"]) for row in index.candidates()}
+    mentioned = set(named_mentions(current["theme"] + " " + current["message"], names))
+    candidates = sorted(eligible.values(), key=lambda row: (
+        -sum(present_name(name, row["quote"]) for name in mentioned),
+        fold(row["quote"]) not in preferred, row["refs"][0]))[:12]
     repairs = []
+    seen = set()
+
+    def assess(value, scope):
+        issues, used = index.assess(value, summaries, scope, run.identity, names)
+        details = []
+        for field in ("theme", "message"):
+            for finding in findings(field, value[field], passages, scope, entries, names,
+                                    require_attribution=field == "message"):
+                details.append(finding)
+                issues.setdefault(field, finding["code"])
+        return issues, used, details
+
+    def attach(rows):
+        for row in rows:
+            claim = _registered_claim(row, passages)
+            refs.update(row["refs"])
+            if claim not in claims:
+                claims.append(claim)
+
     while True:
-        issues, refs_used = index.assess(current, summaries, refs, run.identity, names)
+        issues, refs_used, details = assess(current, refs)
+        for detail in details:
+            _diagnose(run, detail)
+        if issues and set(issues.values()) <= {"unsupported_entity", "ungrounded_theme", "ungrounded_message"}:
+            # Broaden verified evidence, not the set of facts being asserted. Each
+            # field must have a whole, applicable clause, including its names.
+            support = []
+            for field in ("theme", "message"):
+                value = current[field]
+                selected = next((row for row in eligible.values()
+                    if set(row["refs"]).intersection(index.references(value))
+                    and all(present_name(name, row["quote"]) for name in named_mentions(value, names))
+                    and not findings(field, value, passages, set(row["refs"]), entries, names,
+                                     require_attribution=field == "message")), None)
+                if selected:
+                    support.append(selected)
+            if len(support) == 2:
+                scope = refs | {i for row in support for i in row["refs"]}
+                issues, refs_used, _ = assess(current, scope)
+                if not issues:
+                    attach(support)
+                    run.metrics["theme_evidence_recovered"] = [row["id"] for row in support]
+
         if repairs and repairs[-1]["outcome"] == "evaluated":
             repairs[-1].update(outcome="still_invalid" if issues else "verified", unresolved=issues)
         if not issues:
@@ -305,41 +407,83 @@ def _validate_topic(run, index, summary, summaries, refs, claims, names):
             if incident not in run.metrics["issues"]:
                 run.metrics["issues"].append(incident)
         if not candidates:
-            run.metrics["repair_stops"]["theme"] = {"reason": "insufficient_evidence",
-                "remaining_seconds": round(run.remaining(), 3), "diagnosis": issues}
-            return False, [], []
+            reason = "insufficient_evidence"
+            break
+        state = (fold(current["theme"]), fold(current["message"]), tuple(sorted(refs)))
+        if state in seen:
+            reason = "repeated_repair"
+            break
+        seen.add(state)
         attempt = run.repair("theme", issues)
         if attempt is None:
             return False, [], []
         repairs.append(attempt)
         rules = {k: summary_schema()[k] for k in TOPIC_FIELDS}
-        focus_rule = claim_schema(len(index.passages) - 1)
+        offered = {row["id"]: row for row in candidates}
+        ids_rule = {**legacy._list(legacy._enum(offered), 3), "minItems": 1}
         try:
             response = run.call("understanding",
                 TOPIC_INSTRUCTIONS + voice_rules(run.identity, source_language=True) +
-                " Repair the central topic and message using the quoted transcript evidence. "
-                "Provide a focus claim with an exact transcript quotation and cited passage numbers. "
-                "Reassess the uncertainty without inferring uncorroborated details.",
-                {"theme_repair": issues, "current_summary": current, "transcript_quotes": candidates,
-                 "editorial_identity": run.identity}, legacy._object({**rules, "focus": focus_rule}))
+                " Fix only the identified defects. Omit unsupported secondary identities. "
+                "Select existing evidence_ids. Never join unrelated events or invent a quotation.",
+                {"theme_repair": issues, "rejections": details, "current_summary": current,
+                 "transcript_quotes": candidates, "editorial_identity": run.identity},
+                legacy._object({**rules, "evidence_ids": ids_rule}))
         except ProviderError as exc:
             run.end_repair(attempt, exc.code, schema_errors={"response": "unavailable"} if exc.code == "response" else {})
             if exc.code not in {"response", "timeout"}:
                 raise
+            seen.discard(state)
             continue
-        focus = response.get("focus")
-        accepted, rejected = _repair_fields({key: value for key, value in response.items() if key != "focus"}, rules)
-        focus = (_verified_claim(focus, index.passages, {i for row in candidates for i in row["refs"]})
-                 if legacy._validate(focus, focus_rule) and focus["kind"] != "interpretation" else None)
-        if focus and topic_terms(focus["quote"]):
-            refs.update(focus["refs"])
-            if focus not in claims:
-                claims.append(focus)
+        accepted, rejected = _repair_fields({key: value for key, value in response.items()
+                                             if key not in {"focus", "evidence_ids"}}, rules)
+        chosen = response.get("evidence_ids")
+        if legacy._validate(chosen, ids_rule):
+            attach([offered[key] for key in chosen])
+        elif "focus" in response:
+            # Compatibility with fixtures and older response contracts. An exact
+            # quote still needs an offered passage and a valid schema.
+            focus = response["focus"]
+            rule = claim_schema(len(passages) - 1)
+            verified = (_verified_claim(focus, passages, {i for row in candidates for i in row["refs"]})
+                        if legacy._validate(focus, rule) and focus["kind"] != "interpretation" else None)
+            if verified and topic_terms(verified["quote"]):
+                refs.update(verified["refs"])
+                if verified not in claims:
+                    claims.append(verified)
+            else:
+                rejected["focus"] = "missing_evidence"
         else:
-            rejected["focus"] = "missing_evidence"
+            rejected["evidence_ids"] = "unknown_or_unoffered_id"
         run.end_repair(attempt, "evaluated" if accepted else "no_valid_fields",
-                       model_response={**accepted, **({"focus": focus} if focus else {})}, schema_errors=rejected)
+                       model_response={**accepted, **({"evidence_ids": chosen} if legacy._validate(chosen, ids_rule) else {})},
+                       schema_errors=rejected)
         current.update(accepted)
+
+    run.metrics["repair_stops"]["theme"] = {"reason": reason,
+        "remaining_seconds": round(run.remaining(), 3), "diagnosis": issues}
+    # Reuse a credible theme and quote one matching clause instead of recycling
+    # the rejected message. Keep the originally reported uncertainty.
+    if reason == "repeated_repair" and summary["language"] == "es":
+        original_names = named_mentions(current["theme"], names)
+        for row in candidates:
+            established = [name for name in original_names if present_name(name, row["quote"])]
+            if len(row["quote"]) > 150 or not set(row["refs"]).intersection(index.references(current["theme"])):
+                continue
+            uncertainty = max((original["uncertainty"], current["uncertainty"]),
+                              key=("low", "medium", "high").index)
+            revised = {**current, "message": f"El interlocutor dice: «{row['quote']}»", "uncertainty": uncertainty}
+            if "theme" in issues:
+                if issues["theme"] not in {"unsupported_entity", "ungrounded_theme"} or not established:
+                    continue
+                revised["theme"] = "Mención a " + established[0]
+            remaining, used, _ = assess(revised, refs | set(row["refs"]))
+            if not remaining:
+                attach([row])
+                summary.update(revised)
+                run.metrics["conservative_reformulation"] = row["id"]
+                return True, used, [field for field in TOPIC_FIELDS if revised[field] != original[field]]
+    return False, [], []
 
 
 def _repair_fields(response, rules):
@@ -408,10 +552,11 @@ def repeats(value):
     return len(substantial) != len(set(substantial)) or bool(re.search(r"\b(\w+)\b(?: \1\b){3,}", fold(value)))
 
 
-def check(drafts, analysis, passages, profile, fixed=(), identity=DEFAULT_IDENTITY):
+def check(drafts, analysis, passages, profile, fixed=(), identity=DEFAULT_IDENTITY, diagnose=None):
     """Report recoverable field issues without invalidating other proposals."""
     problems = {}
     field_rules = field_schema(profile, len(analysis["ledger"]) - 1)
+    entries = {row["id"]: row for row in analysis.get("evidence_registry", [])} or registry(passages, {})
 
     def flag(style, field, code):
         problems.setdefault(style, {}).setdefault(field, code)
@@ -454,11 +599,21 @@ def check(drafts, analysis, passages, profile, fixed=(), identity=DEFAULT_IDENTI
             numbers = numeric_issues(value, rows, known | external)
             for problem in sorted(numbers):
                 flag(style, field, problem)
-            names = probable_names(value) | {name for name in external | known if present_name(name, value)}
-            if any(not supports_name(name, rows) for name in names):
-                flag(style, field, "unsupported_entity")
+            if numbers and diagnose and safe(value):
+                for kind, _, literal in number_uses(value, known | external):
+                    codes = numeric_issues(literal, rows, known | external)
+                    if codes:
+                        diagnose({"variant": style, "field": field, "code": min(codes), "subject": literal,
+                                  "fragment": value, "evidence": [{"refs": [ref], "quote": passages[ref]["text"][:200]}
+                                                                 for ref in refs[:4]],
+                                  "reason": kind + "_not_attested", "restriction": "numeric_grounding",
+                                  "suggestion": "Conserva la clase y el valor exactos de una cifra citada o quítala."})
             if analysis["sensitive"] and SENSITIVE_TOPIC.search(value) and not ATTRIBUTION.search(value):
                 flag(style, field, "attribution")
+            for finding in findings(field, value, passages, set(refs), entries, external | known):
+                flag(style, field, finding["code"])
+                if diagnose:
+                    diagnose({**finding, "variant": style})
         tags = item.get("hashtags")
         if isinstance(tags, list) and all(isinstance(tag, str) for tag in tags):
             if len({fold(tag) for tag in tags}) != len(tags) or any(
@@ -554,6 +709,8 @@ def _prompt_material(analysis, profile, platform):
     for i in ids:
         row = primary[i]
         item = {field: row[field] for field in ("id", "quote", "kind", "ambiguity", "start", "end")}
+        if "evidence_id" in row:
+            item["evidence_id"] = row["evidence_id"]
         byte_count += len(json.dumps(item, ensure_ascii=False).encode("utf-8"))
         if byte_count > 2800:
             break
@@ -599,7 +756,8 @@ def generate(provider, source, settings, cancellation, progress, *, telemetry=No
             try:
                 response = run.call("generating",
                     "Draft distinct original titles, captions and descriptions. Make every factual statement traceable "
-                    "to the listed claim IDs. Attribute sensitive claims and avoid generic hooks and repeated copy. "
+                    "to the listed claim IDs. Keep separate events and participants separate. "
+                    "Attribute sensitive claims and avoid generic hooks and repeated copy. "
                     "Explain each editorial strategy. Use optional CTA only when specific, and [] for unneeded hashtags." + voice_rules(run.identity),
                     {**material, "requested_angles": {name: STYLE_HINTS[name] for name in scope},
                      "preserved": {name: item["title"] for name, item in drafts.items()
@@ -622,7 +780,8 @@ def generate(provider, source, settings, cancellation, progress, *, telemetry=No
         run.progress("validating_proposals")
         started = time.monotonic()
         fixed = protected | {style for style, report in reports.items() if _decision(report)}
-        problems = check(drafts, analysis, passages, profile, fixed=fixed, identity=run.identity)
+        problems = check(drafts, analysis, passages, profile, fixed=fixed, identity=run.identity,
+                         diagnose=lambda item: _diagnose(run, item))
         _record(run, problems)
         telemetry["stages"]["deterministic"] = round(
             telemetry["stages"].get("deterministic", 0) + time.monotonic() - started, 4)
@@ -658,9 +817,13 @@ def generate(provider, source, settings, cancellation, progress, *, telemetry=No
             patch = run.call("autocorrecting",
                 "Change only the requested fields, keeping the valid copy and other angles. "
                 "When a name or number is unsupported, reformulate the claim without it. "
-                "Preserve attribution and do not invent facts. Return the exact repair keys." + voice_rules(run.identity),
+                "Keep distinct events and their subjects separate. Preserve attribution and do not invent facts. Return the exact repair keys." + voice_rules(run.identity),
                 {**material, "repair": {style: {field: PROBLEMS[code] for field, code in issues.items()}
-                                        for style, issues in actual.items()}, "current_proposals": drafts}, schema)
+                                        for style, issues in actual.items()},
+                 "rejections": [{**item, "evidence": [row for row in item["evidence"] if row.get("refs")]}
+                                for item in telemetry.get("evidence_rejections", [])
+                                if item.get("variant") in actual and item["field"] in actual[item["variant"]]][-8:],
+                 "current_proposals": drafts}, schema)
         except ProviderError as exc:
             run.end_repair(attempt, exc.code, schema_errors={"response": "unavailable"} if exc.code == "response" else {})
             if exc.code not in {"response", "timeout"} and not any(_decision(value) for value in reports.values()):
@@ -683,6 +846,10 @@ def generate(provider, source, settings, cancellation, progress, *, telemetry=No
         run.end_repair(attempt, "applied" if changed else "no_changes", model_response=responses,
                        schema_errors={style: errors for style, errors in schema_errors.items() if errors},
                        applied_fields=changed)
+        if not changed and not any(schema_errors.values()):
+            telemetry["repair_stops"]["copy"] = {"reason": "repeated_repair", "diagnosis": actual,
+                                                  "remaining_seconds": round(run.remaining(), 3)}
+            break
     telemetry["rejected_fields"] = _pending_fields(problems)
     if analysis["uncertainty"] == "high" or (analysis["sensitive"] and analysis["uncertainty"] != "low"):
         warnings.append("La incertidumbre del contenido requiere revisión independiente.")

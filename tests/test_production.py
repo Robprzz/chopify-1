@@ -241,7 +241,7 @@ def test_twenty_jobs_automatic_quality_repair_and_semantic_gate(server, monkeypa
     assert double.calls["editorial_retry", "repair"] == 1
     assert double.calls["editorial_retry", "review"] == 2
     assert double.calls["editorial_fail", "proposal"] == 1
-    assert double.calls["editorial_fail", "repair"] == 2
+    assert double.calls["editorial_fail", "repair"] == 1
     assert double.calls["editorial_fail", "review"] == 0
     assert any(list(data["repair"]) == ["curiosity"] and list(data["repair"]["curiosity"]) == ["title"]
                for title, _, data in double.questions if title == "editorial_retry" and "repair" in data)

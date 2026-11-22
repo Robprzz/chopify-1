@@ -15,18 +15,8 @@ TikTok excluye de **Direct Post** las utilidades destinadas a las cuentas que ad
 1. Entra en **TikTok for Developers → Manage apps → Connect an app**. Completa los datos del producto, registra la plataforma **Desktop** y proporciona los datos y URL de tu aplicación que solicite el portal. Emplea URL propias para los campos que requieran verificación. [Registro de aplicaciones](https://developers.tiktok.com/docs/en/getting-started-create-an-app)
 2. Crea un **Sandbox** en el selector junto al nombre de la aplicación. En ese entorno, agrega **Login Kit** y **Content Posting API**. Habilita **Upload** (`video.upload`) y el acceso a perfil básico (`user.info.basic`). Deja Direct Post desactivado para este flujo. Aplica los cambios. [Configuración de Sandbox](https://developers.tiktok.com/docs/en/add-a-sandbox) · [Guía de Upload](https://developers.tiktok.com/docs/en/content-posting-api-get-started-upload-content)
 3. En **Login Kit → Desktop**, registra exactamente `http://127.0.0.1:8765/api/tiktok/callback/`. Conserva la barra final. Si eliges otro puerto con `--port`, registra la URI correspondiente. En **Sandbox settings → Target users → Add account**, inicia sesión en TikTok con la cuenta propia de prueba y confirma que aparece en la lista del sandbox. [OAuth Desktop](https://developers.tiktok.com/docs/en/login-kit-desktop)
-4. Copia el **Client key** y el **Client secret** del entorno sandbox. En PowerShell, desde el repositorio instalado, configura las credenciales en esa sesión y arranca Studio.
-
-   ```powershell
-   $env:CHOPIFY_TIKTOK_CLIENT_KEY = Read-Host "Client key del sandbox"
-   $secret = Read-Host "Client secret del sandbox" -AsSecureString
-   $env:CHOPIFY_TIKTOK_CLIENT_SECRET = [System.Net.NetworkCredential]::new("", $secret).Password
-   Remove-Variable secret
-   .\.venv\Scripts\python.exe dashboard.py
-   ```
-
-   Al cerrar Studio, cierra esa sesión de PowerShell o limpia las variables con `Remove-Item Env:CHOPIFY_TIKTOK_CLIENT_KEY, Env:CHOPIFY_TIKTOK_CLIENT_SECRET`. OAuth, la renovación y la revocación se ejecutan en el proceso local de Studio. Los tokens se mantienen en memoria y tendrás que volver a conectar tras reiniciar. Guarda las credenciales fuera del repositorio. [Gestión de tokens OAuth](https://developers.tiktok.com/docs/en/oauth-user-access-token-management)
-5. Abre **Publicaciones → Conectar TikTok**, autoriza en la página oficial y comprueba el nombre de cuenta tras el retorno a Studio. Usa **Desconectar** para revocar la conexión. Si la revocación falla por un problema de red, vuelve a intentarlo o revoca la app desde TikTok.
+4. Abre **System Settings → Integraciones de TikTok** y selecciona **Sandbox** como perfil activo. Copia allí el **Client Key** y el **Client Secret** del sandbox y guárdalos en el almacén protegido de Windows. Si el almacén no está disponible, elige **Usar ahora temporalmente**. [Almacenamiento, perfiles y precedencia](WINDOWS-STUDIO.md#credenciales-y-autorización)
+5. Pulsa **Conectar cuenta**, autoriza en la página oficial y comprueba el nombre de cuenta tras el retorno a Studio. Con el almacén protegido, Studio verifica y recupera la autorización al reiniciar cuando sigue vigente. Usa **Desconectar y revocar** para solicitar la revocación o **Eliminar autorización local** para retirar la copia del equipo. [Gestión de tokens OAuth](https://developers.tiktok.com/docs/en/oauth-user-access-token-management)
 
 ### Opciones de privacidad
 

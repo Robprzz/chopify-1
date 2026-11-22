@@ -94,6 +94,8 @@ python -m venv .venv
 
 </details>
 
+On Windows, open **Setup Chopify Studio.cmd** once from the installed checkout and create the desktop shortcut in **System Settings**. Studio can remember FFmpeg, project and startup preferences, and protect optional TikTok credentials with Windows DPAPI. [Windows setup and maintenance](docs/WINDOWS-STUDIO.md)
+
 Studio opens at **http://127.0.0.1:8765**. Paste a local video path or URL, then click **Find clips**. Add multiple sources on separate lines to queue them. After processing, review candidates, edit captions, style them in the **Captions** tab, save your settings, and export selected clips. Stop the server with Ctrl+C. To change the port:
 
 ```powershell

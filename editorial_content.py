@@ -96,11 +96,14 @@ def _validate(value, schema):
         return (isinstance(value, dict) and value.keys() == fields.keys()
                 and all(_validate(value[k], field) for k, field in fields.items()))
     if kind == "array":
-        return (isinstance(value, list) and len(value) <= schema["maxItems"]
+        return (isinstance(value, list) and schema.get("minItems", 0) <= len(value) <= schema["maxItems"]
                 and all(_validate(item, schema["items"]) for item in value)
                 and len(value) == len(set(value)))
     if kind == "string":
-        return isinstance(value, str) and value in schema["enum"]
+        return isinstance(value, str) and (
+            value in schema["enum"] if "enum" in schema
+            else schema.get("minLength", 0) <= len(value) <= schema["maxLength"]
+        )
     if kind == "boolean":
         return type(value) is bool
     allowed = (int,) if kind == "integer" else (int, float)

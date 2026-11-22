@@ -177,6 +177,8 @@ def _probe_url(url, run=None):
         "source": url,
         "url": True,
         "title": str(data.get("title") or url),
+        "description": str(data.get("description") or "")[:1500],
+        "channel": str(data.get("channel") or data.get("uploader") or "")[:150],
         "duration": duration,
         "size": None,
         "estimated_size": estimated or None,

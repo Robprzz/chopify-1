@@ -15,9 +15,10 @@ from editorial_topics import TopicIndex, terms as topic_terms
 from editorial_providers import ProviderError
 
 
-VERSION = "2.4.2"
+VERSION = "2.4.3"
 FIELDS = (*legacy.COPY_FIELDS, "hashtags", "claims", "strategy")
 CRITERIA = (*legacy.WEIGHTS, "fidelity", "originality", "writing", "platform")
+CREATIVE_CRITERIA = ("hook", "context", "relevance", "originality", "writing")
 SCORE = {"type": "number", "minimum": 0, "maximum": 10}
 GENERIC = {fold(s) for s in ("muy importante", "mira esto", "no te lo pierdas", "increíble historia",
                               "lo que nadie te cuenta", "qué opinas", "what do you think", "watch this")}
@@ -50,8 +51,8 @@ TOPIC_INSTRUCTIONS = (
     "and corroborate any interpretation with words actually spoken in the clip. Do not turn metadata into facts. "
 )
 STYLE_HINTS = {
-    "curiosity": "Open with a specific unresolved detail or honest question.",
-    "interaction": "Explore a real point viewers can discuss; use a specific question if useful.",
+    "curiosity": "Lead with the most revealing cited detail and the specific question it raises.",
+    "interaction": "Invite readers to weigh a cited detail or contrast with a focused question.",
     "contextual": "Describe the main point clearly with verifiable context.",
 }
 
@@ -534,6 +535,60 @@ def _refs(item, analysis):
                    for index in ledger[claim]["refs"]})
 
 
+
+def _name_references(item, analysis, passages, entries):
+    """Recover nominal references only. These cannot support facts or numbers."""
+    refs = set(_refs(item, analysis))
+    topic_refs = set(analysis.get("topic_refs", ()))
+    subject = " ".join(analysis.get(key, "") or "" for key in ("theme", "message"))
+    known = {entity["name"] for entity in analysis["entities"]}
+    values = [item[field] for field in ("title", "caption", "description") if safe(item.get(field))]
+    recovered = {}
+    for name in named_mentions(" ".join(values), known):
+        if supports_name(name, [passages[i] for i in refs]):
+            continue
+        for entry in entries.values():
+            if (entry["origin"] != "clip_transcript" or not present_name(name, entry["quote"])
+                    or not supports_name(name, [passages[i] for i in entry["refs"]])):
+                continue
+            if topic_refs.intersection(entry["refs"]) or present_name(name, subject):
+                recovered[name] = {"name": name, "id": entry["id"], "refs": entry["refs"]}
+                break
+    return recovered
+
+
+def _tag_reference_text(item, analysis, passages, names=()):
+    ledger = analysis["ledger"]
+    selected = [ledger[i].get("quote") or " ".join(passages[j]["text"] for j in ledger[i]["refs"])
+                for i in item.get("claims", []) if type(i) is int and 0 <= i < len(ledger)
+                and ledger[i]["kind"] != "interpretation"]
+    localized = analysis.get("localized_summary", {})
+    if selected and set(_refs(item, analysis)).intersection(analysis.get("topic_refs", ())):
+        selected.extend(localized[key] for key in ("theme", "message") if localized.get(key))
+    return selected + list(names)
+
+
+def _supported_tag(tag, references):
+    if not safe(tag) or not re.fullmatch(r"#[^\W_][\w]{0,29}", tag):
+        return False
+    key = fold(tag).replace(" ", "")
+    if key in {"viral", "fyp", "foryou", "parati", "trending", "tendencia"}:
+        return False
+    # Match entire words or an entire contiguous phrase, including compact tags.
+    for reference in references:
+        words = fold(reference).split()
+        for i in range(len(words)):
+            value = ""
+            for j, word in enumerate(words[i:], i):
+                value += word
+                if value == key:
+                    if topic_terms(" ".join(words[i:j + 1])):
+                        return True
+                    break
+                if not key.startswith(value):
+                    break
+    return False
+
 def _terms(value):
     words = set(legacy._keywords(fold(value)))
     for token in re.findall(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]+", value):
@@ -552,7 +607,7 @@ def repeats(value):
     return len(substantial) != len(set(substantial)) or bool(re.search(r"\b(\w+)\b(?: \1\b){3,}", fold(value)))
 
 
-def check(drafts, analysis, passages, profile, fixed=(), identity=DEFAULT_IDENTITY, diagnose=None):
+def check(drafts, analysis, passages, profile, fixed=(), identity=DEFAULT_IDENTITY, diagnose=None, name_references=None):
     """Report recoverable field issues without invalidating other proposals."""
     problems = {}
     field_rules = field_schema(profile, len(analysis["ledger"]) - 1)
@@ -611,6 +666,9 @@ def check(drafts, analysis, passages, profile, fixed=(), identity=DEFAULT_IDENTI
             if analysis["sensitive"] and SENSITIVE_TOPIC.search(value) and not ATTRIBUTION.search(value):
                 flag(style, field, "attribution")
             for finding in findings(field, value, passages, set(refs), entries, external | known):
+                if (finding["reason"] == "outside_selected_evidence" and name_references
+                        and fold(finding["subject"]) in {fold(name) for name in name_references.get(style, {})}):
+                    continue
                 flag(style, field, finding["code"])
                 if diagnose:
                     diagnose({**finding, "variant": style})
@@ -619,8 +677,7 @@ def check(drafts, analysis, passages, profile, fixed=(), identity=DEFAULT_IDENTI
             if len({fold(tag) for tag in tags}) != len(tags) or any(
                     not safe(tag) or not re.fullmatch(r"#[^\W_][\w]{0,29}", tag) for tag in tags):
                 flag(style, "hashtags", "invalid_tags")
-            elif any(not any(term in fold(tag).replace(" ", "") for term in topical_terms if len(term) >= 2)
-                     for tag in tags):
+            elif any(not _supported_tag(tag, _tag_reference_text(item, analysis, passages, (name_references or {}).get(style, {}))) for tag in tags):
                 flag(style, "hashtags", "unrelated_tags")
         copy = [item.get(k) or "" for k in ("title", "caption", "description")]
         if all(isinstance(value, str) for value in copy):
@@ -643,9 +700,10 @@ def check(drafts, analysis, passages, profile, fixed=(), identity=DEFAULT_IDENTI
 
 def _clean_draft(data):
     # Drop unsafe model strings before passing them to review, repair, or SQLite.
-    return {key: value for key, value in data.items() if key in FIELDS and (
+    return {key: ([tag for tag in value if safe(tag)] if key == "hashtags" else value)
+            for key, value in data.items() if key in FIELDS and (
         (key == "claims" and isinstance(value, list) and all(type(i) is int for i in value))
-        or (key == "hashtags" and isinstance(value, list) and all(safe(tag) for tag in value))
+        or (key == "hashtags" and isinstance(value, list))
         or (key not in {"claims", "hashtags"} and (value == "" or safe(value)))
     )}
 
@@ -663,12 +721,21 @@ def _pending_fields(problems):
     return [{"variant": style, "field": field, "code": code}
             for style, fields in problems.items() for field, code in fields.items()]
 
+def _creative_quality(item):
+    return round(sum(item[key] for key in CREATIVE_CRITERIA) / len(CREATIVE_CRITERIA), 2)
+
+
+def _creative_passes(item):
+    return _creative_quality(item) >= 7 and min(item[key] for key in CREATIVE_CRITERIA) >= 6
+
+
 def _decision(item):
-    return (item["grounded"] and not item["sensational"] and item["fidelity"] >= 7
-            and item["uncertainty"] != "high" and min(item[key] for key in CRITERIA) >= 5)
+    factual = (item["grounded"] and not item["sensational"] and item["fidelity"] >= 7
+               and item["uncertainty"] != "high")
+    return factual and _creative_passes(item) and min(item[key] for key in CRITERIA) >= 5
 
 
-def review(run, drafts, styles, analysis, passages):
+def review(run, drafts, styles, analysis, passages, name_references):
     output = {}
     group, size = {}, 0
     groups = []
@@ -676,6 +743,8 @@ def review(run, drafts, styles, analysis, passages):
         variant = drafts[style]
         bundle = {"proposal": variant, "clip_passages": [passages[i] for i in _refs(variant, analysis)],
                   "claim_quotes": [analysis["ledger"][i]["quote"] for i in variant["claims"]]}
+        if name_references[style]:
+            bundle["name_only_references"] = list(name_references[style].values())
         cost = len(json.dumps(bundle, ensure_ascii=False).encode("utf-8"))
         if group and size + cost > 7600:
             groups.append(group)
@@ -687,10 +756,13 @@ def review(run, drafts, styles, analysis, passages):
     for group in groups:
         output.update(run.document_shape("validating_proposals",
             "Independently assess each proposal using only its cited passages, including cross-language claims. "
+            "Name-only references establish spelling and mention only, never events, numbers, or relationships. "
             "Check every claim, named person, "
             "number, implication and attribution. Unsupported names, claims, or unattributed sensitive facts "
             "mean grounded=false. Set sensational=true for exploitative urgency or sensational claims. "
-            "Indicate the exact defective fields. Score 0–10 including fidelity, originality and platform fit. "
+            "Score factual fidelity separately from creative quality. Assess the specificity of the hook, natural prose, "
+            "standalone context, relevance and distinct angle. Give bland or interchangeable copy low creative scores "
+            "even when factual. Identify the exact fields to fix. "
             "Flag generic calls to action, copied text and misleading hooks. Do not penalize absent hashtags."
             + voice_rules(run.identity),
             {"variants_to_review": group, "sensitive": analysis["sensitive"],
@@ -703,6 +775,10 @@ def _prompt_material(analysis, profile, platform):
     primary = [item for item in ledger if item["kind"] != "interpretation" and topic_terms(item["quote"])]
     central = [item for item in primary if set(item["refs"]).intersection(analysis["topic_refs"])]
     primary = central or primary
+    subject = analysis["theme"] + " " + analysis["message"]
+    names = named_mentions(subject, {entity["name"] for entity in analysis["entities"]})
+    preferred = [item for item in primary if any(present_name(name, item["quote"]) for name in names)]
+    primary = preferred[:4] + [item for item in primary if item not in preferred[:4]]
     spread = max(1, min(11, len(primary) - 1))
     ids = sorted({i * (len(primary) - 1) // spread for i in range(min(12, len(primary)))})
     available, byte_count = [], 0
@@ -755,10 +831,11 @@ def generate(provider, source, settings, cancellation, progress, *, telemetry=No
         while True:
             try:
                 response = run.call("generating",
-                    "Draft distinct original titles, captions and descriptions. Make every factual statement traceable "
-                    "to the listed claim IDs. Keep separate events and participants separate. "
-                    "Attribute sensitive claims and avoid generic hooks and repeated copy. "
-                    "Explain each editorial strategy. Use optional CTA only when specific, and [] for unneeded hashtags." + voice_rules(run.identity),
+                    "Write natural digital newsroom copy. Lead with the strongest specific detail in the cited claims. "
+                    "Give the reader enough context and a reason to care. Use distinct angles: a concrete open question, "
+                    "a sourced point for discussion, and a clear explanation. Make captions add information to titles. "
+                    "Avoid generic questions, clickbait, accusations, and unproven causal links. Cite claim IDs and "
+                    "attribute sensitive statements. Use only hashtags derived from those claims, or []. Explain each angle." + voice_rules(run.identity),
                     {**material, "requested_angles": {name: STYLE_HINTS[name] for name in scope},
                      "preserved": {name: item["title"] for name, item in drafts.items()
                                    if name in protected and "title" in item}}, schema)
@@ -776,12 +853,30 @@ def generate(provider, source, settings, cancellation, progress, *, telemetry=No
     if target:
         reports.pop(target, None)
 
+    entries = {row["id"]: row for row in analysis.get("evidence_registry", [])} or registry(passages, {})
     while True:
         run.progress("validating_proposals")
         started = time.monotonic()
         fixed = protected | {style for style, report in reports.items() if _decision(report)}
+        name_references = {style: _name_references(item, analysis, passages, entries) for style, item in drafts.items()}
+        telemetry["name_references"] = {style: list(refs.values()) for style, refs in name_references.items() if refs}
+        for style, item in drafts.items():
+            if style in fixed or not isinstance(item.get("hashtags"), list):
+                continue
+            refs = _tag_reference_text(item, analysis, passages, name_references[style])
+            tags = {}
+            for tag in item["hashtags"]:
+                if _supported_tag(tag, refs):
+                    tags.setdefault(fold(tag).replace(" ", ""), tag)
+            kept = list(tags.values())[:profile["max_tags"]]
+            if kept != item["hashtags"]:
+                item["hashtags"] = kept
+                telemetry["corrected_fields"].append({"variant": style, "field": "hashtags"})
+        rejections = []
         problems = check(drafts, analysis, passages, profile, fixed=fixed, identity=run.identity,
-                         diagnose=lambda item: _diagnose(run, item))
+                         diagnose=rejections.append, name_references=name_references)
+        for item in rejections:
+            _diagnose(run, item)
         _record(run, problems)
         telemetry["stages"]["deterministic"] = round(
             telemetry["stages"].get("deterministic", 0) + time.monotonic() - started, 4)
@@ -791,7 +886,7 @@ def generate(provider, source, settings, cancellation, progress, *, telemetry=No
                   and (target is None or style == target)]
         if styles:
             try:
-                reports.update(review(run, drafts, styles, analysis, passages))
+                reports.update(review(run, drafts, styles, analysis, passages, name_references))
             except ProviderError as exc:
                 telemetry["issues"].append({"stage": "validating_proposals", "code": exc.code})
                 telemetry["rejected_fields"] = _pending_fields(problems)
@@ -803,7 +898,8 @@ def generate(provider, source, settings, cancellation, progress, *, telemetry=No
                 break
         for style, item in reports.items():
             if not _decision(item):
-                problems[style] = {field: "review" for field in (item["fields"] or ["description", "claims"])}
+                default = ["title", "caption", "description"] if not _creative_passes(item) else ["description", "claims"]
+                problems[style] = {field: "review" for field in (item["fields"] or default)}
         _record(run, problems)
         actual = {style: issues for style, issues in problems.items() if target is None or style == target}
         if not actual:
@@ -818,12 +914,22 @@ def generate(provider, source, settings, cancellation, progress, *, telemetry=No
                 "Change only the requested fields, keeping the valid copy and other angles. "
                 "When a name or number is unsupported, reformulate the claim without it. "
                 "Keep distinct events and their subjects separate. Preserve attribution and do not invent facts. Return the exact repair keys." + voice_rules(run.identity),
-                {**material, "repair": {style: {field: PROBLEMS[code] for field, code in issues.items()}
+                {"editorial_identity": run.identity, "platform": settings["platform"],
+                 "topic": material["understanding"]["theme"],
+                 **({"available_claims": material["available_claims"]}
+                    if any("claims" in issues for issues in actual.values()) else {}),
+                 "repair": {style: {field: PROBLEMS[code] for field, code in issues.items()}
                                         for style, issues in actual.items()},
-                 "rejections": [{**item, "evidence": [row for row in item["evidence"] if row.get("refs")]}
-                                for item in telemetry.get("evidence_rejections", [])
-                                if item.get("variant") in actual and item["field"] in actual[item["variant"]]][-8:],
-                 "current_proposals": drafts}, schema)
+                 "rejections": [{"variant": item["variant"], "field": item["field"], "subject": item["subject"],
+                                 "reason": item["reason"], "suggestion": item["suggestion"]}
+                                for item in rejections
+                                if item["variant"] in actual and item["field"] in actual[item["variant"]]][:12],
+                 "allowed_evidence": {style: {
+                     "claims": [{"id": i, "quote": analysis["ledger"][i]["quote"][:200]}
+                                for i in drafts[style].get("claims", []) if 0 <= i < len(analysis["ledger"])],
+                     "name_only": list(name_references[style].values()),
+                 } for style in actual},
+                 "current_proposals": {style: drafts[style] for style in actual}}, schema)
         except ProviderError as exc:
             run.end_repair(attempt, exc.code, schema_errors={"response": "unavailable"} if exc.code == "response" else {})
             if exc.code not in {"response", "timeout"} and not any(_decision(value) for value in reports.values()):
@@ -838,7 +944,9 @@ def generate(provider, source, settings, cancellation, progress, *, telemetry=No
             accepted, rejected = _repair_fields(amendments, {field: fields[field] for field in issues})
             responses[style], schema_errors[style] = accepted, rejected
             for field, value in accepted.items():
-                if value != drafts[style].get(field):
+                old = drafts[style].get(field)
+                if value != old and not (isinstance(value, str) and isinstance(old, str)
+                                         and fold(value) == fold(old)):
                     drafts[style][field] = value
                     changed.append({"variant": style, "field": field})
                     reports.pop(style, None)
@@ -869,7 +977,9 @@ def _result(source, settings, passages, analysis, drafts, reports, telemetry, ed
         score = round(sum(report[k] * settings["weights"][k] for k in legacy.WEIGHTS) / 100, 2) if valid else 0
         variants.append({**{key: item[key] for key in (*legacy.COPY_FIELDS, "hashtags", "strategy")},
                          "style": style, "score": score, "valid": valid and score > 0,
-                         "fidelity": report["fidelity"] if report else None, "review": report,
+                         "fidelity": report["fidelity"] if report else None,
+                         "creative_quality": _creative_quality(report) if report else None,
+                         "name_references": telemetry.get("name_references", {}).get(style, []), "review": report,
                          "reason": item["strategy"], "evidence": [passages[i] for i in _refs(item, analysis)]})
     best = max((item for item in variants if item["valid"]), key=lambda item: item["score"], default=None)
     if not best and editorial_state != "rejected_evidence":

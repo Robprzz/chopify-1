@@ -1,4 +1,4 @@
-"""Chopify Studio: loopback browser UI with a serial, resumable project queue."""
+"""Anqora Media Studio: loopback browser UI with a serial, resumable project queue."""
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 import errno
@@ -27,6 +27,7 @@ import editorial_store
 import live_production
 import projects
 import production
+import publishing_calendar
 import realtime_operations
 from realtime_priority import valid_number
 import render_clips
@@ -89,6 +90,11 @@ STATIC_FILES = {
     "subtitles.js": ("subtitles.js", "text/javascript; charset=utf-8"),
     "production.js": ("production.js", "text/javascript; charset=utf-8"),
     "realtime.js": ("realtime.js", "text/javascript; charset=utf-8"),
+    "workspace.js": ("workspace.js", "text/javascript; charset=utf-8"),
+    "calendar.js": ("calendar.js", "text/javascript; charset=utf-8"),
+    "anqora.css": ("anqora.css", "text/css; charset=utf-8"),
+    "anqora.svg": ("anqora.svg", "image/svg+xml"),
+    "anqora-mark.svg": ("anqora-mark.svg", "image/svg+xml"),
     "system.js": ("system.js", "text/javascript; charset=utf-8"),
     "telegram.js": ("telegram.js", "text/javascript; charset=utf-8"),
     "chopify.ico": ("chopify.ico", "image/x-icon"),
@@ -195,6 +201,7 @@ class Studio:
                                                self.tiktok._clip, self._production_catalog, self.resources)
         self.live_production = live_production.Pipeline(self.root, self.resources, self._production_clip)
         self.live_production.start()
+        self.calendar = publishing_calendar.Calendar(self.root, self.production, self.tiktok, self.automation_settings)
         self.system = studio_system.System(installation or studio_settings.Settings(HERE), self)
         self.telegram = telegram_gateway.Gateway(self, installation)
         self.telegram.start()
@@ -526,6 +533,18 @@ class Handler(BaseHTTPRequestHandler):
             if location.path in {tiktok.AUTHORIZE_START, tiktok.CALLBACK}:
                 return self.oauth_navigation(location)
             parts = unquote(location.path).strip("/").split("/")
+            if parts == ["api", "calendar"]:
+                query = parse_qs(location.query, max_num_fields=2)
+                return self.send_json(self.app.calendar.snapshot(query.get("id", [None])[0],
+                                                                around=query.get("date", [None])[0]))
+            if parts == ["api", "calendar-clip"]:
+                job = int(parse_qs(location.query, max_num_fields=1).get("job", ["0"])[0])
+                clip = self.app.calendar._clip(job)
+                return self.send_json({key: clip[key] for key in ("title", "description", "hashtags", "status")})
+            if parts == ["api", "workspace"]:
+                from studio_workspace import snapshot
+                days = int(parse_qs(location.query, max_num_fields=1).get("days", ["1"])[0])
+                return self.send_json(snapshot(self.app, days))
             if parts == ["api", "health"] and self.app.identity:
                 nonce = parse_qs(location.query, max_num_fields=1).get("nonce", [""])[0]
                 return self.send_json({"proof": studio_settings.instance_proof(self.app.identity, nonce)})
@@ -616,6 +635,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"error": "Not found."}, 404)
         except (BrokenPipeError, ConnectionResetError):
             pass
+        except (sqlite3.Error, automation.SettingsUnavailable):
+            self.send_json({"error": "El espacio local no está disponible."}, 503)
         except (OSError, KeyError):
             self.send_json({"error": "Project or file not found."}, 404)
         except (ValueError, TypeError) as exc:
@@ -666,6 +687,8 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(body, dict):
                 raise ValueError("Expected a JSON object.")
             parts = unquote(urlsplit(self.path).path).strip("/").split("/")
+            if len(parts) == 3 and parts[:2] == ["api", "calendar"]:
+                return self.send_json(self.app.calendar.action(parts[2], body))
             if len(parts) == 3 and parts[:2] == ["api", "system"]:
                 return self.system_action(parts[2], body)
             if len(parts) == 3 and parts[:2] == ["api", "telegram"]:
@@ -777,6 +800,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"error": "Not found."}, 404)
         except FileNotFoundError:
             self.send_json({"error": "Project or transcript not found. Prepare the project first."}, 404)
+        except publishing_calendar.Conflict as exc:
+            return self.send_json({"error": str(exc)}, 409)
+        except (sqlite3.Error, automation.SettingsUnavailable):
+            return self.send_json({"error": "El espacio local no está disponible."}, 503)
         except (ValueError, KeyError, TypeError, OSError) as exc:
             self.send_json({"error": str(exc)}, 400)
 
@@ -982,7 +1009,13 @@ class Handler(BaseHTTPRequestHandler):
         if action == "inspect":
             return self.send_json(service.inspect(body["project"], body["filename"]))
         if action == "upload":
-            result = service.submit(body["review_id"], body["description"], body.get("approved"))
+            plan = body.get("calendar_id")
+            if plan is not None:
+                result = service.submit(body["review_id"], body["description"], body.get("approved"),
+                                        on_consent=lambda review: self.app.calendar.reserve_tiktok(
+                                            plan, body.get("calendar_revision"), review))
+            else:
+                result = service.submit(body["review_id"], body["description"], body.get("approved"))
             return self.send_json(result)
         if action == "status":
             return self.send_json(service.refresh(body["id"]))
@@ -1036,6 +1069,21 @@ def load_static_files():
         if not data:
             raise RuntimeError(f"Cannot load Studio asset {path}. Update the complete checkout and restart Studio.")
         assets[route] = (data, content_type)
+    references = HERE / "design" / "references" / "branding"
+    for route, fallback, candidates in (
+        ("anqora-logo", "anqora.svg", (STATIC / "anqora-horizontal.png", references / "anqora_logotipo_horizontal.png")),
+        ("anqora-symbol", "anqora-mark.svg", (STATIC / "anqora-symbol.png",)),
+    ):
+        assets[route] = assets[fallback]
+        for path in candidates:
+            try:
+                with path.open("rb") as image:
+                    data = image.read(8_000_001)
+                if data.startswith(b"\x89PNG\r\n\x1a\n") and len(data) <= 8_000_000:
+                    assets[route] = (data, "image/png")
+                    break
+            except OSError:
+                continue
     return assets
 
 
@@ -1062,7 +1110,7 @@ def make_server(root="projects", port=8765, installation=None):
 
 def main():
     configure_utf8()
-    parser = argparse.ArgumentParser(description="Open Chopify Studio on your own computer.")
+    parser = argparse.ArgumentParser(description="Open Anqora Media Studio on your own computer.")
     parser.add_argument("--projects-dir")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--no-browser", action="store_true")
@@ -1088,7 +1136,7 @@ def main():
             raise
         parser.exit(1, f"Cannot bind Studio to port {args.port}. Stop any previous Studio process and check whether the port is already in use.\n")
     url = f"http://127.0.0.1:{server.server_port}"
-    print(f"Chopify Studio: {url}\nCheckout: {HERE}\nProjects: {server.app.root}\nPress Ctrl+C to stop.", flush=True)
+    print(f"Anqora Media Studio: {url}\nCheckout: {HERE}\nProjects: {server.app.root}\nPress Ctrl+C to stop.", flush=True)
     for name in ("CHOPIFY_TIKTOK_CLIENT_KEY", "CHOPIFY_TIKTOK_CLIENT_SECRET"):
         os.environ.pop(name, None)
     if args.managed_launch and os.name == "nt" and not job_handle:

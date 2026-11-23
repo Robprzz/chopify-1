@@ -1,9 +1,9 @@
-# Chopify Studio · Inicio desde Windows
+# Anqora Media Studio · Inicio desde Windows
 
 ## Primera configuración
 
 1. Cierra el servidor anterior y abre GitHub Desktop en `feature/anqora-media-studio-v2`. Usa **Fetch origin** y **Pull origin**. Conserva el repositorio y la carpeta de proyectos que ya utilizas.
-2. En GitHub Desktop, abre **Repository → Show in Explorer**. Haz doble clic en **Setup Chopify Studio.cmd**. Este paso usa el Python de `.venv`. Si todavía falta el entorno, créalo una vez desde la carpeta del repositorio con el Python que ya tengas instalado.
+2. En GitHub Desktop, abre **Repository → Show in Explorer**. Haz doble clic en **Setup Anqora Media Studio.cmd**. Este paso usa el Python de `.venv`. Si todavía falta el entorno, créalo una vez desde la carpeta del repositorio con el Python que ya tengas instalado.
 
    ```powershell
    py -3.11 -m venv .venv
@@ -14,14 +14,14 @@
 4. Comprueba Ollama si lo utilizas. Marca **Autorizar el inicio de Ollama local con Studio** si quieres ese comportamiento y guarda la preferencia. Comprueba que el modelo `qwen3:4b` aparece en la lista. Selecciónalo para guardarlo en la configuración de AI Engine de la carpeta de proyectos activa. Puedes usar Studio con las reglas locales mientras Ollama esté detenido o el modelo no esté instalado.
 5. Conserva la carpeta de proyectos existente. Si antes usabas `--projects-dir`, indica esa ruta absoluta en el asistente. Cambiarla afecta el próximo inicio y deja los proyectos anteriores en su carpeta.
 6. Si vas a usar TikTok, elige **Sandbox** o **Production** como perfil activo. En **Credenciales de la aplicación**, selecciona el perfil correspondiente, pega el Client Key y el Client Secret y pulsa **Guardar en Windows**. Después pulsa **Conectar cuenta** y autoriza la aplicación en la página oficial de TikTok. [Configuración de TikTok y URI de retorno](TIKTOK.md)
-7. Pulsa **Crear o recrear acceso directo** cuando llegues a esa etapa. El asistente usa el Escritorio que Windows devuelve para el usuario, incluido el Escritorio redirigido. El acceso directo se llama **Chopify Studio** y apunta al `pythonw.exe` del entorno con la ruta del launcher y el directorio de trabajo de la instalación.
-8. Pulsa **Terminar configuración**. Usa **System Settings → Cerrar al terminar los trabajos activos** para aplicar las preferencias de inicio y abre el acceso directo. En adelante usa ese acceso para abrir Studio.
+7. Pulsa **Crear o recrear acceso directo** cuando llegues a esa etapa. El asistente usa el Escritorio que Windows devuelve para el usuario, incluido el Escritorio redirigido. El acceso directo se llama **Anqora Media Studio** y apunta al `pythonw.exe` del entorno con la ruta del launcher y el directorio de trabajo de la instalación.
+8. Pulsa **Terminar configuración**. Usa **Configuración → Diagnósticos → Cerrar al terminar los trabajos activos** para aplicar las preferencias de inicio y abre el acceso directo. En adelante usa ese acceso para abrir Studio.
 
-Si iniciaste Studio con el navegador desactivado, la dirección para abrirlo es `http://127.0.0.1:8765/`. Si moviste la carpeta del repositorio, vuelve a ejecutar el asistente en la carpeta nueva. Un acceso directo existente de otra instalación conserva su destino hasta que el usuario lo retire. Para esta instalación, **System Settings** permite recrear o eliminar el acceso directo.
+Si iniciaste Studio con el navegador desactivado, la dirección para abrirlo es `http://127.0.0.1:8765/`. Si moviste la carpeta del repositorio, vuelve a ejecutar el asistente en la carpeta nueva. Un acceso directo existente de otra instalación conserva su destino hasta que el usuario lo retire. Para esta instalación, **Configuración → Diagnósticos** permite recrear o eliminar el acceso directo.
 
 ## Texto multilingüe y arranque
 
-Chopify inicia los procesos Python del launcher y Studio en UTF-8 y transmite la configuración a los procesos de transcripción, descarga y procesamiento. Las transcripciones, los subtítulos SRT y ASS y los registros nuevos conservan los caracteres Unicode. El servidor abre el navegador al confirmar la identidad de Studio por HTTP. Si el puerto 8765 acepta conexiones mientras Studio todavía se inicializa, el launcher espera la respuesta hasta 60 segundos. Si recibe una respuesta de otro servicio, indica el conflicto.
+Anqora inicia los procesos Python del launcher y Studio en UTF-8 y transmite la configuración a los procesos de transcripción, descarga y procesamiento. Las transcripciones, los subtítulos SRT y ASS y los registros nuevos conservan los caracteres Unicode. El servidor abre el navegador al confirmar la identidad de Studio por HTTP. Si el puerto 8765 acepta conexiones mientras Studio todavía se inicializa, el launcher espera la respuesta hasta 60 segundos. Si recibe una respuesta de otro servicio, indica el conflicto.
 
 Después de actualizar, cierra la instancia anterior de Studio y abre el acceso directo habitual. Si el arranque sigue pendiente, abre el registro `studio.log` que indica el launcher para ver si se detuvo al verificar FFmpeg o al preparar el servidor. La apariencia de los subtítulos incrustados también depende de las fuentes que FFmpeg encuentra en Windows.
 

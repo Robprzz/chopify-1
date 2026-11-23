@@ -94,11 +94,11 @@ def test_live_start_explains_missing_resolver(server, chromium_page, monkeypatch
     _, base = server
     page, expect = chromium_page
     page.goto(base)
-    page.get_by_role("button", name="Live clipping").click()
+    page.get_by_role("button", name="Live Studio").click()
     page.locator("#live-source").fill("https://www.youtube.com/watch?v=2dt0yxm4RUE")
     with page.expect_response(lambda response: response.request.method == "POST"
                               and response.url == base + "/api/live") as reply:
-        page.get_by_role("button", name="Start live session").click()
+        page.locator("#live-start").click()
     assert reply.value.status == 400
     expect(page.locator("#live-start-error")).to_contain_text("yt-dlp is missing from Studio's Python environment")
     expect(page.locator("#live-status")).to_have_text("Not running.")
@@ -214,15 +214,16 @@ def test_live_clip_reaches_publications_in_chromium(server, chromium_page, monke
     page.on("pageerror", lambda error: errors.append(str(error)))
     try:
         page.goto(base)
-        page.get_by_role("button", name="Live clipping").click()
+        page.get_by_role("button", name="Live Studio").click()
         page.locator("#live-source").fill(url)
         page.locator("#live-aspect").select_option("1:1" if split else "9:16")
         expect(page.locator("#live-max-height")).to_have_value("720")
         if split:
+            page.locator("#live-advanced summary").click()
             page.locator("#live-max-height").select_option("1080")
         with page.expect_response(lambda response: response.request.method == "POST"
                                   and response.url == base + "/api/live") as reply:
-            page.get_by_role("button", name="Start live session").click()
+            page.locator("#live-start").click()
         assert reply.value.status == 201
         session = reply.value.json()["id"]
         if split:
@@ -272,8 +273,8 @@ def test_live_clip_reaches_publications_in_chromium(server, chromium_page, monke
             assert app.app.live_sessions == {session: active}
             assert active.stream_time >= time_before_navigation
             assert live_writes == []
-            page.get_by_role("button", name="Publicaciones").click()
-            page.get_by_role("button", name="Live clipping").click()
+            page.get_by_role("button", name="Publicaciones", exact=True).click()
+            page.get_by_role("button", name="Live Studio").click()
             expect(link).to_have_attribute("href", mp4)
             page.evaluate("() => localStorage.setItem('chopify.live.selected', 'expired')")
             page.reload()
@@ -296,7 +297,8 @@ def test_live_clip_reaches_publications_in_chromium(server, chromium_page, monke
             expect(link).to_have_attribute("href", mp4)
         exports = app.app.root / "live" / session / "clips"
         (exports / "partial.mp4").write_bytes(b"unfinished")
-        page.get_by_role("button", name="Publicaciones").click()
+        page.locator("#show-settings").click()
+        page.locator("#show-tiktok").click()
         select = page.locator("#tiktok-clip")
         expect(select.locator("option")).to_have_count(2)
         select.select_option("0")
@@ -325,7 +327,7 @@ def test_live_clip_reaches_publications_in_chromium(server, chromium_page, monke
             page.request.post(base + f"/api/live/{session}/stop",
                               headers={"X-Chopify-Token": app.app.token}, data={})
             assert not buffer.alive
-            page.get_by_role("button", name="Live clipping").click()
+            page.get_by_role("button", name="Live Studio").click()
             expect(page.locator("#live-stop")).to_be_hidden()
             expect(page.locator("#live-sessions")).to_contain_text("Finalizada")
             page.reload()

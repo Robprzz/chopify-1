@@ -1,6 +1,6 @@
 ---
 name: chopify
-description: Use when the user wants to turn a local recording or video URL into scored, captioned shorts with Chopify, or wants to operate an existing Chopify project, batch or live session. This skill covers the agent CLI only; use the Chopify Studio docs for browser work.
+description: Use when the user wants to turn a local recording or video URL into scored, captioned shorts with Chopify, or wants to operate an existing Chopify project, batch or live session. This skill covers the agent CLI only; use the Anqora Media Studio docs for browser work.
 ---
 
 # Chopify agent interface

@@ -245,7 +245,7 @@ $("#system-update").addEventListener("click", () => {
   const target = systemStatus.update;
   if (!target?.eligible || !window.confirm(`¿Actualizar a ${target.remote} y cerrar Studio?`)) return;
   systemRun(() => systemAPI("update", { installed: target.installed, remote: target.remote, confirmed: true }),
-    "Actualización instalada. Vuelve a abrir Chopify Studio desde el acceso directo.");
+    "Actualización instalada. Vuelve a abrir Anqora Media Studio desde el acceso directo.");
 });
 for (const control of document.querySelectorAll("[data-system-shutdown]")) {
   control.addEventListener("click", () => {

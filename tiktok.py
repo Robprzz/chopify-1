@@ -695,7 +695,7 @@ class TikTokStudio:
                 "history": entries,
             }
 
-    def submit(self, job, description, approved):
+    def submit(self, job, description, approved, *, on_consent=None):
         if approved is not True:
             raise TikTokError("Confirma explícitamente el envío de este clip a TikTok.")
         if not isinstance(description, str) or len(description) > 2200:
@@ -723,6 +723,8 @@ class TikTokStudio:
                     return self._public_record(existing)
             access = self._access()
             media = self._clip(review["project"], review["filename"])
+            if on_consent is not None:
+                on_consent(review)
             record = {
                 "id": job, "owner": review["owner"], "project": review["project"],
                 "filename": review["filename"], "digest": review["digest"], "description": description,

@@ -94,9 +94,9 @@ python -m venv .venv
 
 </details>
 
-On Windows, open **Setup Chopify Studio.cmd** once from the installed checkout and create the desktop shortcut in **System Settings**. Studio can remember FFmpeg, project and startup preferences, and protect optional TikTok credentials with Windows DPAPI. [Windows setup and maintenance](docs/WINDOWS-STUDIO.md)
+On Windows, open **Setup Anqora Media Studio.cmd** from your checkout and create the desktop shortcut under **Configuración → Diagnósticos**. Studio can remember FFmpeg, project and startup preferences, and protect optional TikTok credentials with Windows DPAPI. [Windows setup and maintenance](docs/WINDOWS-STUDIO.md)
 
-Studio opens at **http://127.0.0.1:8765**. Paste a local video path or URL, then click **Find clips**. Add multiple sources on separate lines to queue them. After processing, review candidates, edit captions, style them in the **Captions** tab, save your settings, and export selected clips. Stop the server with Ctrl+C. To change the port:
+Anqora Media Studio opens at **http://127.0.0.1:8765**. Open **Clips → Nuevo proyecto**, paste a local video path or URL, then click **Find clips**. Add multiple sources on separate lines to queue them. After processing, review candidates, edit captions, style them in the **Captions** tab, save your settings, and export selected clips. Stop the server with Ctrl+C. To change the port:
 
 ```powershell
 .venv\Scripts\python dashboard.py --port 8766 --projects-dir projects
@@ -104,7 +104,7 @@ Studio opens at **http://127.0.0.1:8765**. Paste a local video path or URL, then
 
 The dashboard has no extra web framework or JavaScript installation step. It binds to loopback and is intended for one trusted user on the same computer, not as a public server.
 
-Open **Automation** to save the approved production settings. Phase 1 stores them per projects folder and keeps them across Studio restarts. [Automation settings and workflow](docs/AUTOMATION.md) · [Editorial engine 2.4 and Windows validation](docs/EDITORIAL-24.md)
+Open **Automation** to manage production and review. **Publicaciones** opens the persistent editorial calendar, and **Configuración → Integraciones** provides the existing TikTok and Telegram tools. [Automation 4.0 calendar and Windows verification](docs/AUTOMATION-40.md). [Automation settings and workflow](docs/AUTOMATION.md) · [Editorial engine 2.4 and Windows validation](docs/EDITORIAL-24.md)
 
 YouTube downloads may also require Deno: `winget install DenoLand.Deno`. A preflight check reports missing Python packages and encoders. Restart your terminal after installing tools so PATH changes take effect.
 

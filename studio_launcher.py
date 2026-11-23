@@ -136,7 +136,7 @@ def launch(store, *, port=PORT, browser=None, timeout=STARTUP_TIMEOUT):
 
 def main():
     configure_utf8()
-    parser = argparse.ArgumentParser(description="Inicia Chopify Studio desde su entorno virtual.")
+    parser = argparse.ArgumentParser(description="Inicia Anqora Media Studio desde su entorno virtual.")
     parser.add_argument("--no-browser", action="store_true")
     args = parser.parse_args()
     store = system.Settings(CHECKOUT)

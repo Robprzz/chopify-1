@@ -105,7 +105,7 @@ if [ "$NO_START" = "1" ]; then
   exit 0
 fi
 
-step "Starting Chopify Studio at http://127.0.0.1:8765"
+step "Starting Anqora Media Studio at http://127.0.0.1:8765"
 note "Press Ctrl+C to stop the server."
 cd "$TARGET"
 exec .venv/bin/python dashboard.py

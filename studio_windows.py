@@ -29,11 +29,11 @@ def shortcut(checkout, action):
     previous_args = '"' + str(launcher) + '"'
     args = "-X utf8 " + previous_args
     if action == "create" and not pythonw.is_file():
-        raise ValueError("Falta pythonw.exe en el entorno .venv de Chopify.")
+        raise ValueError("Falta pythonw.exe en el entorno .venv de Anqora.")
     result = _powershell("""
         $desk = [Environment]::GetFolderPath('DesktopDirectory')
         if (-not $desk) { throw 'desktop unavailable' }
-        $link = Join-Path $desk 'Chopify Studio.lnk'
+        $link = Join-Path $desk 'Anqora Media Studio.lnk'
         $shell = New-Object -ComObject WScript.Shell
         $exists = Test-Path -LiteralPath $link -PathType Leaf
         $shortcut = $shell.CreateShortcut($link)
@@ -47,7 +47,7 @@ def shortcut(checkout, action):
           $shortcut.Arguments = $env:CS_DESKTOP_ARGS
           $shortcut.WorkingDirectory = $env:CS_DESKTOP_WORKDIR
           $shortcut.IconLocation = $env:CS_DESKTOP_ICON
-          $shortcut.Description = 'Chopify Studio'
+          $shortcut.Description = 'Anqora Media Studio'
           $shortcut.Save()
           Write-Output 'created'
         } elseif ($env:CS_DESKTOP_ACTION -eq 'delete') {
@@ -59,7 +59,7 @@ def shortcut(checkout, action):
     """, {"CS_DESKTOP_ACTION": action, "CS_DESKTOP_TARGET": str(pythonw),
           "CS_DESKTOP_ARGS": args, "CS_DESKTOP_PREVIOUS_ARGS": previous_args,
           "CS_DESKTOP_WORKDIR": str(path),
-          "CS_DESKTOP_ICON": str(path / "assets" / "studio" / "chopify.ico") + ",0"})
+          "CS_DESKTOP_ICON": str(path / "assets" / "studio" / "anqora.ico") + ",0"})
     if result not in {"created", "missing", "occupied"}:
         raise ValueError("Windows no confirmó el estado del acceso directo.")
     if result == "occupied" and action != "status":
@@ -71,7 +71,7 @@ def choose_folder():
     return _powershell("""
         Add-Type -AssemblyName System.Windows.Forms
         $dialog = New-Object Windows.Forms.FolderBrowserDialog
-        $dialog.Description = 'Selecciona una carpeta para Chopify Studio'
+        $dialog.Description = 'Selecciona una carpeta para Anqora Media Studio'
         try {
           if ($dialog.ShowDialog() -eq [Windows.Forms.DialogResult]::OK) { Write-Output $dialog.SelectedPath }
         } finally { $dialog.Dispose() }
@@ -82,7 +82,7 @@ def message(text):
     if os.name == "nt":
         box = ctypes.WinDLL("user32", use_last_error=True).MessageBoxW
         box.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint]
-        box(None, text, "Chopify Studio", 0x10)
+        box(None, text, "Anqora Media Studio", 0x10)
 
 
 def managed_job():

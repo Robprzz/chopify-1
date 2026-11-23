@@ -198,7 +198,7 @@ class Gateway:
             with self.lock:
                 if not self._enabled() or self.store.state()["chat_id"] is None:
                     raise ValueError("Vincula una cuenta y activa Telegram.")
-                if not self.store.enqueue("test", {"text": "Chopify Studio · notificación de prueba."}, 20, cooldown=10):
+                if not self.store.enqueue("test", {"text": "Anqora Media Studio · notificación de prueba."}, 20, cooldown=10):
                     raise ValueError("La cola está llena o ya se solicitó una prueba hace menos de 10 segundos.")
                 self.wake.set()
             return {"queued": True}
@@ -580,7 +580,7 @@ class Gateway:
 
     def _alerts(self):
         if self.startup:
-            self.store.enqueue("startup", {"text": "Chopify Studio iniciado. Usa /status para consultar operaciones."},
+            self.store.enqueue("startup", {"text": "Anqora Media Studio iniciado. Usa /status para consultar operaciones."},
                                12, cooldown=300)
             self.startup = False
         active = {}

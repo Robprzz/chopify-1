@@ -43,6 +43,7 @@ function switchView(id) {
   for (const view of document.querySelectorAll("main > section.view")) {
     view.hidden = view.id !== id;
   }
+  window.dispatchEvent(new CustomEvent("studio-view", {detail: id}));
 }
 function notice(message, error = false) {
   clearTimeout(state.noticeTimer);
@@ -1396,9 +1397,9 @@ setInterval(async () => {
         }
       }
     }
-    $("#connection").textContent = "● Local session";
+    $("#connection").textContent = "Estudio local";
   } catch (error) {
-    $("#connection").textContent = "Connection lost · restart Studio";
+    $("#connection").textContent = "Sin conexión local";
   } finally {
     polling = false;
   }
@@ -1411,7 +1412,7 @@ safe(async () => {
   await refreshProjects();
   window.dispatchEvent(new Event("studio-ready"));
 })();
-$("#show-publications").addEventListener("click", safe(async () => {
+$("#show-tiktok").addEventListener("click", safe(async () => {
   if (typeof showPublications !== "function") {
     throw new Error("Publicaciones no pudo cargar. Cierra el servidor anterior e inicia dashboard.py desde la copia actualizada.");
   }

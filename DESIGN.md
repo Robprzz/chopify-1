@@ -1,4 +1,4 @@
-# Design — Chopify Studio
+# Design — Anqora Media Studio
 
 ## Direction
 

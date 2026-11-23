@@ -40,13 +40,15 @@ function renderRealtime() {
       <button type="button" data-realtime="approved">Aprobar editorialmente</button>
       <button type="button" data-realtime="rejected">Rechazar</button>
       <button type="button" data-realtime="correction">Solicitar corrección</button>` : "";
+    const prepare = row.level === "urgent" && approved
+      ? `<button type="button" data-workspace="plan-clip" data-key="${escapeHTML(row.project + "/" + row.file)}">Preparar ahora</button>` : "";
     return `<tr data-realtime-id="${row.id}">
       <td>${escapeHTML(row.filename)}<small>${escapeHTML(realtimeKinds[row.event_kind])} · Lista para revisión${ranks.has(row.id) ? " · #" + ranks.get(row.id) : ""}${approved ? " · Aprobado editorialmente" : ""}</small></td>
       <td>${age}</td><td>${productionScore(row.detection)}</td><td>${productionScore(row.editorial)}</td><td>${productionScore(row.priority)}</td>
       <td>${productionScore(row.temporal_score)} · ${escapeHTML(realtimeLevels[row.level] || "Sin puntuación")}<small>${escapeHTML(row.reason)}</small></td>
       <td><a href="${escapeHTML(url)}" target="_blank" rel="noopener">Reproducir</a>
       <button type="button" data-realtime="detail">Detalles</button>
-      <button type="button" data-realtime="event">Hora del acontecimiento</button>${review}</td></tr>`;
+      <button type="button" data-realtime="event">Hora del acontecimiento</button>${review}${prepare}</td></tr>`;
   }).join("") || '<tr><td colspan="7">Sin clips en esta vista.</td></tr>';
   const ranking = $("#realtime-ranking");
   if (ranking.dataset.markup !== markup) {
@@ -110,6 +112,11 @@ async function refreshRealtime() {
   }
 }
 
+async function applyRealtimeDecision(job, action) {
+  const result = await api("/api/production/review", {id: job.id, run: job.run, revision: job.revision, decision: action});
+  notice(result.changed ? "Decisión editorial registrada." : "La versión ya tiene una decisión registrada.");
+  await refreshRealtime();
+}
 $("#show-automation").addEventListener("click", refreshRealtime);
 $("#realtime-filter").addEventListener("change", renderRealtime);
 $("#realtime-ranking").addEventListener("click", safe(async event => {
@@ -135,9 +142,7 @@ $("#realtime-ranking").addEventListener("click", safe(async event => {
   }
   button.disabled = true;
   try {
-    const result = await api("/api/production/review", {id: job.id, run: job.run, revision: job.revision, decision: action});
-    notice(result.changed ? "Decisión editorial registrada." : "La versión ya tiene una decisión registrada.");
-    await refreshRealtime();
+    await applyRealtimeDecision(job, action);
   } finally {
     button.disabled = false;
   }

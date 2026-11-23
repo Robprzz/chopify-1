@@ -17,6 +17,7 @@ clips/
 projects/
 .tiktok-publications/
 .chopify-automation.sqlite3*
+.chopify-publishing.sqlite3*
 .chopify-watermark/
 _site/
 .pytest_cache/

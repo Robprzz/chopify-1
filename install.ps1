@@ -5,7 +5,7 @@
 .DESCRIPTION
     Checks for Git, Python 3.11+, and ffmpeg, installing missing tools with
     winget when possible. Clones Chopify, creates a virtual environment,
-    installs the Python dependencies, and opens Chopify Studio.
+    installs the Python dependencies, and opens Anqora Media Studio.
 
     Environment variables:
       CHOPIFY_DIR       Install folder (default: .\chopify)
@@ -172,7 +172,7 @@ if ($NoStart) {
     exit 0
 }
 
-Write-Step "Starting Chopify Studio at http://127.0.0.1:8765"
+Write-Step "Starting Anqora Media Studio at http://127.0.0.1:8765"
 Write-Note "Press Ctrl+C to stop the server."
 Push-Location $Target
 try {

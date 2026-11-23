@@ -1,6 +1,6 @@
 "use strict";
 
-const publication = { clips: [], review: null, account: null, busy: false };
+const publication = { clips: [], review: null, account: null, busy: false, calendar: null };
 const publishingStatuses = {
   PREPARING: "Preparación local",
   STARTING: "Solicitud de subida iniciada",
@@ -35,6 +35,7 @@ function updatePublicationControls() {
 
 function clearPublicationReview() {
   publication.review = null;
+  publication.calendar = null;
   $("#tiktok-review").hidden = true;
   const preview = $("#tiktok-preview");
   preview.removeAttribute("src");
@@ -195,13 +196,14 @@ async function inspectPublicationClip(description) {
   }
 }
 
-async function reviewPublicationClip(key, description) {
+async function reviewPublicationClip(key, description, calendar = null) {
   await showPublications();
   const menu = $("#tiktok-clip");
   const option = [...menu.options].find(item => item.dataset.key === key);
   if (!option) throw new Error("El clip ya no está disponible en Publicaciones.");
   menu.value = option.value;
   await inspectPublicationClip(description);
+  publication.calendar = calendar;
 }
 
 $("#tiktok-clip").addEventListener("change", safe(() => inspectPublicationClip()));
@@ -229,6 +231,7 @@ $("#tiktok-form").addEventListener("submit", safe(async (event) => {
       review_id: publication.review,
       description: $("#tiktok-description").value,
       approved: true,
+      ...(publication.calendar ? {calendar_id: publication.calendar.id, calendar_revision: publication.calendar.revision} : {}),
     });
     if (result.id !== publication.review) {
       notice("Este clip ya tiene un intento registrado. Revisa el historial o el buzón de TikTok.");
@@ -236,6 +239,7 @@ $("#tiktok-form").addEventListener("submit", safe(async (event) => {
       notice(result.last_error || "Subida registrada. Consulta el estado en el historial.", Boolean(result.last_error));
     }
     clearPublicationReview();
+    window.dispatchEvent(new Event("calendar-evidence"));
     $("#tiktok-clip").value = "";
   } finally {
     publication.busy = false;

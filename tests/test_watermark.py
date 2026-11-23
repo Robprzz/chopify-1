@@ -163,6 +163,7 @@ def test_watermark_panel_upload_preview_replace_and_remove(tmp_path, logo, chrom
             request(base, "/api/watermark", {"settings": watermark.DEFAULTS})
         assert error.value.code == 403
         page.goto(base)
+        page.locator("#show-settings").click()
         page.get_by_role("button", name="Marca de agua", exact=True).click()
         page.locator("#watermark-file").set_input_files({"name": "logo.png", "mimeType": "image/png", "buffer": logo})
         expect(page.locator("#watermark-thumbnail")).to_be_visible()
@@ -178,6 +179,7 @@ def test_watermark_panel_upload_preview_replace_and_remove(tmp_path, logo, chrom
         assert page.request.get(base + "/watermark-image/" + saved["image_id"]).body() == logo
     with running_server(tmp_path) as (_, base):
         page.goto(base)
+        page.locator("#show-settings").click()
         page.get_by_role("button", name="Marca de agua", exact=True).click()
         expect(page.locator("#watermark-overlay")).to_be_visible()
         expect(page.get_by_label("Opacidad (%)")).to_have_value("50")

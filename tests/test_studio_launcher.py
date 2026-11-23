@@ -261,7 +261,7 @@ def test_real_launcher_first_and_second_start(tmp_path, monkeypatch):
         assert pages == [first, first]
         assert studio_launcher.probe(port, key) == "ours"
         log = (store.logs / "studio.log").read_text(encoding="utf-8")
-        assert log.count("Chopify Studio:") == 1
+        assert log.count("Anqora Media Studio:") == 1
         assert APP_KEY not in log and APP_SECRET not in log
         base = first.rstrip("/")
         status = request(base, "/api/system/status")
@@ -534,7 +534,8 @@ def test_system_wizard_and_persisted_preferences_in_chromium(tmp_path, chromium_
         page.locator("#system-view").screenshot(path=str(tmp_path / "system-settings-chromium.png"))
     with serving(store) as (_, base, _):
         page.goto(base)
-        page.get_by_role("button", name="System Settings").click()
+        page.locator("#show-settings").click()
+        page.locator("#show-system").click()
         expect(page.get_by_role("heading", name="Primera configuración")).to_be_hidden()
         expect(page.locator('#system-general input[name="open_browser"]')).not_to_be_checked()
         assert not errors

@@ -149,6 +149,12 @@
             captioned clips when the hype signals fire.
           </p>
         </div>
+        <section class="panel" aria-labelledby="live-sessions-title">
+          <h3 id="live-sessions-title">Sesiones Live</h3>
+          <p id="live-sessions-empty" class="muted">Aún no hay sesiones.</p>
+          <div id="live-sessions" class="production-table-wrap"></div>
+        </section>
+        <button id="live-new" type="button" aria-controls="live-form" aria-expanded="true" hidden>Nueva sesión</button>
         <form id="live-form" class="panel input-panel">
           <div class="panel-title">
             <h2>Start a live session</h2>
@@ -175,6 +181,7 @@
         <button id="live-stop" hidden>Stop session</button>
         <div id="live-status" class="muted" role="status">Not running.</div>
         <div id="live-error" role="alert" hidden></div>
+        <details id="live-errors" hidden><summary>Historial de errores</summary><ul></ul></details>
         <div id="live-health" class="muted"></div>
         <div id="live-score"></div>
         <dl id="live-components" class="production-metrics"></dl>

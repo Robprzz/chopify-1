@@ -99,6 +99,7 @@ class LiveSession:
                 "id": self.id,
                 "source": {"kind": self.source.kind,
                            "platform": self.source.platform,
+                           "label": getattr(self, "source_label", None),
                            "resolved_by": self.source.resolved_by},
                 "status": self.status,
                 "started_at": self.started_at,

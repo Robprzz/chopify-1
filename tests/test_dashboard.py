@@ -259,3 +259,79 @@ def test_live_route_rejects_missing_token(server):
     with pytest.raises(urllib.error.HTTPError) as exc:
         request(base, "/api/live", {"source": "https://x/l.m3u8"})
     assert exc.value.code == 403
+
+
+def test_live_history_with_archived_clips_after_server_restart(tmp_path):
+    import projects
+
+    ident = "0123456789ab"
+    directory = tmp_path / "live" / ident
+    records = directory / "records"
+    records.mkdir(parents=True)
+    clip = {"id": "aabbccddeeff", "start": 4, "end": 20, "score": 8, "files": {"mp4": "aabbccddeeff-clip.mp4"}}
+    projects.atomic_json(records / "aabbccddeeff.json", clip)
+    manifest = directory / "live_session.json"
+    saved = {"id": ident, "status": "running", "started_at": 123, "stream_time": 23,
+             "source": {"kind": "hls", "platform": "youtube", "label": "YouTube · 2dt0yxm4RUE"},
+             "recent_scores": [6.5, 8.0], "errors": ["Capture interrupted"],
+             "triggers": [], "export": {"completed": 1, "errors": 0}}
+    projects.atomic_json(manifest, saved)
+    with running_server(tmp_path) as (httpd, base):
+        assert request(base, "/api/live")["sessions"] == [{
+            "id": ident, "status": "interrupted", "source": saved["source"], "stream_time": 23,
+            "started_at": 123, "clips": 1, "score": 8.0, "errors": 1,
+        }]
+        assert request(base, f"/api/live/{ident}") == {**saved, "status": "interrupted", "triggers": [clip]}
+        assert httpd.app.live_sessions == {}
+        assert projects.read_json(manifest) == saved
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            request(base, "/api/live/ffffffffffff")
+        assert exc.value.code == 404
+
+
+def test_live_duplicate_start_reservation_and_url_aliases(server, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    import live
+    import live_capture
+
+    httpd, base = server
+    entered = threading.Event()
+    release = threading.Event()
+    calls = []
+
+    def resolve(source, options):
+        calls.append(source)
+        entered.set()
+        assert release.wait(10)
+        return live_capture.LiveSource(source, "hls", "youtube", "stub", [])
+
+    monkeypatch.setattr(live_capture, "check_capture_tools", lambda: None)
+    monkeypatch.setattr(live_capture, "resolve_live_source", resolve)
+    monkeypatch.setattr(live.LiveSession, "start", lambda self: None)
+    primary = "https://www.youtube.com/live/2dt0yxm4RUE?token=do-not-save"
+    alternate = "https://youtu.be/2dt0yxm4RUE"
+
+    def start(source):
+        return request(base, "/api/live", {"source": source}, httpd.app.token)
+
+    with ThreadPoolExecutor(max_workers=1) as worker:
+        future = worker.submit(start, primary)
+        try:
+            assert entered.wait(5)
+            with pytest.raises(urllib.error.HTTPError) as exc:
+                start(alternate)
+            assert exc.value.code == 409 and json.load(exc.value)["session_id"] is None
+        finally:
+            release.set()
+        ident = future.result(timeout=5)["id"]
+
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        start("https://m.youtube.com/watch?v=2dt0yxm4RUE")
+    assert exc.value.code == 409 and json.load(exc.value)["session_id"] == ident
+    assert calls == [primary]
+    saved = request(base, f"/api/live/{ident}")
+    assert saved["source"]["label"] == "YouTube · 2dt0yxm4RUE"
+    assert "do-not-save" not in json.dumps(saved)
+    assert saved["threshold"] == 6
+    request(base, f"/api/live/{ident}/stop", {}, httpd.app.token)
+    assert start(alternate)["id"] != ident

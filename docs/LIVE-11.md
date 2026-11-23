@@ -21,6 +21,12 @@ En 1.0, una excepción en `BaseAnalyzer.run` terminaba el hilo del analizador. C
 3. Comprueba los indicadores **Captura, Audio, Video, Transcripción, Detección y Exportación**. Después de una interrupción, comprueba que se incremente el contador de reconexiones y que vuelvan a avanzar los segmentos procesados. Si un analizador falla, revisa el segmento, el código y el stderr mostrado.
 4. Selecciona 30, 60 o 90 segundos y pulsa **Exportar últimos segundos**. Reproduce el clip y revisa audio, subtítulos y marca de agua. En **Automation → Centro de operaciones**, localiza el clip manual y confirma que aparece para revisión sin puntuación de detección. Puedes terminar ahí sin enviar nada a TikTok.
 
+## Sesiones y navegación en 1.1.1
+
+**Sesiones Live** muestra las capturas activas y el historial. Selecciona una sesión para ver sus clips, puntuaciones y diagnósticos. Studio valida la selección guardada en el navegador y, si ya no existe, abre primero una captura activa. **Reproducir** abre el MP4 en otra pestaña. Cambiar de vista, cerrar el reproductor o recargar Studio deja la captura en el servidor.
+
+Después de reiniciar el servidor, una captura que quedó marcada como activa aparece como **Interrumpida** y sus clips siguen disponibles. Los enlaces de YouTube para el mismo video comparten una sola captura activa. Para entradas directas, se distingue por la dirección de entrada y el panel solo muestra su host. Las sesiones antiguas sin etiqueta conservan el proveedor y el tipo que se guardaron en su momento.
+
 ## Pruebas reproducibles
 
 ```bat

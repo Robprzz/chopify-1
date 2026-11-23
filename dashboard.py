@@ -37,6 +37,41 @@ from unicode_io import configure_utf8, utf8_environment
 
 HERE = Path(__file__).resolve().parent
 STATIC = HERE / "assets" / "studio"
+LIVE_ACTIVE = {"starting", "running"}
+
+
+class LiveAlreadyActive(ValueError):
+    def __init__(self, session_id=None):
+        super().__init__("Ya hay una sesión activa o iniciándose para esta fuente.")
+        self.session_id = session_id
+
+
+def live_source_identity(source):
+    """Return an in-memory identity and a label safe to persist."""
+    url = urlsplit(source)
+    host = url.hostname or ""
+    parts = url.path.strip("/").split("/")
+    if host == "youtu.be" or host == "youtube.com" or host.endswith(".youtube.com"):
+        if host == "youtu.be":
+            video = parts[0]
+        elif parts == ["watch"]:
+            video = next(iter(parse_qs(url.query).get("v", [])), "")
+        else:
+            video = parts[1] if len(parts) == 2 and parts[0] in {"live", "shorts", "embed"} else ""
+        if re.fullmatch(r"[\w-]{11}", video, re.ASCII):
+            return ("youtube", video), "YouTube · " + video
+    for domain, name in (("twitch.tv", "Twitch"), ("kick.com", "Kick")):
+        if host in {domain, "www." + domain} and len(parts) == 1 and re.fullmatch(r"[a-zA-Z0-9_]+", parts[0]):
+            channel = parts[0].lower()
+            return (domain, channel), name + " · " + channel
+    # Query strings and credentials can distinguish direct feeds. Keep them only
+    # in memory so signed URLs and RTMP stream keys never enter the manifest.
+    port = url.port
+    if port == {"https": 443, "http": 80}.get(url.scheme):
+        port = None
+    return (url.scheme, host, port, url.username, url.password, url.path, url.query), host
+
+
 # Studio assets must not depend on the host's MIME mappings (including the Windows registry).
 STATIC_FILES = {
     "": ("index.html", "text/html; charset=utf-8"),
@@ -136,6 +171,7 @@ class Studio:
         self.processes = set()
         self.live_sessions = {}
         self.live_lock = threading.Lock()
+        self.live_starting = set()
         self.closing = False
         self.closed = False
         for path in self.root.glob("*/project.json"):
@@ -255,19 +291,35 @@ class Studio:
     def start_live(self, source, options, brief_text=None):
         import live
         from live_capture import check_capture_tools, resolve_live_source
-        check_capture_tools()
-        resolved = resolve_live_source(source, options)
-        session = live.LiveSession(resolved, options, self.root, brief_text=brief_text)
-        session.writer.resources = self.resources
-        session.on_clip = lambda path: self._production_clip(f"live/{session.id}", Path(path).name)
-        with self.lock:
-            if self.closing:
-                raise ValueError("Studio is closing. Restart it before starting a live session.")
-            session._save()
+        if len(source) > 2000:
+            raise ValueError("Provide a live stream URL of at most 2000 characters.")
+        key, label = live_source_identity(source)
+        with self.live_lock:
+            for item in self.live_sessions.values():
+                if getattr(item, "source_key", None) == key and (
+                        item.status in LIVE_ACTIVE or item.buffer and item.buffer.alive):
+                    raise LiveAlreadyActive(item.id)
+            if key in self.live_starting:
+                raise LiveAlreadyActive()
+            self.live_starting.add(key)
+        try:
+            check_capture_tools()
+            resolved = resolve_live_source(source, options)
+            with self.lock:
+                if self.closing:
+                    raise ValueError("Studio is closing. Restart it before starting a live session.")
+                session = live.LiveSession(resolved, options, self.root, brief_text=brief_text)
+                session.source_key, session.source_label = key, label
+                session.writer.resources = self.resources
+                session.on_clip = lambda path: self._production_clip(f"live/{session.id}", Path(path).name)
+                session._save()
+                with self.live_lock:
+                    self.live_sessions[session.id] = session
+                threading.Thread(target=session.start, name=f"live-{session.id}", daemon=True).start()
+            return session
+        finally:
             with self.live_lock:
-                self.live_sessions[session.id] = session
-            threading.Thread(target=session.start, name=f"live-{session.id}", daemon=True).start()
-        return session
+                self.live_starting.remove(key)
 
     def stop_live(self, session_id):
         with self.live_lock:
@@ -287,20 +339,71 @@ class Studio:
     def live_state(self, session_id):
         with self.live_lock:
             session = self.live_sessions.get(session_id)
-        if session is None:
-            raise ValueError("Unknown live session.")
-        return projects.read_json(session.dir / "live_session.json")
+        directory = session.dir if session else self.live_directory(session_id)
+        detail = self.read_live_manifest(directory, active=session is not None)
+        if detail.get("id") != session_id:
+            raise FileNotFoundError(directory)
+        records = {item["id"]: item for item in detail.get("triggers", []) if isinstance(item, dict) and "id" in item}
+        for path in (directory / "records").glob("*.json"):
+            if path.stem in records or path.resolve() != path:
+                continue
+            try:
+                record = projects.read_json(path)
+                if record["id"] == path.stem and record.get("files", {}).get("mp4") and not record.get("error"):
+                    records[path.stem] = record
+            except (OSError, ValueError, KeyError, TypeError, AttributeError):
+                continue
+        detail["triggers"] = sorted(records.values(), key=lambda item: item.get("start", 0))
+        return detail
+
+    def live_directory(self, session_id):
+        from live_clips import live_clips_dir
+        return live_clips_dir(self.root, session_id).parent
+
+    @staticmethod
+    def read_live_manifest(directory, *, active):
+        manifest = directory / "live_session.json"
+        if manifest.is_symlink():
+            raise FileNotFoundError(manifest)
+        data = projects.read_json(manifest)
+        if not isinstance(data, dict) or data.get("status") not in LIVE_ACTIVE | {"stopped", "failed", "interrupted"}:
+            raise ValueError("Invalid live session state.")
+        if not active and data["status"] in LIVE_ACTIVE:
+            data["status"] = "interrupted"
+        return data
 
     def live_list(self):
+        directories = {path.parent.name: path.parent for path in (self.root / "live").glob("*/live_session.json")}
         with self.live_lock:
-            sessions = list(self.live_sessions.values())
+            sessions = dict(self.live_sessions)
+        directories.update({ident: session.dir for ident, session in sessions.items()})
         result = []
-        for session in sessions:
+        for ident, directory in directories.items():
             try:
-                result.append(projects.read_json(session.dir / "live_session.json"))
-            except FileNotFoundError:
+                if ident not in sessions:
+                    directory = self.live_directory(ident)
+                detail = self.read_live_manifest(directory, active=ident in sessions)
+                if detail.get("id") != ident:
+                    continue
+                # The list is polled; avoid sending every clip, warning and FFmpeg error.
+                summary = {key: detail.get(key) for key in ("id", "status", "source", "started_at", "stream_time")}
+                if type(summary["started_at"]) not in (float, int):
+                    summary["started_at"] = None
+                export = detail.get("export") or {}
+                scores = detail.get("recent_scores") or []
+                score = (detail.get("health", {}).get("detection") or {}).get("last_score")
+                count = export.get("completed")
+                if count is None:
+                    from live_clips import finished_names
+                    count = len(finished_names(detail))
+                summary.update(
+                    clips=count, score=score if score is not None else scores[-1] if scores else None,
+                    errors=max(len(detail.get("errors") or []), export.get("errors", 0)),
+                )
+                result.append(summary)
+            except (OSError, ValueError, TypeError, AttributeError):
                 continue
-        return result
+        return sorted(result, key=lambda item: (item["status"] not in LIVE_ACTIVE, -(item["started_at"] or 0)))
 
     def activity(self):
         with self.lock:
@@ -574,6 +677,8 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("Brief must be text.")
                 try:
                     session = self.app.start_live(source.strip(), options, brief_text=brief_text)
+                except LiveAlreadyActive as exc:
+                    return self.send_json({"error": str(exc), "session_id": exc.session_id}, 409)
                 except OSError:
                     return self.send_json({"error": "Could not save the live session. Check access to the Studio projects folder."}, 500)
                 return self.send_json({"id": session.id}, 201)

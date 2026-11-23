@@ -35,6 +35,11 @@ const projectName = (source) =>
     ? source.replace(/^https?:\/\//, "").slice(0, 65)
     : basename(source);
 function switchView(id) {
+  if (id === "live-view") {
+    history.replaceState(null, "", "#live");
+  } else if (location.hash === "#live") {
+    history.replaceState(null, "", location.pathname + location.search);
+  }
   for (const view of document.querySelectorAll("main > section.view")) {
     view.hidden = view.id !== id;
   }
@@ -67,8 +72,12 @@ async function api(path, data) {
         },
   );
   const result = await response.json();
-  if (!response.ok)
-    throw new Error(result.error || `Request failed (${response.status})`);
+  if (!response.ok) {
+    const error = new Error(result.error || `Request failed (${response.status})`);
+    error.status = response.status;
+    error.data = result;
+    throw error;
+  }
   return result;
 }
 function safe(handler) {
@@ -1010,6 +1019,34 @@ function showLive() {
 }
 $("#show-live").addEventListener("click", showLive);
 
+const LIVE_SELECTION = "chopify.live.selected";
+const liveActive = (session) => ["starting", "running"].includes(session?.status);
+let liveRefreshSerial = 0;
+let liveWanted = null;
+let liveClipSignature = "";
+try { liveWanted = localStorage.getItem(LIVE_SELECTION); } catch {}
+
+function selectLive(id) {
+  state.liveId = liveWanted = id;
+  try {
+    if (id) localStorage.setItem(LIVE_SELECTION, id);
+    else localStorage.removeItem(LIVE_SELECTION);
+  } catch {}
+}
+
+function showLiveForm(show) {
+  $("#live-form").hidden = !show;
+  $("#live-new").setAttribute("aria-expanded", String(show));
+}
+
+$("#live-new").addEventListener("click", () => showLiveForm($("#live-form").hidden));
+$("#live-sessions").addEventListener("click", safe(async (event) => {
+  const link = event.target.closest("[data-live-session]");
+  if (!link) return;
+  liveWanted = link.dataset.liveSession;
+  await refreshLive();
+}));
+
 $("#live-form").addEventListener(
   "submit",
   safe(async (event) => {
@@ -1027,10 +1064,18 @@ $("#live-form").addEventListener(
       const threshold = $("#live-threshold");
       if (threshold.value !== "") options.live_threshold = threshold.valueAsNumber;
       const result = await api("/api/live", { source, options, brief });
-      state.liveId = result.id;
+      liveWanted = result.id;
+      showLiveForm(false);
       await refreshLive();
     } catch (error) {
       $("#live-status").textContent = previousStatus;
+      if (error.status === 409 && error.data.session_id) {
+        liveWanted = error.data.session_id;
+        showLiveForm(false);
+        notice(error.message);
+        await refreshLive();
+        return;
+      }
       $("#live-start-error").textContent = error.message;
       $("#live-start-error").hidden = false;
     } finally {
@@ -1066,30 +1111,47 @@ const LIVE_NEXT_ACTION = {
 };
 
 async function refreshLive() {
+  const serial = ++liveRefreshSerial;
   const data = await api("/api/live");
+  if (serial !== liveRefreshSerial) return;
   const sessions = data.sessions || [];
-  const detail = state.liveId
-    ? await api(`/api/live/${state.liveId}`)
-    : null;
-  $("#live-stop").hidden = !["starting", "running"].includes(detail?.status);
-  if (detail) {
-    $("#live-error").textContent = detail.errors?.at(-1) || detail.health?.warnings?.at(-1) || "";
-    $("#live-error").hidden = !$("#live-error").textContent;
+  let detail = null;
+  const candidates = [sessions.find((item) => item.id === liveWanted),
+    ...sessions.filter(liveActive), ...sessions].filter(Boolean);
+  for (const session of new Set(candidates)) {
+    try {
+      detail = await api(`/api/live/${encodeURIComponent(session.id)}`);
+      break;
+    } catch (error) {
+      if (error.status !== 404) throw error;
+    }
   }
+  if (serial !== liveRefreshSerial) return;
+  const firstDetail = $("#live-new").hidden;
+  selectLive(detail?.id || null);
+  $("#live-new").hidden = !detail;
+  if (!detail || firstDetail) showLiveForm(!detail);
+  renderLiveSessions(sessions);
+  $("#live-stop").hidden = !liveActive(detail);
+  $("#live-error").textContent = detail?.errors?.at(-1) || detail?.health?.warnings?.at(-1) || "";
+  $("#live-error").hidden = !$("#live-error").textContent;
+  const diagnostics = [...new Set([...(detail?.errors || []), ...(detail?.health?.warnings || [])])];
+  $("#live-errors").hidden = diagnostics.length === 0;
+  $("#live-errors ul").innerHTML = diagnostics.map((message) => `<li>${escapeHTML(message)}</li>`).join("");
   $("#live-status").textContent = detail
-    ? `${detail.status} · ${Math.round(detail.stream_time)}s · ${detail.export?.completed ?? detail.triggers.length} clips`
-    : sessions.length
-      ? `${sessions.length} session(s) on disk`
-      : "Not running.";
+    ? `${detail.status} · ${Math.round(detail.stream_time || 0)}s · ${detail.export?.completed ?? detail.triggers.filter((clip) => clip.files?.mp4 && !clip.error).length} clips`
+    : "Not running.";
   const health = detail?.health;
   $("#live-health").textContent = health
     ? `${health.state} · segment ${health.last_segment_age}s · ${health.restarts} restarts · `
-      + `${LIVE_NEXT_ACTION[health.state] || "Watching"} · brief `
+      + `${liveActive(detail) ? LIVE_NEXT_ACTION[health.state] || "Watching" : "Último diagnóstico guardado"} · brief `
       + `${health.brief_source || "none"}/${health.brief_provider || "none"}`
     : "";
   const score = health?.detection?.last_score;
+  const recent = (detail?.recent_scores || []).slice(-10);
   $("#live-score").textContent = detail
     ? `Detección ${score == null ? "sin señales recientes" : Number(score).toFixed(2)} / 10 · Umbral ${detail.threshold ?? "—"}`
+      + (recent.length ? ` · Últimos scores: ${recent.map((value) => Number(value).toFixed(2)).join(", ")}` : "")
     : "";
   $("#live-manual").hidden = detail?.status !== "running";
   $("#live-export").disabled = ["queued", "exporting"].includes(detail?.export?.state);
@@ -1118,18 +1180,25 @@ async function refreshLive() {
   ] : [];
   $("#live-components").innerHTML = components.map(([label, value]) =>
     `<div><dt>${escapeHTML(label)}</dt><dd>${escapeHTML(value)}</dd></div>`).join("");
+  const signature = JSON.stringify([detail?.id, detail?.triggers]);
+  if (signature === liveClipSignature) return;
+  liveClipSignature = signature;
   const clips = $("#live-clips");
   clips.replaceChildren();
   for (const record of detail?.triggers || []) {
     const row = document.createElement("div");
     row.className = "live-clip";
-    row.textContent = `#${record.id} · ${Number(record.start).toFixed(1)}s-${Number(record.end).toFixed(1)}s · ${record.manual ? "Manual" : (record.score ?? "—")}`;
+    row.textContent = `#${record.id} · ${Number(record.start).toFixed(1)}s-${Number(record.end).toFixed(1)}s · ${record.manual ? "Manual" : (record.score ?? "—")}`
+      + (record.error ? ` · ${record.error}` : "");
     const video = record.files?.mp4;
-    if (video && state.liveId) {
+    if (video && !record.error) {
       const link = document.createElement("a");
       const name = basename(video);
-      link.href = `/media/live/${state.liveId}/clips/${encodeURIComponent(name)}`;
-      link.textContent = " play";
+      link.href = `/media/live/${encodeURIComponent(detail.id)}/clips/${encodeURIComponent(name)}`;
+      link.target = "_blank";
+      link.rel = "noopener";
+      link.textContent = " Reproducir";
+      link.title = "Abrir clip en una pestaña nueva";
       row.append(link);
       const editor = document.createElement("button");
       editor.type = "button";
@@ -1139,6 +1208,26 @@ async function refreshLive() {
     }
     clips.append(row);
   }
+}
+
+function renderLiveSessions(sessions) {
+  const list = $("#live-sessions");
+  const focused = list.contains(document.activeElement) && document.activeElement.dataset.liveSession;
+  const source = (item) => item.source?.label || [item.source?.platform, item.source?.kind].filter(Boolean).join(" · ") || "—";
+  const rows = sessions.map((item) => `<tr>
+    <td><button type="button" data-live-session="${escapeHTML(item.id)}" aria-pressed="${item.id === state.liveId}">${escapeHTML(source(item))} · ${escapeHTML(item.id)}</button></td>
+    <td>${escapeHTML({starting: "Iniciando", running: "Activa", stopped: "Finalizada", failed: "Con error", interrupted: "Interrumpida"}[item.status])}</td>
+    <td>${Math.round(item.stream_time || 0)} s</td><td>${escapeHTML(item.clips)}</td>
+    <td>${item.score == null ? "—" : Number(item.score).toFixed(2)}</td><td>${escapeHTML(item.errors)}</td>
+    <td>${item.started_at == null ? "—" : escapeHTML(new Date(item.started_at * 1000).toLocaleString())}</td>
+    </tr>`).join("");
+  const contents = rows ? `<table><thead><tr><th>Fuente y sesión</th><th>Estado</th><th>Duración</th><th>Clips</th><th>Último score</th><th>Errores</th><th>Inicio</th></tr></thead><tbody>${rows}</tbody></table>` : "";
+  if (contents !== list.dataset.contents) {
+    list.innerHTML = contents;
+    list.dataset.contents = contents;
+    if (focused) [...list.querySelectorAll("[data-live-session]")].find((button) => button.dataset.liveSession === focused)?.focus();
+  }
+  $("#live-sessions-empty").hidden = sessions.length > 0;
 }
 $("#caption-form").addEventListener("input", () => syncCaption());
 $("#caption-preset").addEventListener("change", (event) =>
@@ -1221,7 +1310,7 @@ setInterval(async () => {
   polling = true;
   try {
     await refreshProjects();
-    if (state.liveId) refreshLive().catch(() => {});
+    if (!$("#live-view").hidden) await refreshLive().catch(() => {});
     if (state.id && state.busy) {
       const id = state.id,
         detail = await api(`/api/projects/${id}`);
@@ -1287,6 +1376,8 @@ setInterval(async () => {
 const studioConfig = config();
 safe(async () => {
   await studioConfig;
+  if (location.hash === "#live") showLive();
+  else refreshLive().catch(() => {});
   await refreshProjects();
   window.dispatchEvent(new Event("studio-ready"));
 })();

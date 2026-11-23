@@ -249,6 +249,44 @@ def test_live_clip_reaches_publications_in_chromium(server, chromium_page, monke
         assert response.headers["content-type"] == "video/mp4"
         srt = page.request.get(base + mp4.removesuffix(".mp4") + ".srt")
         assert srt.ok and "victoria" in srt.text()
+        if split:
+            active = app.app.live_sessions[session]
+            playing_buffer = active.buffer
+            with page.expect_popup() as opened:
+                link.click()
+            player = opened.value
+            expect(player).to_have_url(base + mp4)
+            player.wait_for_function("() => document.querySelector('video')?.readyState >= 2", timeout=10000)
+            player.close()
+            expect(page).to_have_url(base + "/#live")
+            page.reload()
+            expect(page.locator("#live-sessions button")).to_have_attribute("aria-pressed", "true")
+            expect(link).to_have_attribute("href", mp4)
+            expect(page.locator("#live-stop")).to_be_visible()
+            assert app.app.live_sessions == {session: active}
+            assert active.buffer is playing_buffer
+            page.get_by_role("button", name="Publicaciones").click()
+            page.get_by_role("button", name="Live clipping").click()
+            expect(link).to_have_attribute("href", mp4)
+            page.evaluate("() => localStorage.setItem('chopify.live.selected', 'expired')")
+            page.reload()
+            expect(link).to_have_attribute("href", mp4)
+            assert page.evaluate("() => localStorage.getItem('chopify.live.selected')") == session
+            historical = "0123456789ab"
+            manifest = app.app.root / "live" / historical / "live_session.json"
+            manifest.parent.mkdir()
+            projects.atomic_json(manifest, {"id": historical, "status": "stopped", "stream_time": 60,
+                                            "started_at": 123, "source": {"label": "Directo previo"},
+                                            "errors": ["Error guardado"], "recent_scores": [8.2], "triggers": []})
+            previous = page.get_by_role("button", name=f"Directo previo · {historical}")
+            previous.click()
+            expect(page.locator("#live-error")).to_have_text("Error guardado")
+            expect(page.locator("#live-score")).to_contain_text("8.20")
+            expect(page.locator("#live-stop")).to_be_hidden()
+            page.reload()
+            expect(previous).to_have_attribute("aria-pressed", "true")
+            page.locator(f'[data-live-session="{session}"]').click()
+            expect(link).to_have_attribute("href", mp4)
         exports = app.app.root / "live" / session / "clips"
         (exports / "partial.mp4").write_bytes(b"unfinished")
         page.get_by_role("button", name="Publicaciones").click()
@@ -280,6 +318,14 @@ def test_live_clip_reaches_publications_in_chromium(server, chromium_page, monke
             page.request.post(base + f"/api/live/{session}/stop",
                               headers={"X-Chopify-Token": app.app.token}, data={})
             assert not buffer.alive
+            page.get_by_role("button", name="Live clipping").click()
+            expect(page.locator("#live-stop")).to_be_hidden()
+            expect(page.locator("#live-sessions")).to_contain_text("Finalizada")
+            page.reload()
+            with page.expect_popup() as opened:
+                page.locator("#live-clips a").first.click()
+            expect(opened.value).to_have_url(base + mp4)
+            opened.value.close()
         assert not errors
     finally:
         httpd.shutdown()

@@ -50,6 +50,72 @@ class Store:
                 detection REAL, editorial REAL, context REAL, diversity REAL, priority REAL,
                 evidence TEXT NOT NULL, report TEXT NOT NULL, duplicate TEXT,
                 PRIMARY KEY(job_id, run))""")
+            db.execute("""CREATE TABLE IF NOT EXISTS production_reviews (
+                job_id INTEGER NOT NULL, run INTEGER NOT NULL, revision INTEGER NOT NULL,
+                decision TEXT NOT NULL, actor TEXT NOT NULL, created REAL NOT NULL,
+                PRIMARY KEY(job_id, run, revision))""")
+
+    @staticmethod
+    def _review(db, job, run, editorial_id):
+        if editorial_id is None:
+            return None
+        row = db.execute("""SELECT r.decision,r.created,r.revision
+            FROM production_reviews r JOIN editorial_jobs j ON j.id=? AND j.revision=r.revision
+            WHERE r.job_id=? AND r.run=?""", (editorial_id, job, run)).fetchone()
+        return dict(row) if row else None
+
+    def review_candidates(self, since=0, limit=20):
+        with self.connect() as db:
+            if not db.execute("""SELECT 1 FROM production_jobs
+                                 WHERE editorial_id IS NOT NULL AND state='ready' LIMIT 1""").fetchone():
+                return []  # The editorial schema is initialized lazily.
+            rows = db.execute("""SELECT p.*,e.file,e.evidence,e.priority,e.detection,e.editorial,e.duplicate,j.revision
+                FROM production_jobs p JOIN production_evidence e ON p.id=e.job_id AND p.run=e.run
+                JOIN editorial_jobs j ON p.editorial_id=j.id
+                WHERE p.state='ready' AND p.technical='passed' AND e.duplicate IS NULL
+                  AND e.priority IS NOT NULL AND p.finished>=? AND j.state='done'
+                ORDER BY p.finished DESC,p.id DESC LIMIT ?""", (since, limit))
+            return [dict(row) for row in rows]
+
+    def review_version(self, job, run, revision):
+        with self.connect() as db:
+            row = db.execute("""SELECT p.*,e.file,e.evidence,e.priority,e.detection,e.editorial,e.report,
+                j.revision,j.result,j.selected,j.edits
+                FROM production_jobs p JOIN production_evidence e ON p.id=e.job_id AND p.run=e.run
+                JOIN editorial_jobs j ON p.editorial_id=j.id AND j.revision=?
+                WHERE p.id=? AND p.run=? AND p.state='ready' AND p.technical='passed'
+                  AND e.duplicate IS NULL AND e.priority IS NOT NULL AND j.state='done'""",
+                (revision, job, run)).fetchone()
+            if row is None:
+                raise ValueError("La versión del clip cambió o requiere reevaluación en Studio.")
+            data = dict(row)
+            data["remote_review"] = self._review(db, job, run, data["editorial_id"])
+            return data
+
+    @staticmethod
+    def guard_review(db, job, run, revision):
+        row = db.execute("""SELECT 1 FROM production_jobs p
+            JOIN editorial_jobs j ON j.id=p.editorial_id AND j.revision=? AND j.state='done'
+            JOIN production_evidence e ON e.job_id=p.id AND e.run=p.run
+            WHERE p.id=? AND p.run=? AND p.state='ready' AND p.technical='passed'
+              AND e.duplicate IS NULL AND e.priority IS NOT NULL""", (revision, job, run)).fetchone()
+        if row is None:
+            raise ValueError("La versión del clip cambió. Vuelve a abrirla.")
+
+    def remote_review(self, job, run, revision, decision, actor):
+        if decision not in {"approved", "rejected", "correction", "postponed"}:
+            raise ValueError("Decisión editorial inválida.")
+        with self.connect(write=True) as db:
+            self.guard_review(db, job, run, revision)
+            applied = db.execute("""INSERT INTO production_reviews VALUES(?,?,?,?,?,?)
+                ON CONFLICT(job_id,run,revision) DO UPDATE SET
+                  decision=excluded.decision,actor=excluded.actor,created=excluded.created
+                WHERE production_reviews.decision='postponed' AND excluded.decision!='postponed'""",
+                (job, run, revision, decision, actor, time.time())).rowcount
+            if applied:
+                self._event(db, job, run, "ready", "editorial_" + decision,
+                            f"Revisión editorial por Telegram · {decision} · versión {revision}.")
+            return bool(applied)
 
     def cached_technical(self, job, file, current_stamp, original_stamp):
         with self.connect() as db:
@@ -291,6 +357,7 @@ class Store:
             if row is None:
                 raise ValueError("Trabajo de producción desconocido.")
             data = self._selection(db, self._display(row))
+            data["remote_review"] = self._review(db, job, data["run"], data["editorial_id"])
             data["events"] = [dict(event) for event in db.execute("""
                 SELECT run,state,created,code,message FROM production_events
                 WHERE job_id=? ORDER BY id DESC LIMIT 100""", (job,))]
@@ -358,6 +425,7 @@ class Store:
             display = []
             for row in jobs[:30]:
                 job = self._selection(db, self._display(row))
+                job["remote_review"] = self._review(db, job["id"], job["run"], job["editorial_id"])
                 if job["state"] == "ready" and job["priority"] is not None and current:
                     ev = db.execute("SELECT file,evidence FROM production_evidence WHERE job_id=? AND run=?",
                                     (job["id"], job["run"])).fetchone()

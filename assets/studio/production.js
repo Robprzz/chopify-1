@@ -26,6 +26,8 @@ const productionCodes = {
 };
 const productionDecisions = { recommended: "Recomendado", duplicate: "Duplicado", discarded: "Descartado",
   review: "Revisión requerida", eligible: "Apto para revisión", pending: "Pendiente" };
+const remoteReviewLabels = {approved: "Aprobado editorialmente", rejected: "Rechazado",
+  correction: "Corrección solicitada", postponed: "Pospuesto"};
 const duplicateMethods = { sha256: "SHA-256 idéntico", overlap: "Intervalos superpuestos", transcript: "Transcripción equivalente" };
 const productionScore = value => value == null ? "—" : Number(value).toFixed(2);
 const productionView = { before: null, next: null, paused: false, busy: false, details: null, signature: "" };
@@ -72,7 +74,8 @@ function renderProduction(data) {
       const buttons = [
         ["detail", "Ver detalle", true],
         ["editorial", "Ver propuestas", job.editorial_id && terminal],
-        ["publication", "Revisar en Publicaciones", ["eligible", "recommended"].includes(job.decision)],
+        ["publication", "Revisar en Publicaciones", ["eligible", "recommended"].includes(job.decision)
+          && (!job.remote_review || job.remote_review.decision === "approved")],
         ["cancel", "Cancelar", !terminal && !job.cancel_requested],
         ["retry", job.state === "ready" ? "Reevaluar" : "Reintentar", terminal],
         ["distinct", "Revisar como distinto", job.decision === "duplicate"],
@@ -83,6 +86,7 @@ function renderProduction(data) {
         <td>${productionScore(job.detection)}</td><td>${productionScore(job.editorial)}</td>
         <td>${productionScore(job.priority)}</td><td>${escapeHTML(productionDecisions[job.decision] || "")}
         ${job.recommendation_rank ? ` · #${job.recommendation_rank}` : ""}
+        ${job.remote_review ? `<small>Telegram · ${escapeHTML(remoteReviewLabels[job.remote_review.decision])}</small>` : ""}
         ${job.error || job.decision_reason ? `<small>${escapeHTML(job.error || job.decision_reason)}</small>` : ""}
         ${job.duplicate ? `<small>${duplicateMethods[job.duplicate.method]} · ${escapeHTML(job.duplicate.filename)}</small>` : ""}</td><td>${buttons.filter(([, , show]) => show).map(([action, label]) =>
           `<button type="button" data-production-action="${action}">${label}</button>`).join(" ")}</td></tr>`;
@@ -127,10 +131,12 @@ function showProductionDetail(job) {
   const media = "/media/" + job.project + "/clips/" + encodeURIComponent(file);
   const diag = job.diagnosis || {};
   const findings = [...new Set([...(diag.errors || []), ...(diag.warnings || [])])].filter(item => item !== job.error);
+  const review = job.remote_review;
   detail.innerHTML = `<h3>${escapeHTML(job.filename)}</h3>
     <p>${productionNames[job.state]} · ${timing(job.seconds)} · ${job.attempts} intentos</p>
     <p>Detección ${productionScore(job.detection)} · Editorial ${productionScore(job.editorial)} · Prioridad ${productionScore(job.priority)}
       · Contexto ${productionScore(job.context)} · Diferenciación ${productionScore(job.diversity)}</p>
+    ${review ? `<p>Revisión de Telegram · ${escapeHTML(remoteReviewLabels[review.decision])} · versión ${escapeHTML(review.revision)}</p>` : ""}
     ${job.error ? `<p>${escapeHTML(job.error)}</p>` : ""}
     ${findings.length ? `<ul>${findings.map(item => `<li>${escapeHTML(item)}</li>`).join("")}</ul>` : ""}
     ${(job.duplicate_history || []).map(match => `<p>${duplicateMethods[match.method]} ·

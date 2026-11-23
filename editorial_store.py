@@ -224,12 +224,14 @@ class EditorialStore:
         with self.connect() as db:
             return bool(db.execute("SELECT cancel_requested FROM editorial_jobs WHERE id=?", (job,)).fetchone()[0])
 
-    def edit(self, job, style, fields, revision, select):
+    def edit(self, job, style, fields, revision, select, *, guard=None):
         if not isinstance(style, str) or style not in STYLES or type(revision) is not int or type(select) is not bool:
             raise ValueError("Edición editorial inválida.")
         if fields is not None:
             validate_edits(fields)
         with self.connect(write=True) as db:
+            if guard:
+                guard(db)
             row = db.execute("SELECT edits, selected, revision FROM editorial_jobs WHERE id=? AND state='done'", (job,)).fetchone()
             if not row:
                 raise ValueError("El trabajo todavía no tiene un resultado confirmado.")

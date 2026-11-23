@@ -71,8 +71,8 @@ class Vault:
         self.protector = protector or DPAPI()
 
     def _file(self, profile, slot):
-        if profile not in PROFILES or slot not in SLOTS:
-            raise VaultError("Perfil de TikTok no válido.")
+        if (profile, slot) != ("telegram", "bot") and (profile not in PROFILES or slot not in SLOTS):
+            raise VaultError("Perfil de credenciales no válido.")
         return self.directory / f"{profile}-{slot}.dpapi"
 
     def _transform(self, data, profile, slot, protect):

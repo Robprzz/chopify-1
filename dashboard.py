@@ -28,6 +28,8 @@ import projects
 import production
 import render_clips
 import subtitle_repair
+import telegram_gateway
+from telegram_api import TelegramError
 import studio_settings
 import studio_system
 import studio_windows
@@ -84,6 +86,7 @@ STATIC_FILES = {
     "subtitles.js": ("subtitles.js", "text/javascript; charset=utf-8"),
     "production.js": ("production.js", "text/javascript; charset=utf-8"),
     "system.js": ("system.js", "text/javascript; charset=utf-8"),
+    "telegram.js": ("telegram.js", "text/javascript; charset=utf-8"),
     "chopify.ico": ("chopify.ico", "image/x-icon"),
     "style.css": ("style.css", "text/css; charset=utf-8"),
 }
@@ -189,6 +192,8 @@ class Studio:
         self.live_production = live_production.Pipeline(self.root, self.resources, self._production_clip)
         self.live_production.start()
         self.system = studio_system.System(installation or studio_settings.Settings(HERE), self)
+        self.telegram = telegram_gateway.Gateway(self, installation)
+        self.telegram.start()
 
     def _production_catalog(self):
         from live_clips import PRODUCTION_REPAIR, live_exports
@@ -450,6 +455,7 @@ class Studio:
             self.closed = self.closing = True
             sessions = list(self.live_sessions.values())
             children = list(self.processes)
+        self.telegram.close()
         self.production.pause_dispatch(True)
         self.editorial.pause_dispatch(True)
         for session in sessions:
@@ -558,6 +564,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"projects": self.app.list_projects()})
             if parts == ["api", "automation", "settings"]:
                 return self.automation_settings_action()
+            if parts == ["api", "telegram", "status"]:
+                return self.telegram_action("status")
             if len(parts) == 3 and parts[:2] == ["api", "production"]:
                 return self.production_action(parts[2], query=parse_qs(location.query, max_num_fields=2))
             if len(parts) == 3 and parts[:2] == ["api", "editorial"]:
@@ -656,6 +664,8 @@ class Handler(BaseHTTPRequestHandler):
             parts = unquote(urlsplit(self.path).path).strip("/").split("/")
             if len(parts) == 3 and parts[:2] == ["api", "system"]:
                 return self.system_action(parts[2], body)
+            if len(parts) == 3 and parts[:2] == ["api", "telegram"]:
+                return self.telegram_action(parts[2], body)
             if len(parts) == 3 and parts[:2] == ["api", "tiktok"]:
                 return self.tiktok_action(parts[2], body)
             if parts == ["api", "automation", "settings"]:
@@ -819,6 +829,16 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({"error": str(exc)}, 409)
         except automation.SettingsUnavailable as exc:
             return self.send_json({"error": str(exc)}, 503)
+
+    def telegram_action(self, action, body=None):
+        try:
+            if body is None and action == "status":
+                return self.send_json(self.app.telegram.status())
+            return self.send_json(self.app.telegram.control(action, body))
+        except TelegramError as exc:
+            return self.send_json({"error": str(exc)}, 400 if exc.unauthorized else 503)
+        except sqlite3.Error:
+            return self.send_json({"error": "El almacenamiento local de Telegram no está disponible."}, 503)
 
     def production_action(self, action, body=None, query=None):
         worker = self.app.production

@@ -14,6 +14,7 @@
     <script src="/subtitles.js" defer></script>
     <script src="/production.js" defer></script>
     <script src="/system.js" defer></script>
+    <script src="/telegram.js" defer></script>
     <script src="/watermark.js" defer></script>
   </head>
   <body>
@@ -30,6 +31,7 @@
       <button id="show-live" class="wide">● Live clipping</button>
       <button id="show-publications" class="wide" lang="es">Publicaciones</button>
       <button id="show-automation" class="wide">Automation</button>
+      <button id="show-telegram" class="wide">Telegram</button>
       <button id="show-system" class="wide" lang="es">System Settings</button>
       <button id="show-watermark" class="wide" lang="es">Marca de agua</button>
       <div class="rail-heading">
@@ -50,6 +52,42 @@
         ><span id="connection"><span class="dot"></span> Local session</span>
       </header>
       <div id="notice" role="status" aria-live="polite" hidden></div>
+      <section id="telegram-view" class="view" hidden>
+        <div class="intro"><h1>Telegram Control Center</h1></div>
+        <p id="telegram-state" role="status"></p>
+        <form id="telegram-settings" class="panel input-panel" autocomplete="off">
+          <label><input id="telegram-enabled" type="checkbox"> Activar Telegram</label>
+          <label for="telegram-token">Bot Token</label>
+          <input id="telegram-token" type="password" autocomplete="new-password" maxlength="121" placeholder="Deja vacío para conservar el token guardado">
+          <label><input id="telegram-immediate" type="checkbox"> Avisar cuando un clip supere los controles de Automation</label>
+          <label><input id="telegram-alerts" type="checkbox"> Recibir alertas operativas</label>
+          <div class="publication-actions">
+            <label>Detección mínima <input id="telegram-score" type="number" min="6" max="10" step="0.1" required></label>
+            <label>Prioridad mínima <input id="telegram-priority" type="number" min="0" max="10" step="0.1" required></label>
+            <label>Máximo por hora <input id="telegram-frequency" type="number" min="1" max="60" required></label>
+          </div>
+          <div class="publication-actions">
+            <label>Inicio del horario silencioso <input id="telegram-quiet-start" type="time"></label>
+            <label>Fin del horario silencioso <input id="telegram-quiet-end" type="time"></label>
+          </div>
+          <label for="telegram-sources">Fuentes autorizadas para captura remota</label>
+          <textarea id="telegram-sources" rows="3" maxlength="11000" placeholder="Un enlace HTTPS de YouTube, Twitch o Kick por línea"></textarea>
+          <button class="primary">Guardar ajustes</button>
+        </form>
+        <div class="publication-actions">
+          <button id="telegram-test" type="button">Probar conexión</button>
+          <button id="telegram-pair" type="button">Generar código de vinculación</button>
+          <button id="telegram-revoke" type="button">Revocar vinculación</button>
+          <button id="telegram-notify" type="button">Enviar notificación de prueba</button>
+        </div>
+        <p id="telegram-pair-code" role="status" hidden></p>
+        <p id="telegram-feedback" role="status"></p>
+        <section class="panel" aria-labelledby="telegram-log-heading">
+          <h2 id="telegram-log-heading">Actividad y entregas</h2>
+          <p id="telegram-deliveries"></p>
+          <ul id="telegram-log"></ul>
+        </section>
+      </section>
       <section id="new-view" class="view">
         <div class="intro">
           <span class="eyebrow">FROM LONG FORM TO THE GOOD PART</span>

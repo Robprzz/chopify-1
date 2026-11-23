@@ -156,23 +156,34 @@ def test_batch_regeneration_keeps_original_and_exports_to_publications(tmp_path,
     assert projects.run_project(path, action="render")["last_outputs"] == [str(p) for p in original]
 
 
-def test_watermark_panel_upload_preview_replace_and_remove(tmp_path, logo, chromium_page):
+@pytest.mark.parametrize(("width", "height"), [(1920, 1080), (1366, 768), (390, 844)])
+def test_watermark_panel_upload_preview_replace_and_remove(tmp_path, logo, chromium_page, width, height):
     page, expect = chromium_page
+    page.set_viewport_size({"width": width, "height": height})
     with running_server(tmp_path) as (app, base):
         with pytest.raises(HTTPError) as error:
             request(base, "/api/watermark", {"settings": watermark.DEFAULTS})
         assert error.value.code == 403
         page.goto(base)
         page.locator("#show-settings").click()
+        expect(page.locator(".settings-row")).to_have_count(9)
+        assert page.evaluate("document.documentElement.scrollWidth === innerWidth")
+        page.locator("#settings-query").fill("marca de agua")
+        expect(page.locator(".settings-row:visible")).to_have_count(1)
         page.get_by_role("button", name="Marca de agua", exact=True).click()
-        page.locator("#watermark-file").set_input_files({"name": "logo.png", "mimeType": "image/png", "buffer": logo})
+        with page.expect_file_chooser() as selection:
+            page.get_by_role("button", name="Cambiar imagen").click()
+        selection.value.set_files({"name": "logo.png", "mimeType": "image/png", "buffer": logo})
         expect(page.locator("#watermark-thumbnail")).to_be_visible()
         page.get_by_label("Activar marca de agua").check()
         page.locator("#watermark-form select[name=position]").select_option("bottom-left")
         page.get_by_label("Opacidad (%)").fill("50")
+        page.get_by_label("Tamaño (% del ancho)").fill("26")
+        page.locator(".watermark-advanced summary").click()
+        page.get_by_label("Margen (% del lado corto)").fill("8")
         expect(page.locator("#watermark-overlay")).to_have_css("opacity", "0.5")
         assert page.locator("#watermark-overlay").evaluate("(node) => node.offsetTop > 100")
-        page.get_by_role("button", name="Guardar marca de agua").click()
+        page.get_by_role("button", name="Guardar cambios").click()
         expect(page.locator("#watermark-status")).to_contain_text("guardada")
         saved = request(base, "/api/watermark")
         assert saved["position"] == "bottom-left"
@@ -185,17 +196,110 @@ def test_watermark_panel_upload_preview_replace_and_remove(tmp_path, logo, chrom
         expect(page.get_by_label("Opacidad (%)")).to_have_value("50")
         image = cv2.imdecode(np.frombuffer(logo, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
         replacement = cv2.imencode(".png", cv2.flip(image, 1))[1].tobytes()
-        page.locator("#watermark-file").set_input_files(
-            {"name": "replacement.png", "mimeType": "image/png", "buffer": replacement})
+        saved_url = "/watermark-image/" + saved["image_id"]
+        for payload, problem in (
+            (b"x" * (watermark.MAX_BYTES + 1), "2 MiB"),
+            (cv2.imencode(".png", np.zeros((4, 2049, 3), np.uint8))[1].tobytes(), "2048 × 2048"),
+            (logo[:32], "dañada"),
+        ):
+            with page.expect_file_chooser() as selection:
+                page.get_by_role("button", name="Cambiar imagen").click()
+            selection.value.set_files({"name": "replacement.png", "mimeType": "image/png", "buffer": payload})
+            expect(page.locator("#watermark-error")).to_contain_text(problem)
+            expect(page.locator("#watermark-thumbnail")).to_have_attribute("src", saved_url)
+            assert request(base, "/api/watermark") == saved
+
+        with page.expect_file_chooser() as selection:
+            page.get_by_role("button", name="Cambiar imagen").click()
+        selection.value.set_files({"name": "replacement.png", "mimeType": "image/png", "buffer": replacement})
+        expect(page.locator("#watermark-status")).to_contain_text("Imagen lista")
+        assert request(base, "/api/watermark") == saved
         expect(page.locator("#watermark-thumbnail")).to_have_attribute("src", "data:image/png;base64," + encoded(replacement))
-        with page.expect_response(lambda r: r.url.endswith("/api/watermark") and r.request.method == "POST"):
-            page.get_by_role("button", name="Guardar marca de agua").click()
-        current_id = request(base, "/api/watermark")["image_id"]
+        page.locator("#watermark-aspect").select_option("9:16")
+        expect(page.locator("#watermark-stage")).to_have_attribute("data-aspect", "9:16")
+        expect(page.locator("#watermark-overlay")).to_be_visible()
+        with page.expect_response(lambda r: r.url.endswith("/api/watermark") and r.request.method == "POST") as submitted:
+            page.get_by_role("button", name="Guardar cambios").click()
+        assert submitted.value.ok
+        current = request(base, "/api/watermark")
+        current_id = current["image_id"]
         assert saved["image_id"] != current_id
+        assert current == {**saved, "image_id": current_id}
         assert page.request.get(base + "/watermark-image/" + current_id).body() == replacement
+        page.reload()
+        expect(page.locator("#watermark-thumbnail")).to_have_attribute("src", "/watermark-image/" + current_id)
+        page.once("dialog", lambda dialog: dialog.dismiss())
+        page.get_by_role("button", name="Quitar imagen").click()
+        expect(page.locator("#watermark-overlay")).to_be_visible()
+        page.once("dialog", lambda dialog: dialog.accept())
         page.get_by_role("button", name="Quitar imagen").click()
         expect(page.locator("#watermark-overlay")).to_be_hidden()
-        page.get_by_role("button", name="Guardar marca de agua").click()
+        page.get_by_role("button", name="Guardar cambios").click()
         expect(page.locator("#watermark-status")).to_contain_text("guardada")
         assert request(base, "/api/watermark")["image_id"] is None
         assert page.request.get(base + "/watermark-image/" + saved["image_id"]).status == 404
+
+
+def test_failed_settings_write_preserves_previous_image(tmp_path, logo, monkeypatch):
+    before = configure(tmp_path, logo, position="bottom-left")
+    store = watermark.Store(tmp_path)
+    write = watermark._write
+    decoded = cv2.imdecode(np.frombuffer(logo, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+    new = cv2.imencode(".png", cv2.flip(decoded, 1))[1].tobytes()
+
+    def fail_config(path, data):
+        if path.name == "settings.json":
+            raise PermissionError("simulated locked settings")
+        write(path, data)
+
+    monkeypatch.setattr(watermark, "_write", fail_config)
+    with pytest.raises(watermark.WatermarkError, match="permisos"):
+        store.save(before, encoded(new))
+    assert store.read() == before
+    assert store.preview(before["image_id"]) == logo
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg") or not shutil.which("ffprobe"), reason="FFmpeg and FFprobe required")
+def test_replacement_appears_in_all_camera_modes_and_landscape(tmp_path, logo, server, monkeypatch):
+    import smart_camera
+
+    httpd, base = server
+    source = gray_source(tmp_path)
+    previous = configure(tmp_path, logo, position="top-left", opacity=76, margin=7, size=22)
+    original = render_clips.render({"start": 0, "end": 1}, [], source, 640, 360, tmp_path, "16:9",
+                                   out_dir=tmp_path / "original", mark=watermark.Store(tmp_path).for_render())
+    before = original.read_bytes()
+    assert red(extract_frame(original)).max() > 130
+    pixels = np.zeros((24, 60, 4), dtype=np.uint8)
+    pixels[:, :, 1] = pixels[:, :, 3] = 255
+    replacement = cv2.imencode(".png", pixels)[1].tobytes()
+    settings = request(base, "/api/watermark", {"settings": previous, "image_data": encoded(replacement)}, httpd.app.token)
+    assert settings == {**previous, "image_id": settings["image_id"]}
+    mark = watermark.Store(tmp_path).for_render()
+    for aspect, requested, applied, faces in (
+        ("9:16", "auto", "smart", [270]),
+        ("9:16", "smart", "smart", [270]),
+        ("9:16", "split", "split", [130, 500]),
+        ("9:16", "stable", "stable", []),
+        ("16:9", "auto", None, []),
+    ):
+        monkeypatch.setattr(render_clips, "detect_track", lambda *_: [(i / 5, faces, False) for i in range(5)])
+        limit = render_clips.ASPECTS[aspect][:2]
+        clip = render_clips.render(
+            {"start": 0, "end": 1}, [], source, 640, 360, tmp_path, aspect, camera_mode=requested,
+            out_dir=tmp_path / "new" / aspect.replace(":", "-") / requested, mark=mark, timeout=45,
+        )
+        frame = extract_frame(clip)
+        w, h, x, y = mark.geometry(*limit)
+        blue, green, crimson = map(int, frame[y + h // 2, x + w // 2])
+        assert green - max(blue, crimson) > 140
+        assert red(frame).max() < 15
+        if applied:
+            report = smart_camera.saved_motion(clip)
+            assert report["applied"] == applied
+            sar = subprocess.check_output(["ffprobe", "-v", "error", "-select_streams", "v:0",
+                                          "-show_entries", "stream=sample_aspect_ratio", "-of", "csv=p=0", str(clip)])
+            assert sar.strip() == b"1:1"
+            assert report["av_start_skew"] < .04 and report["av_end_skew"] < .04
+        assert float(probe_streams(clip)["video"]["duration"]) == pytest.approx(1, abs=.04)
+    assert original.read_bytes() == before

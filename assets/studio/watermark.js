@@ -4,10 +4,11 @@ const watermarkForm = $("#watermark-form");
 const watermarkFields = $("#watermark-fields");
 const watermarkEndpoint = "/api/watermark";
 const watermarkField = (name) => watermarkForm.elements.namedItem(name);
-const watermarkSave = watermarkForm.querySelector("button[type=submit]");
 let watermarkId = null;
 let watermarkUpload = null;
 let watermarkBusy = false;
+let watermarkLoaded = false;
+let watermarkRemoved = false;
 
 function watermarkError(message = "") {
   $("#watermark-error").textContent = message;
@@ -16,6 +17,7 @@ function watermarkError(message = "") {
 
 function previewWatermark() {
   const [width, height] = $("#watermark-aspect").value.split(":").map(Number);
+  $("#watermark-stage").dataset.aspect = $("#watermark-aspect").value;
   $("#watermark-stage").style.aspectRatio = `${width} / ${height}`;
   const overlay = $("#watermark-overlay");
   const thumbnail = $("#watermark-thumbnail");
@@ -35,8 +37,9 @@ function previewWatermark() {
 
 function setWatermarkImage() {
   const src = watermarkUpload ? `data:image/png;base64,${watermarkUpload}`
-    : watermarkId ? `/watermark-image/${watermarkId}` : "";
+    : watermarkId && !watermarkRemoved ? `/watermark-image/${watermarkId}` : "";
   $("#watermark-remove").disabled = !src;
+  $("#watermark-placeholder").hidden = Boolean(src);
   for (const id of ["#watermark-thumbnail", "#watermark-overlay"]) {
     const image = $(id);
     image.hidden = true;
@@ -52,85 +55,124 @@ function setWatermarkImage() {
 
 function applyWatermarkSettings(settings) {
   watermarkId = settings.image_id;
+  watermarkRemoved = false;
   watermarkUpload = null;
   $("#watermark-file").value = "";
-  watermarkSave.disabled = false;
   watermarkField("enabled").checked = settings.enabled;
   for (const name of ["size", "opacity", "margin", "position"]) watermarkField(name).value = settings[name];
   setWatermarkImage();
 }
 
-async function updateWatermark(operation, message, allowEditing) {
+async function updateWatermark(loading, operation, onError) {
   if (watermarkBusy) return;
   watermarkBusy = true;
   watermarkFields.disabled = true;
+  watermarkForm.setAttribute("aria-busy", "true");
   watermarkError();
-  $("#watermark-status").textContent = "";
+  $("#watermark-status").textContent = loading;
   try {
-    await studioConfig;
-    applyWatermarkSettings(await operation());
-    allowEditing = true;
-    $("#watermark-status").textContent = message;
+    $("#watermark-status").textContent = await operation();
   } catch (error) {
+    onError?.();
+    $("#watermark-status").textContent = "";
     watermarkError(error.message);
   } finally {
     watermarkBusy = false;
-    watermarkFields.disabled = !allowEditing;
+    watermarkFields.disabled = !watermarkLoaded;
+    watermarkForm.removeAttribute("aria-busy");
   }
+}
+
+function loadWatermark() {
+  if (watermarkBusy) return;
+  $("#watermark-retry").hidden = true;
+  watermarkLoaded = false;
+  return updateWatermark("Cargando los ajustes…", async () => {
+    await studioConfig;
+    applyWatermarkSettings(await api(watermarkEndpoint));
+    watermarkLoaded = true;
+    return "";
+  }, () => { $("#watermark-retry").hidden = false; });
 }
 
 $("#show-watermark").addEventListener("click", () => {
   state.id = null;
   switchView("watermark-view");
-  updateWatermark(() => api(watermarkEndpoint), "", false);
+  loadWatermark();
 });
+$("#watermark-back").addEventListener("click", () => $("#show-settings").click());
+$("#watermark-retry").addEventListener("click", loadWatermark);
 $("#watermark-thumbnail").addEventListener("load", () => {
   $("#watermark-thumbnail").hidden = false;
   previewWatermark();
 });
 $("#watermark-thumbnail").addEventListener("error", () => {
-  watermarkError("La imagen PNG no está disponible. Vuelve a cargarla o desactiva la marca.");
+  watermarkError("La imagen guardada no está disponible. Selecciona otro PNG.");
 });
 watermarkFields.addEventListener("input", previewWatermark);
-$("#watermark-file").addEventListener("change", () => {
-  const input = $("#watermark-file");
-  const file = input.files[0];
-  if (!file) return;
-  if (file.size > 2 * 1024 * 1024) {
-    input.value = "";
-    watermarkSave.disabled = false;
-    watermarkError("La imagen PNG debe pesar como máximo 2 MiB.");
-    return;
+$("#watermark-change").addEventListener("click", () => $("#watermark-file").click());
+
+async function readWatermarkPNG(file) {
+  if (file.size > 2 * 1024 * 1024) throw new Error("La imagen PNG debe pesar como máximo 2 MiB.");
+  const header = new DataView(await file.slice(0, 24).arrayBuffer());
+  if (header.byteLength !== 24 || header.getUint32(0) !== 0x89504e47 ||
+      header.getUint32(4) !== 0x0d0a1a0a || header.getUint32(8) !== 13 ||
+      header.getUint32(12) !== 0x49484452) {
+    throw new Error("Selecciona una imagen PNG válida.");
   }
-  watermarkSave.disabled = true;
-  const reader = new FileReader();
-  reader.addEventListener("load", () => {
-    if (input.files[0] !== file) return;
-    watermarkSave.disabled = false;
-    watermarkError();
-    watermarkUpload = reader.result.split(",")[1];
+  const width = header.getUint32(16), height = header.getUint32(20);
+  if (!width || !height || width > 2048 || height > 2048) {
+    throw new Error("La imagen PNG debe medir como máximo 2048 × 2048 píxeles.");
+  }
+  const dataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error("No se pudo leer el PNG seleccionado."));
+    reader.readAsDataURL(file);
+  });
+  const decoded = new Image();
+  decoded.src = dataUrl;
+  try {
+    await decoded.decode();
+  } catch {
+    throw new Error("La imagen PNG seleccionada está dañada.");
+  }
+  return dataUrl.slice(dataUrl.indexOf(",") + 1);
+}
+
+$("#watermark-file").addEventListener("change", (event) => {
+  const input = event.target;
+  const file = input.files[0];
+  input.value = "";
+  if (!file) return;
+  updateWatermark("Comprobando el PNG…", async () => {
+    watermarkUpload = await readWatermarkPNG(file);
+    watermarkRemoved = false;
     setWatermarkImage();
+    return "Imagen lista. Pulsa Guardar cambios para aplicarla.";
   });
-  reader.addEventListener("error", () => {
-    if (input.files[0] !== file) return;
-    input.value = "";
-    watermarkSave.disabled = false;
-    watermarkError("No se pudo leer el PNG seleccionado.");
-  });
-  reader.readAsDataURL(file);
 });
 $("#watermark-remove").addEventListener("click", () => {
-  watermarkId = watermarkUpload = null;
-  $("#watermark-file").value = "";
-  watermarkSave.disabled = false;
+  if (!confirm("¿Quitar la imagen de las próximas exportaciones? Confirma el cambio al guardar.")) return;
+  watermarkUpload = null;
+  watermarkRemoved = true;
   watermarkField("enabled").checked = false;
   watermarkError();
   setWatermarkImage();
+  $("#watermark-status").textContent = "Imagen retirada de la vista previa. Pulsa Guardar cambios.";
 });
 watermarkForm.addEventListener("submit", (event) => {
   event.preventDefault();
-  const settings = { image_id: watermarkId, enabled: watermarkField("enabled").checked,
+  if (!watermarkLoaded) return;
+  const settings = { image_id: watermarkRemoved ? null : watermarkId, enabled: watermarkField("enabled").checked,
     position: watermarkField("position").value };
   for (const name of ["size", "opacity", "margin"]) settings[name] = watermarkField(name).valueAsNumber;
-  updateWatermark(() => api(watermarkEndpoint, { settings, image_data: watermarkUpload }), "Marca de agua guardada.", true);
+  updateWatermark("Guardando cambios…", async () => {
+    applyWatermarkSettings(await api(watermarkEndpoint, { settings, image_data: watermarkUpload }));
+    return "Marca de agua guardada.";
+  }, () => {
+    watermarkUpload = null;
+    watermarkRemoved = false;
+    setWatermarkImage();
+  });
 });

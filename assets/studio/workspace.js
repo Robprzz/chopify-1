@@ -240,7 +240,9 @@ $("#workspace-reset-interface").addEventListener("click", () => {
 });
 $("#settings-query").addEventListener("input", event => {
   const query = event.target.value.toLocaleLowerCase();
-  for (const card of $("#settings-categories").children) card.hidden = !card.textContent.toLocaleLowerCase().includes(query);
+  const rows = Array.from($("#settings-categories").children);
+  for (const row of rows) row.hidden = !row.textContent.toLocaleLowerCase().includes(query);
+  $("#settings-empty").hidden = rows.some(row => !row.hidden);
 });
 for (const id of sessionPrefs) {
   const field = $("#" + id);

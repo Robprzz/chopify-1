@@ -149,10 +149,13 @@ class Store:
                 raise WatermarkError("Carga una imagen PNG antes de activar la marca de agua.")
             self._image(settings["image_id"])
         config = self._path("settings.json")
-        self.directory.mkdir(exist_ok=True)
-        if encoded is not None:
-            _write(self._path(f'{settings["image_id"]}.png'), data)
-        _write(config, json.dumps(settings).encode("utf-8"))
+        try:
+            self.directory.mkdir(exist_ok=True)
+            if encoded is not None:
+                _write(self._path(f'{settings["image_id"]}.png'), data)
+            _write(config, json.dumps(settings).encode("utf-8"))
+        except OSError:
+            raise WatermarkError("No se pudo guardar la marca de agua. Comprueba el espacio y los permisos de la carpeta de proyectos.") from None
         return settings
 
     def for_render(self):

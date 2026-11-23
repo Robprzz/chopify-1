@@ -22,7 +22,8 @@ from captions import TIMELINE_VERSION, update_transcript
 LIVE_DEFAULTS = {
     "live_buffer": 300, "live_buffer_max_mb": 512, "live_pre_roll": 30,
     "live_tail": 5, "live_window": 10, "live_threshold": 6.0,
-    "live_cooldown": 60, "live_max_clips": 10, "live_no_chat": False,
+    "live_cooldown": 60, "live_max_clips": 0, "live_max_per_hour": 6,
+    "live_duration": "60-90", "live_whisper_device": "auto", "live_no_chat": False,
     "live_no_transcript": False, "live_headers": [], "live_skip_ads": False, "live_max_height": 720,
 }
 
@@ -129,11 +130,15 @@ def validate_options(options):
         "live_buffer": (60, 3600), "live_buffer_max_mb": (32, 8192),
         "live_pre_roll": (5, 300), "live_tail": (0, 60),
         "live_window": (2, 60), "live_cooldown": (0, 3600),
-        "live_max_clips": (0, 1000),
+        "live_max_clips": (0, 1000), "live_max_per_hour": (0, 60),
     }
     for key, (low, high) in live_int_ranges.items():
         if isinstance(result[key], bool) or not isinstance(result[key], int) or not low <= result[key] <= high:
             raise ValueError(f"{key} must be an integer from {low} to {high}.")
+    if result["live_duration"] not in ("30-60", "60-90", "90-180", "auto", "legacy"):
+        raise ValueError("Duración Live no reconocida.")
+    if result["live_whisper_device"] not in ("auto", "cpu", "cuda"):
+        raise ValueError("El dispositivo Whisper para producción debe ser auto, cpu o cuda.")
     if type(result["live_max_height"]) is not int or result["live_max_height"] not in (720, 1080):
         raise ValueError("Live capture resolution must be 720p or 1080p.")
     if (isinstance(result["live_threshold"], bool)

@@ -1251,7 +1251,8 @@ def test_live_options_defaults():
     assert options["live_window"] == 10
     assert options["live_threshold"] == 6.0
     assert options["live_cooldown"] == 60
-    assert options["live_max_clips"] == 10
+    assert options["live_max_clips"] == 0
+    assert options["live_duration"] == "60-90"
     assert options["live_no_chat"] is False
     assert options["live_no_transcript"] is False
     assert options["live_headers"] == []

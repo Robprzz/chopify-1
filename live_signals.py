@@ -303,6 +303,10 @@ class TranscriptAnalyzer(BaseAnalyzer):
         if not enabled:
             self.available = False
         self.words = []
+        self.performance = None
+
+    def status(self, now):
+        return {**super().status(now), "performance": self.performance}
 
     def _decode(self, path):
         start, end = self._bounds
@@ -314,24 +318,30 @@ class TranscriptAnalyzer(BaseAnalyzer):
             lock = self.shared["lock"]
             while not lock.acquire(timeout=.2):
                 if self._stop and self._stop.is_set():
-                    return [], start, end
+                    return [], start, end, None
             try:
                 if self._stop and self._stop.is_set():
-                    return [], start, end
+                    return [], start, end, None
                 if self.shared["model"] is None:
                     self.shared["model"] = dt._load_model(LIVE_TRANSCRIPT_MODEL, self.device, "int8")
                 self.model = self.shared["model"]
+                started = time.monotonic()
                 _, words, _, _ = dt._transcribe_media(self.model, wav, offset=start)
+                elapsed = time.monotonic() - started
+                backend = getattr(self.model, "model", None)
+                performance = {"device": str(getattr(backend, "device", None) or "sin confirmar"),
+                               "model": LIVE_TRANSCRIPT_MODEL, "inference_seconds": round(elapsed, 3),
+                               "rtf": round(elapsed / max(.001, end - start), 4)}
             finally:
                 lock.release()
-        return words, start, end
+        return words, start, end, performance
 
     def snapshot(self):
         with self._lock:
             return self.through, list(self.words)
 
     def _publish(self, index, payload):
-        words, start, end = payload
+        words, start, end, self.performance = payload
         self.words.extend(words)
         self.words = [w for w in self.words if w["end"] >= start - max(120., self.buffer.retention)][-6000:]
         for i in range(math.ceil(end - start)):

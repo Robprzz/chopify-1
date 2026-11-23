@@ -1060,7 +1060,9 @@ $("#live-form").addEventListener(
     $("#live-status").textContent = "Resolving live stream…";
     $("#live-start-error").hidden = true;
     try {
-      const options = { aspect: $("#live-aspect").value, live_max_height: Number($("#live-max-height").value) };
+      const options = { aspect: $("#live-aspect").value, live_max_height: Number($("#live-max-height").value),
+        live_duration: $("#live-duration").value, live_max_per_hour: $("#live-per-hour").valueAsNumber,
+        live_max_clips: $("#live-per-session").valueAsNumber, live_whisper_device: $("#live-whisper-device").value };
       const threshold = $("#live-threshold");
       if (threshold.value !== "") options.live_threshold = threshold.valueAsNumber;
       const result = await api("/api/live", { source, options, brief });
@@ -1180,6 +1182,7 @@ async function refreshLive() {
   ] : [];
   $("#live-components").innerHTML = components.map(([label, value]) =>
     `<div><dt>${escapeHTML(label)}</dt><dd>${escapeHTML(value)}</dd></div>`).join("");
+  renderLiveProduction(detail);
   const signature = JSON.stringify([detail?.id, detail?.triggers]);
   if (signature === liveClipSignature) return;
   liveClipSignature = signature;
@@ -1208,6 +1211,33 @@ async function refreshLive() {
     }
     clips.append(row);
   }
+}
+
+function renderLiveProduction(detail) {
+  const queue = detail?.production;
+  $("#live-production").hidden = !queue;
+  if (!queue) return;
+  const counts = queue.counts;
+  const statuses = {collecting: "Preservando fuente", queued: "Pendiente de transcripción",
+    transcribing: "Transcribiendo", editing: "En edición", quality: "Control de calidad",
+    done: "Terminado", rejected: "Rechazado", error: "Error"};
+  const active = ["collecting", "queued", "transcribing", "editing", "quality"].reduce((sum, key) => sum + (counts[key] || 0), 0);
+  const profile = detail.production_profile || queue.recent[0]?.profile || "—";
+  $("#live-queue-summary").textContent = `Duración ${profile} · ${queue.detected} detecciones admitidas · ${active}/${queue.capacity} en cola para esta sesión · `
+    + Object.entries(statuses).map(([key, label]) => `${label} ${counts[key] || 0}`).join(" · ");
+  $("#live-queue-message").textContent = detail.health?.production_message || "";
+  const formatWhisper = (name, metrics) => metrics
+    ? `${name} ${metrics.model}/${metrics.device}: ${metrics.inference_seconds} s · RTF ${metrics.rtf}`
+      + (metrics.time_since_detection_seconds == null ? "" : ` · ${metrics.time_since_detection_seconds} s desde la detección`)
+      + (metrics.fallback ? ` · ${metrics.fallback}` : "")
+      + (metrics.gpu_after ? ` · GPU del sistema ${metrics.gpu_after.utilization_percent}% · ${metrics.gpu_after.used_mib} MiB` : "")
+    : `${name}: sin mediciones`;
+  $("#live-whisper-status").textContent = [
+    formatWhisper("Whisper Live", detail.health?.analyzers?.transcript?.performance),
+    formatWhisper("Whisper de producción", queue.whisper),
+  ].join(" | ");
+  $("#live-queue-jobs").innerHTML = queue.recent.map((job) =>
+    `<li>${escapeHTML(job.id)} · ${escapeHTML(statuses[job.state])} · ${escapeHTML(job.score)}/10${job.error ? " · " + escapeHTML(job.error) : ""}</li>`).join("");
 }
 
 function renderLiveSessions(sessions) {

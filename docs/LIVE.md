@@ -3,6 +3,8 @@
 Chopify can watch a live stream and automatically save hype moments as finished
 clips. Capture, transcription, and rendering run locally and require no paid API.
 
+Live 1.2 añade producción persistente y selección de duración. Consulta [Live Clipping 1.2](LIVE-12.md).
+
 ## Start
 
 ```bash

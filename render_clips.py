@@ -336,13 +336,18 @@ def _make_detector(workdir, allow_download=True):
 def detect_track(source, start, dur, W, workdir, allow_download=True, timeout=None):
     """Low-res detection pass -> [(t_rel, center_x_source_px or None)]."""
     import cv2
+    try:
+        kind, det = _make_detector(workdir, allow_download)
+    except (AttributeError, OSError):
+        if allow_download:
+            raise
+        return []  # A local-only render can use the existing centered crop.
     det_path = Path(workdir) / "_det.mp4"
     subprocess.run(
         ["ffmpeg", "-y", "-ss", f"{start:.3f}", "-i", str(source),
          "-t", f"{dur:.3f}", "-vf", f"fps={DET_FPS},scale={DET_W}:-2",
          "-an", str(det_path)],
         check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=timeout)
-    kind, det = _make_detector(workdir, allow_download)
     cap = cv2.VideoCapture(str(det_path))
     dw = cap.get(cv2.CAP_PROP_FRAME_WIDTH) or DET_W
     dh = cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 360

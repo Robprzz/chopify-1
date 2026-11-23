@@ -281,7 +281,9 @@ def test_live_history_with_archived_clips_after_server_restart(tmp_path):
             "id": ident, "status": "interrupted", "source": saved["source"], "stream_time": 23,
             "started_at": 123, "clips": 1, "score": 8.0, "errors": 1,
         }]
-        assert request(base, f"/api/live/{ident}") == {**saved, "status": "interrupted", "triggers": [clip]}
+        historical = request(base, f"/api/live/{ident}")
+        assert historical.pop("production")["detected"] == 0
+        assert historical == {**saved, "status": "interrupted", "triggers": [clip]}
         assert httpd.app.live_sessions == {}
         assert projects.read_json(manifest) == saved
         with pytest.raises(urllib.error.HTTPError) as exc:

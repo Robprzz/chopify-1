@@ -269,6 +269,9 @@ def main():
     ap.add_argument("--live-threshold", type=float, default=None)
     ap.add_argument("--live-cooldown", type=int, default=None)
     ap.add_argument("--live-max-clips", type=int, default=None)
+    ap.add_argument("--live-max-per-hour", type=int, default=None)
+    ap.add_argument("--live-duration", choices=("30-60", "60-90", "90-180", "auto", "legacy"))
+    ap.add_argument("--live-whisper-device", choices=("auto", "cpu", "cuda"))
     ap.add_argument("--live-max-height", type=int, choices=(720, 1080), default=None,
                     help="maximum capture height for resolved live pages (default: 720)")
     ap.add_argument("--live-no-chat", action="store_true", default=None)

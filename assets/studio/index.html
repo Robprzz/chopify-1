@@ -170,8 +170,26 @@
               <select id="live-aspect"><option>16:9</option><option>9:16</option><option>1:1</option></select>
             </label>
           </div>
-          <label for="live-threshold">Umbral de detección Live (0–10)</label>
-          <input id="live-threshold" type="number" min="0" max="10" step="any" placeholder="Usar el mínimo de Automation (6/10 por defecto)" />
+          <label for="live-threshold">Umbral de detección Live (6–10)</label>
+          <input id="live-threshold" type="number" min="6" max="10" step="any" placeholder="Usar el mínimo de Automation (6/10 por defecto)" />
+          <label for="live-duration">Duración de producción</label>
+          <select id="live-duration">
+            <option value="30-60">30–60 s</option>
+            <option value="60-90" selected>60–90 s, hasta 180 s si hace falta</option>
+            <option value="90-180">90–180 s</option>
+            <option value="auto">Automática</option>
+          </select>
+          <div class="publication-actions">
+            <label>Máximo por hora (0 = continuo)
+              <input id="live-per-hour" type="number" min="0" max="60" value="6" required />
+            </label>
+            <label>Máximo por sesión (0 = continuo)
+              <input id="live-per-session" type="number" min="0" max="1000" value="0" required />
+            </label>
+            <label>Whisper en producción
+              <select id="live-whisper-device"><option value="auto">Automático</option><option value="cpu">CPU</option><option value="cuda">CUDA con respaldo CPU</option></select>
+            </label>
+          </div>
           <label for="live-brief">Campaign brief (optional)</label>
           <textarea id="live-brief" rows="4"
             placeholder="Paste requirements; chopify will only save clips that match."></textarea>
@@ -185,6 +203,13 @@
         <div id="live-health" class="muted"></div>
         <div id="live-score"></div>
         <dl id="live-components" class="production-metrics"></dl>
+        <section id="live-production" class="panel" aria-labelledby="live-production-title" hidden>
+          <h3 id="live-production-title">Producción Live</h3>
+          <p id="live-queue-summary"></p>
+          <p id="live-whisper-status"></p>
+          <p id="live-queue-message"></p>
+          <ul id="live-queue-jobs"></ul>
+        </section>
         <div id="live-manual" class="publication-actions" hidden>
           <label for="live-export-seconds">Ventana del búfer</label>
           <select id="live-export-seconds"><option>30</option><option>60</option><option>90</option></select>

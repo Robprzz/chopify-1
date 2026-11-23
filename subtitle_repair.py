@@ -77,13 +77,16 @@ def clean_source(media, project, meta, duration):
             or start < 0 or abs(end - start - duration) > .18):
         raise quality.SubtitleError("El montaje original no coincide con el intervalo fuente. Puedes recuperar el SRT; revisa los cortes para volver a renderizar.")
     if project.startswith("live/"):
+        from live_clips import finished_record
+
         state = projects.read_json(base / "live_session.json")
-        for row in state.get("triggers", []):
-            files = row.get("files", {})
-            if Path(files.get("mp4", "")).name == media.name and files.get("window"):
-                path = Path(files["window"])
-                if path.is_file() and path.resolve() == path and path.parent == base / "windows":
-                    return path, start
+        record = finished_record(state, media) or {}
+        window = record.get("files", {}).get("window")
+        if window:
+            path = Path(window)
+            smart = base / "production" / str(record.get("id")) / "source.mp4"
+            if path.is_file() and path.resolve() == path and (path.parent == base / "windows" or path == smart):
+                return path, start
         raise quality.SubtitleError("No se conserva la ventana limpia de esta sesión Live.")
     state = projects.read_project(base)
     transcript = projects.read_json(base / "transcript.json")

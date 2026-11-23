@@ -8,7 +8,8 @@ def test_run_live_applies_format_to_options(monkeypatch, tmp_path):
 
     class FakeSession:
         def __init__(self, source, options, root, brief_text=None, session_id=None,
-                     detection=None, format_info=None):
+                     detection=None, format_info=None, pipeline=None):
+            self.id = "abcdef123456"
             captured["options"] = options
             captured["detection"] = detection
             captured["format"] = format_info

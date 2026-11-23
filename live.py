@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import shutil
+import sqlite3
 import subprocess
 import threading
 import time
@@ -14,6 +15,7 @@ import projects
 import live_capture
 import live_clips
 import live_signals
+import live_production
 import video_types
 
 RIGHTS_NOTICE = (
@@ -32,10 +34,12 @@ def next_action(health):
 
 class LiveSession:
     def __init__(self, source, options, root, brief_text=None, session_id=None,
-                 detection=None, format_info=None):
+                 detection=None, format_info=None, pipeline=None):
         self.id = session_id or uuid.uuid4().hex[:12]
         self.source = source
         self.options = projects.validate_options(options)
+        if pipeline is not None and self.options["live_duration"] != "legacy":
+            self.options["live_threshold"] = max(6., self.options["live_threshold"])
         self.detection = detection
         self.format = format_info
         self.dir = Path(root) / "live" / self.id
@@ -85,6 +89,9 @@ class LiveSession:
         self.buffer = None
         self.analyzers = []
         self.writer = live_clips.LiveClipWriter(self.dir, root=root)
+        self.pipeline = pipeline
+        self.root = root
+        self._production_window = None
         self.detector = live_signals.HypeDetector()
         self.bus = live_signals.SignalBus(retention=self.options["live_buffer"])
 
@@ -109,6 +116,7 @@ class LiveSession:
                 "triggers": [r.__dict__ for r in self.records[-100:]],
                 "errors": self.errors[-24:],
                 "threshold": self.options["live_threshold"],
+                "production_profile": self.options.get("live_duration"),
                 "export": dict(getattr(self, "_export_status", {})),
                 "health": getattr(self, "health", {}),
                 "detection": getattr(self, "detection", None),
@@ -296,11 +304,58 @@ class LiveSession:
         if self.last_trigger is not None and now - self.last_trigger < self.options["live_cooldown"]:
             return False
         completed = getattr(self, "_export_status", {}).get("completed", len(self.records))
-        if completed >= self.options["live_max_clips"] > 0:
+        if (not getattr(self, "pipeline", None) or self.options["live_duration"] == "legacy") and completed >= self.options["live_max_clips"] > 0:
             return False
         if self.last_trigger is not None and now - self.last_trigger < self.options["live_window"] / 2:
             return False
         return True
+
+    def _produce_live(self, ranges, latest, trigger_time, candidate, transcript, ending):
+        """Preserve the current generation incrementally before buffer retirement."""
+        try:
+            if self._production_window:
+                ident, start, target = self._production_window
+                available = {path: bounds for path, bounds in ranges.items() if bounds[1] > start}
+                try:
+                    through = self.pipeline.preserve(self.id, ident, self.buffer, available, self._timeline_offset)
+                    if ending or through is not None and through >= target + self._timeline_offset:
+                        self._seal_production()
+                except live_production.Rejected as exc:
+                    self._seal_production(str(exc))
+                return
+            if not self._allowed(candidate["score"], trigger_time) or candidate["score"] < 6:
+                return
+            first = next(iter(ranges.values()))[0]
+            low, _, _, hard = live_production.PROFILES[self.options["live_duration"]]
+            if ending and latest - first < low:
+                return
+            # Leave material before the requested beginning so ASR can find
+            # the start of a sentence. Pin only segments belonging to this generation.
+            if trigger_time < first or trigger_time >= latest or latest - first < min(12., low / 3):
+                return
+            if self.options.get("live_skip_ads") and any(getattr(a, "ad_like", False) for _, a in self.analyzers):
+                return
+            if not self._brief_allows(transcript, trigger_time):
+                return
+            effective_pre = min(self.options["live_pre_roll"], hard / 2)
+            start = max(first, trigger_time - effective_pre - 8.)
+            target = max(start + hard + 3., trigger_time + 8.)
+            trigger = live_clips.Trigger(self._timeline_offset + trigger_time, candidate["score"], candidate["signals"])
+            self.last_trigger = trigger_time
+            ident, error = self.pipeline.reserve(self.id, trigger, self.options)
+            if not ident:
+                self.health["production_message"] = error
+                return
+            self.health["production_message"] = None
+            self._production_window = ident, start, target
+            self._produce_live(ranges, latest, trigger_time, candidate, transcript, ending)
+        except (OSError, sqlite3.Error) as exc:
+            self.health["production_message"] = f"No se pudo actualizar la producción local ({type(exc).__name__})."
+
+    def _seal_production(self, error=None):
+        if self._production_window:
+            self.pipeline.seal(self._production_window[0], error)
+            self._production_window = None
 
     def _brief_allows(self, transcript, now):
         if not self.rules:
@@ -328,6 +383,10 @@ class LiveSession:
         except Exception as exc:
             self._fail(f"Live se detuvo por un fallo interno ({type(exc).__name__}). Revisa el diagnóstico y abre una nueva sesión.")
         finally:
+            try:
+                self._seal_production()
+            except (OSError, sqlite3.Error):
+                pass  # The durable collector is sealed on lease expiry.
             with self._capture_lock:
                 if self.buffer is not None:
                     self.buffer.stop()
@@ -374,10 +433,12 @@ class LiveSession:
                         probe = candidate
                 except (OSError, subprocess.SubprocessError, ValueError):
                     self._warn("No se pudo verificar el formato del último segmento cerrado.")
+            smart = self.pipeline is not None and self.options["live_duration"] != "legacy"
             if not self._analyzers_started and probe is not None:
                 self.analyzers = live_signals.start_analyzers(
-                    self.buffer, self.bus, self.options, self.source.platform,
-                    _channel(self.source.page_url or self.source.url), shared=self._transcript_worker)
+                    self.buffer, self.bus, {**self.options, "device": "cpu"} if smart else self.options,
+                    self.source.platform, _channel(self.source.page_url or self.source.url),
+                    shared=self.pipeline.continuous if smart else self._transcript_worker)
                 self._analyzers_started = True
             analyzer_status = {analyzer.name: analyzer.status(latest) for _, analyzer in self.analyzers}
             for name, status in analyzer_status.items():
@@ -408,6 +469,8 @@ class LiveSession:
                 self.recent_scores = (self.recent_scores + [detected])[-60:]
             transcript = next((analyzer for _, analyzer in self.analyzers
                                if isinstance(analyzer, live_signals.TranscriptAnalyzer)), None)
+            if smart and (self._production_window or (probe and ranges and candidate["signals"])):
+                self._produce_live(ranges, latest, trigger_time, candidate, transcript, ending=not healthy)
             with self._export_lock:
                 exporting = self._export_thread and self._export_thread.is_alive()
                 manual = self._manual_request
@@ -423,7 +486,7 @@ class LiveSession:
                         window = {path: pair for path, pair in ranges.items() if pair[1] > start}
                         self._queue_export(live_clips.Trigger(latest, None, {}), probe, transcript, window, (start, latest))
                         ready_at = None
-                elif not exporting and not manual and pending and (latest >= pending.time + self.options["live_tail"] or not healthy):
+                elif not smart and not exporting and not manual and pending and (latest >= pending.time + self.options["live_tail"] or not healthy):
                     if ready_at is None:
                         ready_at = time.monotonic()
                     caption_end = min(latest, pending.time + self.options["live_tail"])
@@ -439,7 +502,7 @@ class LiveSession:
                         if window:
                             self._queue_export(pending, probe, transcript, window)
                         pending = ready_at = None
-                elif (not exporting and not manual and not pending and probe and ranges
+                elif (not smart and not exporting and not manual and not pending and probe and ranges
                       and candidate["signals"] and self._allowed(candidate["score"], trigger_time)
                       and trigger_time >= next(iter(ranges.values()))[0]):
                     if not (self.options.get("live_skip_ads") and any(getattr(a, "ad_like", False)
@@ -476,6 +539,11 @@ class LiveSession:
                     break
             if self._stop.is_set():
                 break
+            if smart:
+                try:
+                    self._seal_production()
+                except (OSError, sqlite3.Error):
+                    self._production_window = None
             pending = ready_at = eof_at = last_score_at = None
             revision = -1
             probe = None
@@ -535,11 +603,17 @@ def run_live(url, options, root, on_log=None, brief_text=None, explicit_keys=Non
         settings = automation.SettingsStore(root).read()["settings"]
         options["live_threshold"] = settings["minimum_clip_score"]
     source = live_capture.resolve_live_source(url, options)
-    session = LiveSession(source, options, root, brief_text=brief_text,
-                          detection=detection, format_info={
-                              "name": resolved["format"]["name"],
-                              "source": resolved["source"],
-                              "needs_confirmation": resolved["needs_confirmation"]})
-    session._on_log = on_log
-    session.start()
+    pipeline = live_production.Pipeline(root)
+    pipeline.start()
+    try:
+        session = LiveSession(source, options, root, brief_text=brief_text, pipeline=pipeline,
+                              detection=detection, format_info={
+                                  "name": resolved["format"]["name"],
+                                  "source": resolved["source"],
+                                  "needs_confirmation": resolved["needs_confirmation"]})
+        session._on_log = on_log
+        session.start()
+        pipeline.drain(session.id)
+    finally:
+        pipeline.close()
     return session

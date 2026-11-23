@@ -366,6 +366,14 @@ class Production:
             change("analyzing", technical="passed", diagnosis=dump(report))
             return media, report
         reason = (report["errors"] or report.get("warnings") or ["El clip no superó la comprobación."])[0]
+        if code in {"subtitles", "voice_unconfirmed"} and job["project"].startswith("live/"):
+            from live_clips import finished_record
+            state = projects.read_json(media.parent.parent / "live_session.json")
+            record = finished_record(state, media) or {}
+            if record.get("voice") == "not_detected":
+                change("review", code="voice_unconfirmed", error="Live no detectó voz. Comprueba el contenido en la vista previa.",
+                       diagnosis=dump(report), technical="pending")
+                return media, None
         if code not in {"subtitles", "voice_coverage"}:
             terminal = "rejected" if code in {"media_unreadable", "media_decode", "av_sync", "continuity_gap", "no_audio"} else "review"
             change(terminal, code=code, error=reason, diagnosis=dump(report), technical="failed")

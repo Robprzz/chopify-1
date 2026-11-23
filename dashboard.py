@@ -23,6 +23,7 @@ import branding
 import editorial
 import editorial_providers
 import editorial_store
+import live_production
 import projects
 import production
 import render_clips
@@ -185,6 +186,8 @@ class Studio:
 
         self.production = production.Production(self.root, self.editorial, self.automation_settings,
                                                self.tiktok._clip, self._production_catalog, self.resources)
+        self.live_production = live_production.Pipeline(self.root, self.resources, self._production_clip)
+        self.live_production.start()
         self.system = studio_system.System(installation or studio_settings.Settings(HERE), self)
 
     def _production_catalog(self):
@@ -308,7 +311,7 @@ class Studio:
             with self.lock:
                 if self.closing:
                     raise ValueError("Studio is closing. Restart it before starting a live session.")
-                session = live.LiveSession(resolved, options, self.root, brief_text=brief_text)
+                session = live.LiveSession(resolved, options, self.root, brief_text=brief_text, pipeline=self.live_production)
                 session.source_key, session.source_label = key, label
                 session.writer.resources = self.resources
                 session.on_clip = lambda path: self._production_clip(f"live/{session.id}", Path(path).name)
@@ -354,6 +357,10 @@ class Studio:
             except (OSError, ValueError, KeyError, TypeError, AttributeError):
                 continue
         detail["triggers"] = sorted(records.values(), key=lambda item: item.get("start", 0))
+        detail["production"] = self.live_production.status(session_id)
+        if "export" in detail:
+            detail["export"]["completed"] = sum(bool(row.get("files", {}).get("mp4")) and not row.get("error")
+                                                for row in records.values())
         return detail
 
     def live_directory(self, session_id):
@@ -396,6 +403,8 @@ class Studio:
                 if count is None:
                     from live_clips import finished_names
                     count = len(finished_names(detail))
+                else:
+                    count += self.live_production.completed(ident)
                 summary.update(
                     clips=count, score=score if score is not None else scores[-1] if scores else None,
                     errors=max(len(detail.get("errors") or []), export.get("errors", 0)),
@@ -411,7 +420,7 @@ class Studio:
                 "projects": sum(not future.done() for future in self.futures.values()),
                 "live": sum(getattr(session, "status", None) in {"starting", "running"}
                             or getattr(session, "exporting", lambda: False)()
-                            for session in self.live_sessions.values()),
+                            for session in self.live_sessions.values()) + int(self.live_production.busy()),
                 "production": self.production.active(),
                 "editorial": self.editorial.busy(),
                 "subtitle_repair": bool(self.subtitle_repair.future and not self.subtitle_repair.future.done()),
@@ -445,6 +454,7 @@ class Studio:
         self.editorial.pause_dispatch(True)
         for session in sessions:
             session.stop()
+        self.live_production.close()
         for session in sessions:
             wait_export = getattr(session, "wait_for_export", None)
             if wait_export:

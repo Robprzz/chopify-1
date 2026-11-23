@@ -194,6 +194,9 @@ def test_live_clip_reaches_publications_in_chromium(server, chromium_page, monke
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     app, base = server
+    start_live = app.app.start_live
+    monkeypatch.setattr(app.app, "start_live", lambda source, options, **kwargs:
+                        start_live(source, {**options, "live_duration": "legacy", "live_max_clips": 1}, **kwargs))
     page, expect = chromium_page
     if split:
         import base64
@@ -251,7 +254,10 @@ def test_live_clip_reaches_publications_in_chromium(server, chromium_page, monke
         assert srt.ok and "victoria" in srt.text()
         if split:
             active = app.app.live_sessions[session]
-            playing_buffer = active.buffer
+            time_before_navigation = active.stream_time
+            live_writes = []
+            page.on("request", lambda req: live_writes.append(req.url)
+                    if req.method == "POST" and req.url.startswith(base + "/api/live") else None)
             with page.expect_popup() as opened:
                 link.click()
             player = opened.value
@@ -264,7 +270,8 @@ def test_live_clip_reaches_publications_in_chromium(server, chromium_page, monke
             expect(link).to_have_attribute("href", mp4)
             expect(page.locator("#live-stop")).to_be_visible()
             assert app.app.live_sessions == {session: active}
-            assert active.buffer is playing_buffer
+            assert active.stream_time >= time_before_navigation
+            assert live_writes == []
             page.get_by_role("button", name="Publicaciones").click()
             page.get_by_role("button", name="Live clipping").click()
             expect(link).to_have_attribute("href", mp4)

@@ -85,7 +85,10 @@ for signals, session files, and rights notes.
 | `--live-window` | `10` | Scoring window in seconds (2–60). | `15` |
 | `--live-threshold` | `6.0` | Hype score needed to save a clip (0–10). | `7.5` |
 | `--live-cooldown` | `60` | Minimum seconds between clips (0–3600). | `120` |
-| `--live-max-clips` | `10` | Session clip cap, `0` for unlimited. | `20` |
+| `--live-max-clips` | `0` | Per-session production cap. Zero keeps production continuous within queue and disk limits. | `20` |
+| `--live-max-per-hour` | `6` | Admissions per rolling hour per session. Zero disables the hourly cap. | `4` |
+| `--live-duration` | `60-90` | `30-60`, `60-90`, `90-180`, `auto`, or explicit 1.1 compatibility with `legacy`. | `90-180` |
+| `--live-whisper-device` | `auto` | `auto`, `cpu` or `cuda` with CPU fallback for production. | `cpu` |
 | `--live-no-chat` | off | Disable the chat signal. | (flag) |
 | `--live-no-transcript` | off | Disable the Whisper signal. | (flag) |
 | `--live-skip-ads` | off | Suppress clip triggers while a flat, saturated ad slate is detected. Best-effort; footage is never discarded. | (flag) |

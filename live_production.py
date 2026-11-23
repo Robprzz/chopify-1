@@ -24,6 +24,7 @@ import render_clips
 from realtime_priority import FAIR_WAIT, distribution, queue_order
 import score_clips
 import subtitle_quality as quality
+import smart_camera
 from live_capture import safe_stderr
 
 PROFILES = {
@@ -539,7 +540,7 @@ class Pipeline:
             state = "done"
         except Paused:
             state = "queued"
-        except Rejected as exc:
+        except (Rejected, smart_camera.MotionError) as exc:
             state, error = "rejected", str(exc)
         except (OSError, subprocess.SubprocessError, ValueError, RuntimeError, TypeError, AttributeError, KeyError, ImportError) as exc:
             state = "error"
@@ -675,7 +676,7 @@ class Pipeline:
             render_clips.render({"id": ident, "start": start, "end": end}, info["words"], source,
                                 int(video["width"]), int(video["height"]), str(home), options["aspect"],
                                 out_dir=staging, style=options["style"], loudnorm=options["loudnorm"],
-                                brand=brand, layout=options["layout"], centers=options["centers"],
+                                brand=brand, layout=options["layout"], centers=options["centers"], camera_mode=options.get("camera_mode", "auto"),
                                 caption=options["caption"], fit=options["fit"], facecam_box=options["facecam_box"],
                                 facecam_height=options["facecam_height"], mark=mark, retain_for_repair=True,
                                 timeout=600, allow_model_download=False,
@@ -701,6 +702,11 @@ class Pipeline:
         if max(gaps.values()) > .5:
             raise Rejected("El MP4 tiene una discontinuidad audiovisual mayor de medio segundo.")
         report = {"duration": duration, "decode": "complete", "errors": [], "continuity_gaps": gaps}
+        motion = smart_camera.saved_motion(output)
+        if motion is not None:
+            if motion.get("unexplained_freezes"):
+                raise Rejected("El MP4 contiene pausas ausentes de la fuente.")
+            report["motion"] = motion
         if voiced:
             report.update(quality.diagnose(output))
             cues = quality.read_srt(output.with_suffix(".srt"))

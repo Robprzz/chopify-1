@@ -3,7 +3,7 @@ Stage 3 of the viral-clip pipeline.
 
 Renders scored segments to clips in a chosen aspect ratio:
   - 16:9 (default) -> landscape, full frame kept
-  - 9:16           -> vertical, dynamic speaker-tracking crop (YuNet + snap-on-cut)
+  - 9:16           -> vertical, bounded Smart Camera or stable framing
   - 1:1            -> square
 Captions are word-by-word CapCut style, burnt in via the ffmpeg ASS engine,
 with selectable style presets. Optional --tighten removes filler words and
@@ -33,6 +33,7 @@ import captions
 import branding
 import tighten  # local module: filler/silence removal
 import watermark
+import smart_camera
 from unicode_io import configure_utf8
 
 # aspect -> (target_w, target_h, caption_font_size, caption_margin_v)
@@ -272,9 +273,6 @@ def _motion_tag(animation):
 WORDS_PER_LINE = 3
 DET_FPS = 5
 DET_W = 640
-EMA_ALPHA = 0.20
-JUMP_FRAC = 0.22
-MARGIN_FRAC = 0.18
 YUNET_URL = ("https://github.com/opencv/opencv_zoo/raw/main/models/"
              "face_detection_yunet/face_detection_yunet_2023mar.onnx")
 
@@ -334,98 +332,45 @@ def _make_detector(workdir, allow_download=True):
 
 
 def detect_track(source, start, dur, W, workdir, allow_download=True, timeout=None):
-    """Low-res detection pass -> [(t_rel, center_x_source_px or None)]."""
+    """Sample faces and visual cuts in a private CPU-only detection pass."""
     import cv2
     try:
-        kind, det = _make_detector(workdir, allow_download)
-    except (AttributeError, OSError):
-        if allow_download:
-            raise
-        return []  # A local-only render can use the existing centered crop.
-    det_path = Path(workdir) / "_det.mp4"
-    subprocess.run(
-        ["ffmpeg", "-y", "-ss", f"{start:.3f}", "-i", str(source),
-         "-t", f"{dur:.3f}", "-vf", f"fps={DET_FPS},scale={DET_W}:-2",
-         "-an", str(det_path)],
-        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=timeout)
-    cap = cv2.VideoCapture(str(det_path))
-    dw = cap.get(cv2.CAP_PROP_FRAME_WIDTH) or DET_W
-    dh = cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 360
-    sx = W / float(dw)
-    if kind == "yunet":
-        det.setInputSize((int(dw), int(dh)))
-    track = []
-    i = 0
-    while True:
-        ok, frame = cap.read()
-        if not ok:
-            break
-        t = i / float(DET_FPS)
-        cx = None
-        if kind == "yunet":
-            _, faces = det.detect(frame)
-            if faces is not None and len(faces):
-                best = max(faces, key=lambda f: f[2] * f[3] * float(f[14]))
-                cx = (best[0] + best[2] / 2.0) * sx
-        else:
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            faces = det.detectMultiScale(gray, 1.1, 5, minSize=(36, 36))
-            if len(faces):
-                x, y, w, h = max(faces, key=lambda f: f[2] * f[3])
-                cx = (x + w / 2.0) * sx
-        track.append((t, cx))
-        i += 1
-    cap.release()
-    try:
-        det_path.unlink()
-    except OSError:
-        pass
-    return track
-
-
-def smooth_track(track, W, crop_w):
-    half = crop_w / 2.0
-    max_off = half - crop_w * MARGIN_FRAC
-    jump = W * JUMP_FRAC
-    known = [c for _, c in track if c is not None]
-    base = sorted(known)[len(known) // 2] if known else W / 2.0
-    filled = []
-    last = base
-    for t, c in track:
-        if c is None:
-            c = last
-        last = c
-        filled.append((t, c))
-    if not filled:
-        return [(0.0, min(max(base, half), W - half))]
-    out = []
-    c = filled[0][1]
-    prev_face = filled[0][1]
-    for t, face in filled:
-        if abs(face - prev_face) > jump:
-            c = face
-        else:
-            c += EMA_ALPHA * (face - c)
-        if face - c > max_off:
-            c = face - max_off
-        elif c - face > max_off:
-            c = face + max_off
-        prev_face = face
-        out.append((t, min(max(c, half), W - half)))
-    return out
-
-
-def build_sendcmd(track, crop_w, path):
-    lines = []
-    last = None
-    for t, cx in track:
-        x = int(round(cx - crop_w / 2.0))
-        if last is None or abs(x - last) >= 2:
-            lines.append(f"{t:.2f} crop x {x};")
-            last = x
-    if not lines:
-        lines = ["0.0 crop x 0;"]
-    Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+        kind, detector = _make_detector(workdir, allow_download)
+        with tempfile.TemporaryDirectory(prefix="anqora-camera-") as scratch:
+            det_path = Path(scratch) / "detect.mp4"
+            subprocess.run(
+                ["ffmpeg", "-nostdin", "-v", "error", "-threads", "1", "-ss", f"{start:.3f}", "-i", str(source),
+                 "-t", f"{dur:.3f}", "-filter_threads", "1", "-vf", f"fps={DET_FPS},scale={DET_W}:-2",
+                 "-an", "-threads", "1", str(det_path)], check=True, capture_output=True, timeout=timeout)
+            cap = cv2.VideoCapture(str(det_path))
+            try:
+                dw = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or DET_W
+                dh = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 360
+                if kind == "yunet":
+                    detector.setInputSize((dw, dh))
+                previous = previous_hist = None
+                observations = []
+                while True:
+                    ok, frame = cap.read()
+                    if not ok:
+                        return observations
+                    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                    thumb = cv2.resize(gray, (64, 36), interpolation=cv2.INTER_AREA)
+                    histogram = cv2.calcHist([thumb], [0], None, [32], [0, 256])
+                    cut = (previous is not None and cv2.mean(cv2.absdiff(thumb, previous))[0] > 44
+                           and cv2.compareHist(histogram, previous_hist, cv2.HISTCMP_CORREL) < .38)
+                    if kind == "yunet":
+                        _, found = detector.detect(frame)
+                        boxes = found if found is not None else ()
+                    else:
+                        boxes = detector.detectMultiScale(gray, 1.1, 5, minSize=(36, 36))
+                    faces = [(box[0] + box[2] / 2) * W / dw for box in boxes]
+                    observations.append((len(observations) / DET_FPS, faces, bool(cut)))
+                    previous, previous_hist = thumb, histogram
+            finally:
+                cap.release()
+    except (AttributeError, OSError, cv2.error, subprocess.SubprocessError):
+        return []
 
 
 def ass_time(t):
@@ -517,7 +462,7 @@ def build_ass(words, clip_start, clip_end, path, tw, th, font_size, margin_v,
     Path(path).write_text(header + "\n".join(events) + "\n", encoding="utf-8")
 
 
-def write_meta(seg, out_path, subtitle_track=None):
+def write_meta(seg, out_path, subtitle_track=None, motion=None):
     """Deterministic ready-to-post metadata saved as <clip>.meta.json."""
     hook = str(seg.get("hook", "clip")).replace("-", " ").strip()
     title = hook.capitalize()
@@ -532,6 +477,8 @@ def write_meta(seg, out_path, subtitle_track=None):
     }
     if subtitle_track is not None:
         meta["subtitles"] = subtitle_track
+    if motion is not None:
+        meta["motion"] = motion
     Path(out_path).with_suffix(".meta.json").write_text(
         json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
     return Path(out_path).with_suffix(".meta.json")
@@ -613,11 +560,13 @@ def render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAUL
            layout="single", centers=(0.25, 0.75), caption=None,
            source_offset=0.0, fit="cover", facecam_box=None,
            facecam_height=0.34, mark=None, transcript_info=None, timeout=None, allow_model_download=True,
-           retain_for_repair=False):
+           retain_for_repair=False, camera_mode="auto"):
     out_dir = (Path(out_dir) if out_dir else default_out()).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     source = Path(source).resolve()
     resolved = resolve_caption(style, brand, caption)
+    if camera_mode not in smart_camera.MODES:
+        raise ValueError("Modo de cámara desconocido.")
     if fit not in {"cover", "contain"}:
         raise ValueError("Fit must be cover or contain.")
     if layout == "stacked" and fit == "contain":
@@ -670,6 +619,8 @@ def render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAUL
             raise
         caption_error = str(exc)
         groups = []
+    if layout == "stacked" and aspect == "9:16" and camera_mode != "auto":
+        layout = "single"
     if layout == "stacked":
         box, warning = resolve_facecam_box(source, W, H, workdir, facecam_box,
                                            allow_download=allow_model_download, timeout=timeout)
@@ -684,35 +635,66 @@ def render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAUL
         build_ass(cap_words, start, start + dur, out_dir / "_caption.ass",
                   tw, th, font_size, margin_v, style, brand, caption, groups=groups)
 
-    needs_track = cw < W * 0.95          # real horizontal crop -> track the speaker
+    vertical = aspect == "9:16"
+    needs_track = cw < W * .95 and fit == "cover"
+    motion = framing = None
+    requested_layout, requested_centers = layout, centers
+    if vertical:
+        rate, cadence = smart_camera.source_rate(render_src, local_start, timeout)
+        motion = {"version": 1, "requested": camera_mode, "source_cadence": cadence, "fps": str(rate)}
+        if camera_mode != "auto":
+            layout = "single"
+        manual_split = camera_mode == "split" and (requested_layout == "split" or tuple(centers) != (.25, .75))
+        auto_split = camera_mode == "split" and not manual_split
+        if manual_split:
+            layout = "split"
+        elif layout == "single" and (needs_track or auto_split) and camera_mode != "stable":
+            observations = detect_track(render_src, local_start, dur, W, workdir, False, timeout)
+            framing = smart_camera.plan(observations, W, cw, dur)
+            motion.update(framing.metrics())
+            if camera_mode in {"auto", "split"} and framing.pairs:
+                layout, centers = "split", framing.pairs
+            elif auto_split:
+                motion["fallback"] = {"reason": "no se verificaron dos posiciones estables"}
+                framing = None
+            elif framing.reliable:
+                smart_camera.write_commands(framing.points, W, cw, out_dir / "_crop.cmd", dur)
+    if not vertical and layout == "single" and needs_track:
+        framing = smart_camera.plan(
+            detect_track(render_src, local_start, dur, W, workdir, allow_model_download, timeout), W, cw, dur)
+        if framing.reliable:
+            smart_camera.write_commands(framing.points, W, cw, out_dir / "_crop.cmd", dur)
+
+    blur_w, blur_h = (tw // 8) * 2, (th // 8) * 2
+    stable = (f"[0:v]split=2[bg][fg];[bg]crop={cw}:{ch}:{x0}:{y0},"
+              f"scale={blur_w}:{blur_h}:flags=fast_bilinear,boxblur=6:1,"
+              f"scale={tw}:{th}:flags=fast_bilinear,setsar=1[back];"
+              f"[fg]scale={tw}:{th}:force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1[front];"
+              "[back][front]overlay=(W-w)/2:(H-h)/2:shortest=1,setsar=1,subtitles=_caption.ass")
     if layout == "stacked":
         mode = "gaming facecam + gameplay (stacked)"
     elif fit == "contain":
-        # Keep the entire source frame visible; fill the rest with black bars.
         vf = (f"scale={tw}:{th}:force_original_aspect_ratio=decrease,"
-              f"pad={tw}:{th}:(ow-iw)/2:(oh-ih)/2,subtitles=_caption.ass")
+              f"pad={tw}:{th}:(ow-iw)/2:(oh-ih)/2,setsar=1,subtitles=_caption.ass")
         mode = "contain (full frame)"
     elif layout == "split":
-        # Keep every YUV420 panel even-sized. Older libass/ffmpeg builds can
-        # crash on odd-height intermediate frames (854px drafts / 2 = 427).
         panel_h = (th // 4) * 2
         pcw, pch, _, py = crop_for(W, H, tw, panel_h)
         positions = [max(0, min(W - pcw, round(W * c - pcw / 2))) for c in centers]
         vf = (f"[0:v]split=2[a][b];[a]crop={pcw}:{pch}:{positions[0]}:{py},"
-              f"scale={tw}:{panel_h}[top];[b]crop={pcw}:{pch}:{positions[1]}:{py},"
-              f"scale={tw}:{panel_h}[bottom];[top][bottom]vstack=inputs=2,"
-              f"pad={tw}:{th}:0:0,subtitles=_caption.ass")
-        mode = "podcast split-screen"
-    elif needs_track:
-        track = smooth_track(
-            detect_track(render_src, local_start, dur, W, workdir, allow_model_download, timeout), W, cw)
-        build_sendcmd(track, cw, out_dir / "_crop.cmd")
-        init_x = max(0, min(int(round(track[0][1] - cw / 2.0)), W - cw))
+              f"scale={tw}:{panel_h},setsar=1[top];[b]crop={pcw}:{pch}:{positions[1]}:{py},"
+              f"scale={tw}:{panel_h},setsar=1[bottom];[top][bottom]vstack=inputs=2,"
+              f"pad={tw}:{th}:0:0,setsar=1,subtitles=_caption.ass")
+        mode = "split"
+    elif needs_track and (not vertical or camera_mode != "stable") and framing and framing.reliable:
+        init_x = max(0, min(int(round(framing.points[0][1] - cw / 2)), W - cw))
         vf = (f"sendcmd=f=_crop.cmd,crop={cw}:{ch}:{init_x}:{y0},"
-              f"scale={tw}:{th},subtitles=_caption.ass")
-        mode = "speaker-tracked"
+              f"scale={tw}:{th},setsar=1,subtitles=_caption.ass")
+        mode = "smart"
+    elif vertical and (W > cw or H > ch):
+        vf, mode = stable, "stable"
     else:
-        vf = f"crop={cw}:{ch}:{x0}:{y0},scale={tw}:{th},subtitles=_caption.ass"
+        vf = f"crop={cw}:{ch}:{x0}:{y0},scale={tw}:{th},setsar=1,subtitles=_caption.ass"
         mode = "full-frame"
 
     suffix = ".preview" if preview else ""
@@ -720,64 +702,92 @@ def render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAUL
     out = out_dir / (prefix + sanitize(seg.get("hook", "clip")) + suffix + ".mp4")
     if mark and out.exists():
         out = out.with_name(f"{out.stem}-{uuid.uuid4().hex[:8]}{out.suffix}")
-    cmd = ["ffmpeg", "-y", "-ss", f"{local_start:.3f}", "-i", str(render_src),
-           "-t", f"{dur:.3f}",
-           "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
-           "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", str(out)]
-    if timeout is not None:
-        cmd[cmd.index("-c:v"):cmd.index("-c:v")] = ["-threads", "2"]
-    if mark:
-        cmd.insert(1, "-nostdin")
-        w, h, x, y = mark.geometry(tw, th)
-        if layout == "stacked":
-            base = vf.removesuffix("subtitles=_caption.ass[v]") + "null[base]"
+    def command(graph, destination):
+        cmd = ["ffmpeg", "-nostdin", "-y", "-ss", f"{local_start:.3f}", "-i", str(render_src)]
+        if mark:
+            w, h, x, y = mark.geometry(tw, th)
+            cmd += ["-f", "image2", "-pattern_type", "none", "-i", str(mark.image)]
+            base = (graph.removesuffix("subtitles=_caption.ass[v]") + "null[base]" if layout == "stacked"
+                    else ("" if graph.startswith("[0:v]") else "[0:v]")
+                    + graph.removesuffix(",subtitles=_caption.ass") + "[base]")
+            graph = (base + f";[1:v]format=rgba,scale={w}:{h},setsar=1,"
+                     f"colorchannelmixer=aa={mark.settings['opacity'] / 100:.2f}[mark];"
+                     f"[base][mark]overlay=x={x}:y={y}:eof_action=repeat:format=auto,"
+                     "setsar=1,subtitles=_caption.ass[v]")
+        elif brand and brand.get("logo"):
+            width = max(20, round(brand["logo_width"] * tw / 1920))
+            cmd += ["-i", brand["logo"]]
+            base = (graph.removesuffix("[v]") if layout == "stacked"
+                    else ("" if graph.startswith("[0:v]") else "[0:v]") + graph)
+            graph = (base + f"[captioned];[1:v]scale={width}:-1[logo];"
+                     "[captioned][logo]overlay=W-w-24:24:eof_action=repeat,setsar=1[v]")
+        elif graph.startswith("[0:v]") and not graph.endswith("[v]"):
+            graph += "[v]"
+        cmd += ["-t", f"{dur:.3f}"]
+        if graph.endswith("[v]"):
+            cmd += ["-filter_complex_threads", "1", "-filter_complex", graph, "-map", "[v]", "-map", "0:a?"]
         else:
-            base = ("" if vf.startswith("[0:v]") else "[0:v]") + vf.removesuffix(",subtitles=_caption.ass") + "[base]"
-        graph = (base + f";[1:v]format=rgba,scale={w}:{h},setsar=1,"
-                 f"colorchannelmixer=aa={mark.settings['opacity'] / 100:.2f}[mark];"
-                 f"[base][mark]overlay=x={x}:y={y}:eof_action=repeat:format=auto,"
-                 "subtitles=_caption.ass[v]")
-        cmd[cmd.index("-t"):cmd.index("-t")] = ["-f", "image2", "-pattern_type", "none", "-i", str(mark.image)]
-        cmd[cmd.index("-c:v"):cmd.index("-c:v")] = [
-            "-filter_complex_threads", "1", "-filter_complex", graph, "-map", "[v]", "-map", "0:a?"]
-    elif brand and brand.get("logo"):
-        width = max(20, round(brand["logo_width"] * tw / 1920))
-        if layout == "stacked":
-            graph = (vf + f";[1:v]scale={width}:-1[logo];"
-                          "[v][logo]overlay=W-w-24:24:eof_action=repeat[out]")
-            cmd[cmd.index("-t"):cmd.index("-t")] = ["-i", brand["logo"]]
-            cmd[cmd.index("-c:v"):cmd.index("-c:v")] = [
-                "-filter_complex", graph, "-map", "[out]", "-map", "0:a?"]
-        else:
-            if layout == "single":
-                vf = "[0:v]" + vf
-            graph = (vf + f"[captioned];[1:v]scale={width}:-1[logo];"
-                     "[captioned][logo]overlay=W-w-24:24:eof_action=repeat[v]")
-            pos = cmd.index("-t")
-            cmd[pos:pos] = ["-i", brand["logo"]]
-            cmd[cmd.index("-c:v"):cmd.index("-c:v")] = ["-filter_complex", graph, "-map", "[v]", "-map", "0:a?"]
-    elif layout == "split":
-        cmd[cmd.index("-c:v"):cmd.index("-c:v")] = ["-filter_complex", vf + "[v]", "-map", "[v]", "-map", "0:a?"]
-    elif layout == "stacked":
-        cmd[cmd.index("-c:v"):cmd.index("-c:v")] = [
-            "-filter_complex", vf, "-map", "[v]", "-map", "0:a?"]
-    else:
-        cmd[cmd.index("-c:v"):cmd.index("-c:v")] = ["-vf", vf]
-    if loudnorm:
-        cmd[cmd.index("-c:v"):cmd.index("-c:v")] = [
-            "-af", "loudnorm=I=-14:TP=-1.5:LRA=11"]
-    print(">", " ".join(cmd), flush=True)
-    if mark:
-        with tempfile.TemporaryDirectory(prefix=".watermark-render-", dir=out_dir) as staging:
-            temporary = Path(staging) / "video.mp4"
+            cmd += ["-filter_threads", "1", "-vf", graph]
+        if loudnorm:
+            cmd += ["-af", "loudnorm=I=-14:TP=-1.5:LRA=11"]
+        if vertical:
+            cmd += ["-r", str(rate), "-fps_mode", "cfr"]
+        if timeout is not None or vertical:
+            cmd += ["-threads", "2"]
+        return cmd + ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+                      "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", str(destination)]
+
+    with tempfile.TemporaryDirectory(prefix=".render-", dir=out_dir) as staging:
+        temporary = Path(staging) / "video.mp4"
+
+        def encode(graph):
+            cmd = command(graph, temporary)
+            print(">", " ".join(cmd), flush=True)
             try:
-                subprocess.run([*cmd[:-1], str(temporary)], check=True, cwd=str(out_dir),
+                subprocess.run(cmd, check=True, cwd=str(out_dir),
                                timeout=timeout or max(60, min(7200, dur * 12 + 60)))
-                temporary.replace(out)
             except (OSError, subprocess.SubprocessError):
-                raise watermark.WatermarkError("FFmpeg no pudo incorporar la marca de agua al MP4. Comprueba la imagen PNG y los filtros de FFmpeg.") from None
-    else:
-        subprocess.run(cmd, check=True, cwd=str(out_dir), timeout=timeout)
+                if mark:
+                    raise watermark.WatermarkError("FFmpeg no pudo incorporar la marca de agua al MP4. Comprueba la imagen PNG y los filtros de FFmpeg.") from None
+                raise
+
+        try:
+            encode(vf)
+        except (subprocess.CalledProcessError, watermark.WatermarkError):
+            if not vertical or mode != "smart":
+                raise
+            encode(stable)
+            mode = "stable"
+            motion["fallback"] = {"reason": "el filtro de seguimiento no pudo renderizar"}
+        if motion is not None and not preview:
+            source_spans = None
+
+            def verify():
+                nonlocal source_spans
+                evidence = smart_camera.delivery_check(temporary, rate, dur, timeout)
+                spans = smart_camera.freeze_spans(temporary, 0, dur, timeout)
+                if spans and source_spans is None:
+                    source_spans = smart_camera.freeze_spans(render_src, local_start, dur, timeout)
+                excess = smart_camera.excess_freezes(spans, source_spans or [])
+                if excess:
+                    raise smart_camera.MotionError(
+                        "Control de movimiento: pausas no explicadas por la fuente.", excess)
+                return {**evidence, "freeze_spans": spans[:50], "source_freeze_spans": (source_spans or [])[:50],
+                        "unexplained_freezes": []}
+
+            try:
+                motion.update(verify())
+            except smart_camera.MotionError as exc:
+                if mode not in {"smart", "split"}:
+                    raise
+                motion["fallback"] = {"reason": str(exc), "intervals": exc.intervals}
+                encode(stable)
+                mode = "stable"
+                motion.update(verify())
+            if mode == "stable" and camera_mode == "smart" and "fallback" not in motion:
+                motion["fallback"] = {"reason": motion.get("reason", "encuadre sin sujeto verificable")}
+            motion["applied"] = mode
+        temporary.replace(out)
     srt = captions.write_srt(cap_words, start, start + dur, out.with_suffix(".srt"), groups=groups)
     ass = out_dir / "_caption.ass"
     track = None
@@ -791,7 +801,8 @@ def render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAUL
             "timing": {k: resolved[k] for k in captions.TIMING_FIELDS},
             "srt_hash": artifact_hash(srt), "ass_hash": artifact_hash(ass_output),
             "media_hash": artifact_hash(out), "tightened": bool(do_tighten),
-            "render_options": {"style": style, "fit": fit, "layout": layout, "centers": centers,
+            "render_options": {"style": style, "fit": fit, "layout": requested_layout, "centers": requested_centers,
+                               "camera_mode": camera_mode,
                                "caption": caption, "facecam_box": facecam_box, "facecam_height": facecam_height},
             **(transcript_info or {}),
             **({"caption_error": caption_error} if caption_error else {}),
@@ -819,7 +830,7 @@ def render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAUL
     subprocess.run(["ffmpeg", "-y", "-ss", f"{dur * 0.4:.2f}", "-i", str(out),
                     "-frames:v", "1", "-q:v", "2", str(poster)],
                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=timeout)
-    meta_path = write_meta(seg, out, track)
+    meta_path = write_meta(seg, out, track, motion)
 
     print(f"SAVED {out}  ({aspect} {tw}x{th}, {mode})  "
           f"+ poster {poster.name} + {meta_path.name}", flush=True)
@@ -843,6 +854,7 @@ def main():
                     help="render fast 480p drafts (no poster/meta) to review "
                          "clip selection before the full render")
     ap.add_argument("--brand", help="path to reusable JSON brand preset")
+    ap.add_argument("--camera-mode", choices=smart_camera.MODES, default="auto")
     ap.add_argument("--layout", choices=["single", "split"], default="single")
     ap.add_argument("--centers", type=float, nargs=2, default=[0.25, 0.75])
     add_caption_arguments(ap)
@@ -883,7 +895,7 @@ def main():
                                     out_dir=out_dir, style=args.style,
                                     do_tighten=args.tighten, loudnorm=args.loudnorm,
                                     preview=args.preview, brand=brand,
-                                    layout=args.layout, centers=args.centers,
+                                    layout=args.layout, centers=args.centers, camera_mode=args.camera_mode,
                                     caption=caption)))
         except subprocess.CalledProcessError as e:
             print(f"ERROR rendering clip {i}: {e}", flush=True)
@@ -909,7 +921,7 @@ def stacked_graph(W, H, tw, th, facecam_height, box):
              f"[cam]crop={fcw}:{fch}:{fcx}:{fcy},scale={tw}:{fh}[top];"
              f"[game]crop={gcw}:{gch}:{gcx}:{gcy},scale={tw}:{gh}[bottom];"
              f"[top][bottom]vstack=inputs=2[stack];"
-             f"[stack]subtitles=_caption.ass[v]")
+             f"[stack]setsar=1,subtitles=_caption.ass[v]")
     return graph, th - fh - 12
 
 

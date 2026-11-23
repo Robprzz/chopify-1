@@ -350,6 +350,7 @@ def main():
     ap.add_argument("--semantic", help="find clips by meaning with local embeddings")
     ap.add_argument("--embed-model", default="nomic-embed-text")
     ap.add_argument("--brand", help="JSON brand preset path")
+    ap.add_argument("--camera-mode", choices=render_clips.smart_camera.MODES, default="auto")
     ap.add_argument("--layout", choices=["single", "split", "stacked"], default="single")
     ap.add_argument("--facecam-box", type=float, nargs=4, default=None,
                     metavar=("X", "Y", "W", "H"),

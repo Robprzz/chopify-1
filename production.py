@@ -19,6 +19,7 @@ import projects
 from production_store import Store
 import production_selection as selection
 import subtitle_quality as quality
+import smart_camera
 import subtitle_repair as repair
 
 
@@ -107,6 +108,12 @@ def media_check(media, cancellation):
         return "continuity_gap", {"errors": ["Se detectó un corte de más de medio segundo en una pista."],
                                   "continuity_gaps": gaps}
     report = quality.diagnose(media)
+    motion = smart_camera.saved_motion(media)
+    if motion is not None:
+        report["motion"] = motion
+        if motion.get("unexplained_freezes"):
+            report["errors"].append("El render contiene pausas ausentes de la fuente.")
+            return "motion_freeze", report
     report["continuity_gaps"] = gaps
     report.update(integrity="decoded", av_start_skew=round(abs(starts[0] - starts[1]), 3),
                   av_end_skew=round(abs(ends[0] - ends[1]), 3))

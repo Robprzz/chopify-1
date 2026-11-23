@@ -293,6 +293,10 @@
           <label>Formato de salida
             <select id="live-aspect"><option>16:9</option><option selected>9:16</option><option>1:1</option></select>
           </label>
+          <label>Encuadre vertical<select id="live-camera-mode"><option value="auto">Automática — recomendado</option>
+                  <option value="smart">Smart Camera</option>
+                  <option value="split">Split Screen</option>
+                  <option value="stable">Encuadre estable</option></select></label>
           <label for="live-duration">Duración de producción</label>
           <select id="live-duration">
             <option value="30-60">30–60 s</option>
@@ -770,6 +774,11 @@
                   <option>1:1</option>
                 </select></label
               >
+              <label>Encuadre vertical<select name="camera_mode"><option value="auto">Automática — recomendado</option>
+                  <option value="smart">Smart Camera</option>
+                  <option value="split">Split Screen</option>
+                  <option value="stable">Encuadre estable</option></select></label>
+              <details><summary>Configuración avanzada de encuadre</summary>
               <label
                 >Framing<select name="layout">
                   <option value="single">Single frame / face tracking</option>
@@ -812,6 +821,7 @@
                     step="0.01"
                 /></label>
               </div>
+              </details>
               <label
                 >Caption style<select name="style">
                   <option>default</option>

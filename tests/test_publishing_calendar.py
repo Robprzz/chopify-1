@@ -193,6 +193,10 @@ def test_calendar_ui_and_navigation_over_http(tmp_path, chromium_page):
         page.keyboard.press("Escape")
         page.locator("#show-live").click()
         expect(page.locator("#live-aspect")).to_have_value("9:16")
+        expect(page.locator("#live-camera-mode")).to_have_value("auto")
+        expect(page.locator("#live-camera-mode option")).to_have_text(
+            ["Automática — recomendado", "Smart Camera", "Split Screen", "Encuadre estable"]
+        )
         expect(page.locator("#live-max-height")).to_be_hidden()
         page.locator("#show-publications").click()
         expect(page.locator("#calendar-grid .calendar-cell")).to_have_count(7)

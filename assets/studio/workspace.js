@@ -15,7 +15,7 @@ let workspaceData = null;
 let workspaceLoading = null;
 let workspaceView = "home-view";
 let workspaceLast = 0;
-const sessionPrefs = ["live-aspect","live-duration","live-max-height","live-threshold","live-per-hour","live-per-session","live-whisper-device"];
+const sessionPrefs = ["live-aspect","live-camera-mode","live-duration","live-max-height","live-threshold","live-per-hour","live-per-session","live-whisper-device"];
 
 function getPreference(key, fallback = "") {
   try { return localStorage.getItem("anqora." + key) ?? fallback; } catch { return fallback; }

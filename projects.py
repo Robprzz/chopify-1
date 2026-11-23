@@ -33,7 +33,7 @@ DEFAULT_OPTIONS = {"aspect": "16:9", "fit": "cover", "style": "default", "tighte
                    "min_score": 8.0, "preferred_len": None,
                    "llm": None, "search": None, "semantic": None,
                    "embed_model": "nomic-embed-text", "brand": None,
-                   "layout": "single", "centers": [0.25, 0.75], "caption": None,
+                   "layout": "single", "camera_mode": "auto", "centers": [0.25, 0.75], "caption": None,
                    "facecam_box": None, "facecam_height": 0.34,
                     "video_type": "auto", "format": None, "video_type_model": None,
                    **LIVE_DEFAULTS}
@@ -69,6 +69,8 @@ def validate_options(options):
         raise ValueError("Unknown aspect ratio or caption style.")
     if result["fit"] not in {"cover", "contain"}:
         raise ValueError("Fit must be cover or contain.")
+    if result["camera_mode"] not in render_clips.smart_camera.MODES:
+        raise ValueError("Modo de cámara desconocido.")
     if result["layout"] not in {"single", "split", "stacked"}:
         raise ValueError("Layout must be single, split or stacked.")
     if result["layout"] in {"split", "stacked"} and result["aspect"] != "9:16":
@@ -645,7 +647,7 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
                     output = render_clips.render({**segment, "id": segment["id"] + "-" + key[:8]}, data["words"], render_source, W, H, path,
                         options["aspect"], out_dir=out, style=options["style"],
                         do_tighten=options["tighten"], loudnorm=options["loudnorm"], preview=preview,
-                        brand=brand, layout=options["layout"], centers=options["centers"],
+                        brand=brand, layout=options["layout"], centers=options["centers"], camera_mode=options["camera_mode"],
                         caption=options["caption"], source_offset=source_offset, mark=mark,
                         retain_for_repair=automation_export,
                         transcript_info={"model": data.get("model"), "origin": "project",

@@ -190,7 +190,7 @@ def _rebuild(root, media, project, folder, draft, *, preview, export_id=None, ch
             seg, words, source, *source_size, staging, aspect, out_dir=staging,
             style=options["style"], brand=brand,
             caption={**(options["caption"] or {}), **draft["timing"], "words_per_cue": draft["group_size"]},
-            mark=mark, fit=options["fit"], layout=options["layout"], centers=options["centers"],
+            mark=mark, fit=options["fit"], layout=options["layout"], centers=options["centers"], camera_mode=options["camera_mode"],
             facecam_box=options["facecam_box"], facecam_height=options["facecam_height"],
             transcript_info={"model": draft["model"], "origin": draft.get("origin", "Faster-Whisper sobre el audio del MP4"),
                              "transcript_version": 1, "transcript_hash": projects.digest(draft["words"]),

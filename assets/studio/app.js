@@ -1062,7 +1062,7 @@ $("#live-form").addEventListener(
     $("#live-start-error").hidden = true;
     try {
       const options = { aspect: $("#live-aspect").value, live_max_height: Number($("#live-max-height").value),
-        live_duration: $("#live-duration").value, live_max_per_hour: $("#live-per-hour").valueAsNumber,
+        live_duration: $("#live-duration").value, camera_mode: $("#live-camera-mode").value, live_max_per_hour: $("#live-per-hour").valueAsNumber,
         live_max_clips: $("#live-per-session").valueAsNumber, live_whisper_device: $("#live-whisper-device").value };
       const threshold = $("#live-threshold");
       if (threshold.value !== "") options.live_threshold = threshold.valueAsNumber;

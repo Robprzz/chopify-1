@@ -144,6 +144,8 @@ function showProductionDetail(job) {
       · Trabajo #${match.job_id}${match.ratio == null ? "" : " · " + Math.round(match.ratio * 100) + "%"}</p>`).join("")}
     ${diag.integrity ? `<p>Multimedia decodificado · Desfase A/V ${Number(diag.av_end_skew).toFixed(3)} s
       · Cobertura de voz ${diag.speech_coverage == null ? "sin verificar" : Math.round(diag.speech_coverage * 100) + "%"}</p>` : ""}
+    ${diag.motion ? `<p>Cámara ${escapeHTML(diag.motion.applied)} · ${escapeHTML(diag.motion.fps)} FPS
+      · ${escapeHTML(diag.motion.frames)} fotogramas${diag.motion.fallback ? " · " + escapeHTML(diag.motion.fallback.reason) : ""}</p>` : ""}
     <p><a href="${escapeHTML(media)}" target="_blank" rel="noopener">Abrir clip</a></p>
     <details open><summary>Historial del trabajo</summary><ul>${job.events.map(event =>
       `<li>${new Date(event.created * 1000).toLocaleString()} · ${productionNames[event.state]}

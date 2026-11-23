@@ -12,6 +12,7 @@ import ingest
 from live_signals import LIVE_TRANSCRIPT_MODEL
 import projects
 import render_clips
+import smart_camera
 import watermark
 
 
@@ -190,7 +191,7 @@ class LiveClipWriter:
                           options["aspect"], out_dir=str(self.clips_dir),
                           style=options["style"], do_tighten=options["tighten"] and manual_window is None,
                           loudnorm=options["loudnorm"], brand=brand,
-                          layout=options["layout"], centers=options["centers"],
+                          layout=options["layout"], centers=options["centers"], camera_mode=options.get("camera_mode", "auto"),
                           caption=options["caption"], fit=options["fit"],
                           facecam_box=options["facecam_box"],
                           facecam_height=options["facecam_height"], mark=mark, retain_for_repair=True,
@@ -200,6 +201,8 @@ class LiveClipWriter:
             record.files = {"window": str(window)}
             for path in sorted(self.clips_dir.glob(f"{record.id}-*")):
                 record.files[path.suffix.lstrip(".") or "file"] = str(path)
+        except smart_camera.MotionError as exc:
+            record.error = str(exc)
         except Exception as exc:
             from live_capture import safe_stderr
             detail = safe_stderr(getattr(exc, "stderr", ""))

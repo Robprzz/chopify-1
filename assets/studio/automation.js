@@ -2,6 +2,9 @@
 
 const automationFields = $("#automation-fields");
 const automationInputs = [...automationFields.querySelectorAll("input[name]")];
+const priorityWeights = [...automationFields.querySelectorAll("[data-priority-weight]")];
+const priorityCurve = [...automationFields.querySelectorAll("[data-priority-curve]")];
+const priorityLevels = [...automationFields.querySelectorAll("[data-priority-level]")];
 const automationEndpoint = "/api/automation/settings";
 let automationSnapshot = null;
 let automationBusy = false;
@@ -13,6 +16,10 @@ function applyAutomationSettings(snapshot) {
     if (field.type === "checkbox") field.checked = value;
     else field.value = value;
   }
+  const engine = snapshot.settings.priority_engine;
+  priorityWeights.forEach(field => { field.value = engine.weights[field.dataset.priorityWeight]; });
+  priorityCurve.forEach((field, index) => { field.value = engine.curve[index]; });
+  priorityLevels.forEach(field => { field.value = engine.levels[field.dataset.priorityLevel]; });
 }
 
 async function updateAutomation(message, operation, success) {
@@ -59,6 +66,11 @@ $("#automation-form").addEventListener("submit", (event) => {
     else if (field.type === "number") settings[field.name] = field.valueAsNumber;
     else settings[field.name] = field.value.trim();
   }
+  settings.priority_engine = {
+    weights: Object.fromEntries(priorityWeights.map(field => [field.dataset.priorityWeight, field.valueAsNumber])),
+    curve: priorityCurve.map(field => field.valueAsNumber),
+    levels: Object.fromEntries(priorityLevels.map(field => [field.dataset.priorityLevel, field.valueAsNumber])),
+  };
   const payload = { revision: automationSnapshot.revision, settings };
   updateAutomation("Guardando ajustes…", () => api(automationEndpoint, payload), "Ajustes guardados.");
 });

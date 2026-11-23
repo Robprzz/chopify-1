@@ -13,6 +13,7 @@
     <script src="/editorial.js" defer></script>
     <script src="/subtitles.js" defer></script>
     <script src="/production.js" defer></script>
+    <script src="/realtime.js" defer></script>
     <script src="/system.js" defer></script>
     <script src="/telegram.js" defer></script>
     <script src="/watermark.js" defer></script>
@@ -341,16 +342,39 @@
             <label class="check"><input type="checkbox" name="subtitle_correction" /> Corregir subtítulos</label>
             <label class="check"><input type="checkbox" name="force_vertical_format" /> Forzar exportación vertical</label>
             <div class="form-grid">
-              <label>Puntuación mínima (7–10)
+              <label>Puntuación mínima (6–10)
                 <input type="number" name="minimum_clip_score" min="6" max="10" step="any" required />
               </label>
-              <label>Límite diario (1–3)
-                <input type="number" name="daily_publication_limit" min="1" max="3" step="1" required />
+              <label>Recomendaciones diarias (1–5)
+                <input type="number" name="daily_publication_limit" min="1" max="5" step="1" required />
               </label>
               <label>Zona horaria IANA
                 <input type="text" name="timezone" maxlength="128" placeholder="America/Santo_Domingo" required />
               </label>
             </div>
+            <details>
+              <summary>Prioridad temporal</summary>
+              <p class="muted">Los cuatro pesos deben sumar 100 %. La curva de vigencia es una heurística.</p>
+              <div class="form-grid">
+                <label>Calidad (%) <input data-priority-weight="quality" type="number" min="0" max="100" step="any" required /></label>
+                <label>Oportunidad (%) <input data-priority-weight="opportunity" type="number" min="0" max="100" step="any" required /></label>
+                <label>Interacción (%) <input data-priority-weight="interaction" type="number" min="0" max="100" step="any" required /></label>
+                <label>Diferenciación (%) <input data-priority-weight="diversity" type="number" min="0" max="100" step="any" required /></label>
+              </div>
+              <div class="form-grid">
+                <label>Hasta 5 min (%) <input data-priority-curve type="number" min="0" max="100" step="any" required /></label>
+                <label>15 min (%) <input data-priority-curve type="number" min="0" max="100" step="any" required /></label>
+                <label>30 min (%) <input data-priority-curve type="number" min="0" max="100" step="any" required /></label>
+                <label>60 min (%) <input data-priority-curve type="number" min="0" max="100" step="any" required /></label>
+                <label>120 min (%) <input data-priority-curve type="number" min="0" max="100" step="any" required /></label>
+                <label>Desde 180 min (%) <input data-priority-curve type="number" min="0" max="100" step="any" required /></label>
+              </div>
+              <div class="form-grid">
+                <label>Umbral urgente <input data-priority-level="urgent" type="number" min="0" max="10" step="any" required /></label>
+                <label>Umbral alto <input data-priority-level="high" type="number" min="0" max="10" step="any" required /></label>
+                <label>Umbral normal <input data-priority-level="normal" type="number" min="0" max="10" step="any" required /></label>
+              </div>
+            </details>
           </fieldset>
           <p class="muted">IA local con Ollama, prevención de duplicados y aprobación obligatoria antes de cada envío.</p>
           <div class="form-bottom">
@@ -360,6 +384,39 @@
           <p id="automation-status" role="status"></p>
           <p id="automation-error" role="alert" hidden></p>
         </form>
+        <section class="panel input-panel production-panel" aria-labelledby="realtime-heading">
+          <div class="panel-title"><h2 id="realtime-heading">Real-Time Operations</h2></div>
+          <p id="realtime-summary" role="status"></p>
+          <p id="realtime-error" role="alert" hidden></p>
+          <label>Mostrar <select id="realtime-filter">
+            <option value="all">Clips elegibles</option><option value="urgent">Urgentes</option>
+            <option value="recommended">Recomendaciones de hoy</option>
+          </select></label>
+          <div class="production-table-wrap">
+            <table>
+              <thead><tr><th>Clip y estado</th><th>Antigüedad</th><th>Detección</th><th>Editorial</th>
+                <th>Calidad original</th><th>Prioridad temporal</th><th>Acciones</th></tr></thead>
+              <tbody id="realtime-ranking"></tbody>
+            </table>
+          </div>
+          <form id="realtime-event" hidden>
+            <h3 id="realtime-event-title">Hora del acontecimiento</h3>
+            <label><input id="realtime-evergreen" type="checkbox" /> Contenido atemporal</label>
+            <label>Fecha y hora verificadas (zona local del navegador)
+              <input id="realtime-event-at" type="datetime-local" />
+            </label>
+            <button type="submit">Guardar referencia</button>
+            <button id="realtime-event-close" type="button">Cerrar</button>
+          </form>
+          <div id="realtime-detail" hidden></div>
+          <details open><summary>Producción y espera estimada</summary><p id="realtime-queue"></p><ul id="realtime-pending"></ul></details>
+          <details><summary>Latencias medidas</summary><p id="realtime-bottlenecks"></p>
+            <div class="production-table-wrap"><table>
+              <thead><tr><th>Etapa</th><th>Muestras</th><th>Mediana</th><th>P95</th></tr></thead>
+              <tbody id="realtime-metrics"></tbody>
+            </table></div>
+          </details>
+        </section>
         <section class="panel input-panel production-panel" aria-labelledby="production-heading">
           <div class="panel-title"><h2 id="production-heading">Centro de operaciones</h2></div>
           <div class="publication-actions">

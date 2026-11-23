@@ -222,9 +222,9 @@ def test_twenty_jobs_automatic_quality_repair_and_semantic_gate(server, monkeypa
     request(base, "/api/production/resume", {}, token)
     result = until(lambda: request(base, "/api/production/status"), lambda state: state["metrics"]["pending"] == 0, 90)
     assert result["counts"] == {"ready": 10, "review": 3, "rejected": 6, "cancelled": 1}
-    assert result["recommended_count"] == 3
+    assert result["recommended_count"] == 5
     assert Counter(job["decision"] for job in result["jobs"]) == {
-        "recommended": 3, "eligible": 7, "duplicate": 4, "discarded": 3, "review": 3,
+        "recommended": 5, "eligible": 5, "duplicate": 4, "discarded": 3, "review": 3,
     }
     assert all(job["editorial_id"] is None for job in result["jobs"] if job["decision"] == "duplicate")
     assert result["metrics"]["repaired"] == 5
@@ -341,7 +341,7 @@ def test_operations_chromium_pause_and_semantic_result(server, chromium_page, tm
     page.locator("#production-filter").select_option("all")
     page.get_by_role("button", name="Ver detalle", exact=True).click()
     expect(page.locator("#production-detail")).to_contain_text("Multimedia decodificado")
-    page.locator(".production-panel").screenshot(path=str(tmp_path / "operations-chromium.png"))
+    page.get_by_role("region", name="Centro de operaciones").screenshot(path=str(tmp_path / "operations-chromium.png"))
     page.get_by_role("button", name="Ver propuestas", exact=True).click()
     output = page.locator("#editorial-result")
     expect(output).to_contain_text("Mayor puntuación entre las propuestas")

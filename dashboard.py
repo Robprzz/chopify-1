@@ -15,6 +15,7 @@ import sqlite3
 import subprocess
 import sys
 import threading
+import time
 from urllib.parse import parse_qs, unquote, urlsplit
 import webbrowser
 
@@ -26,6 +27,8 @@ import editorial_store
 import live_production
 import projects
 import production
+import realtime_operations
+from realtime_priority import valid_number
 import render_clips
 import subtitle_repair
 import telegram_gateway
@@ -85,6 +88,7 @@ STATIC_FILES = {
     "editorial.js": ("editorial.js", "text/javascript; charset=utf-8"),
     "subtitles.js": ("subtitles.js", "text/javascript; charset=utf-8"),
     "production.js": ("production.js", "text/javascript; charset=utf-8"),
+    "realtime.js": ("realtime.js", "text/javascript; charset=utf-8"),
     "system.js": ("system.js", "text/javascript; charset=utf-8"),
     "telegram.js": ("telegram.js", "text/javascript; charset=utf-8"),
     "chopify.ico": ("chopify.ico", "image/x-icon"),
@@ -851,12 +855,37 @@ class Handler(BaseHTTPRequestHandler):
 
         try:
             if body is None:
+                if action == "realtime":
+                    self.app.editorial._migrate()
+                    return self.send_json(realtime_operations.snapshot(
+                        worker, self.app.live_production, realtime_operations.publication_receipts(self.app.tiktok)))
                 if action == "status":
                     before = query.get("before")
                     cursor = identifier(int(before[0])) if before else None
                     return self.send_json(worker.status(cursor, query.get("view", ["all"])[0]))
                 if action == "job":
                     return self.send_json(store.detail(identifier(int(query.get("id", ["0"])[0]))))
+            elif action == "event":
+                if body.keys() != {"id", "run", "evergreen", "event_at"} or type(body["evergreen"]) is not bool:
+                    raise ValueError("Indica el origen temporal del clip.")
+                stamp = body["event_at"]
+                if stamp is not None and (body["evergreen"] or not valid_number(stamp, 0, time.time())):
+                    raise ValueError("La hora verificable del acontecimiento debe ser anterior a ahora.")
+                job = identifier(body["id"])
+                item = store.detail(job)
+                kind = "evergreen" if body["evergreen"] else "live" if item["project"].startswith("live/") else "conventional"
+                store.set_event(job, identifier(body["run"]), kind, stamp)
+                return self.send_json({"ok": True})
+            elif action == "review":
+                if body.keys() != {"id", "run", "revision", "decision"} or body["decision"] not in (
+                        "approved", "rejected", "correction"):
+                    raise ValueError("Decisión editorial inválida.")
+                revision = body["revision"]
+                if type(revision) is not int or not 0 <= revision < 2**63:
+                    raise ValueError("Revisión editorial inválida.")
+                changed = realtime_operations.decision(worker, identifier(body["id"]), identifier(body["run"]),
+                                                       revision, body["decision"])
+                return self.send_json({"ok": True, "changed": changed})
             elif action in ("pause", "resume"):
                 settings = store.config(paused=action == "pause")
                 worker.wake.set()

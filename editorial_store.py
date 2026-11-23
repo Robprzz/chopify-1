@@ -8,6 +8,7 @@ import sqlite3
 import time
 
 from editorial_content import DEFAULT_CONFIG, STYLES, validate_config, validate_edits
+from realtime_priority import FAIR_WAIT
 
 
 MAX_PENDING = 16
@@ -75,7 +76,8 @@ class EditorialStore:
                 )
             """)
             columns = {row["name"] for row in db.execute("PRAGMA table_info(editorial_jobs)")}
-            for name, datatype in (("editorial_state", "TEXT"), ("diagnostics", "TEXT"), ("previous_id", "INTEGER")):
+            for name, datatype in (("editorial_state", "TEXT"), ("diagnostics", "TEXT"), ("previous_id", "INTEGER"),
+                                   ("claimed_at", "REAL")):
                 if name not in columns:
                     db.execute(f"ALTER TABLE editorial_jobs ADD COLUMN {name} {datatype}")
             db.execute("CREATE INDEX IF NOT EXISTS editorial_fingerprint ON editorial_jobs(fingerprint, id)")
@@ -175,11 +177,15 @@ class EditorialStore:
             """, (now, now))
             if db.execute("SELECT 1 FROM editorial_jobs WHERE state='running'").fetchone():
                 return None
-            row = db.execute("SELECT * FROM editorial_jobs WHERE state='queued' ORDER BY id LIMIT 1").fetchone()
+            row = db.execute("""SELECT * FROM editorial_jobs WHERE state='queued' ORDER BY
+                CASE WHEN created<=? THEN 0 ELSE 1 END,
+                CASE WHEN created>? AND json_type(settings,'$.production')='array'
+                    THEN COALESCE(json_extract(source,'$.original_score'),0) ELSE 0 END DESC, id LIMIT 1""",
+                             (now - FAIR_WAIT, now - FAIR_WAIT)).fetchone()
             if row:
                 settings = json.loads(row["settings"])
-                db.execute("""UPDATE editorial_jobs SET state='running', owner=?, lease=?, revision=revision+1
-                              WHERE id=?""", (owner, now + 15, row["id"]))
+                db.execute("""UPDATE editorial_jobs SET state='running', owner=?, lease=?, revision=revision+1,
+                              claimed_at=COALESCE(claimed_at,?) WHERE id=?""", (owner, now + 15, now, row["id"]))
                 return row["id"], json.loads(row["source"]), settings
             return None
 

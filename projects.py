@@ -423,6 +423,7 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
                         render_from_sections=render_from_sections,
                         identity=source_identity)
                 else:
+                    started = time.monotonic()
                     dt.transcribe(
                         source, path, options["whisper_model"],
                         options["device"],
@@ -433,6 +434,7 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
                         render_from_sections=render_from_sections,
                         identity=source_identity,
                         progress=transcribe_progress)
+                    state["automation_transcription"] = {"seconds": round(time.monotonic() - started, 4)}
                     if (is_url and long and media_kind == "audio"
                             and not read_json(transcript_path).get("words")):
                         visual = ingest.download_visual_discovery(
@@ -457,6 +459,10 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
                         print("No speech; switching discovery to the "
                               "low-resolution visual video.", flush=True)
                 state["cache"]["transcript"] = transcript_key
+                if media_only:
+                    state.pop("automation_transcription", None)
+                else:
+                    state["automation_transcription"]["key"] = transcript_key
                 state["source_identity"] = source_identity
                 state["progress"] = {"stage": "transcribe", "done": 1,
                                      "total": 1, "detail": "complete"}
@@ -484,9 +490,11 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
                 cache.pop("discovery", None)
                 cache.pop("selection", None)
             stage("discover")
+            discovered = None
             if search_mode:
                 if selection is None:
                     score_clips.run(path, **score_options(options))
+                    discovered = time.time()
                     cache.update(discovery=discovery_key, selection=selection_key,
                                  candidate_file=file_identity(candidates_path))
                     save_project(path, state)
@@ -499,6 +507,7 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
                         band=(recipe["min_len"], recipe["max_len"]),
                         detection=state.get("detection"),
                         format_info=state.get("format"), resume=resume)
+                    discovered = time.time()
                     cache.update(discovery=discovery_key,
                                  candidate_file=file_identity(candidates_path))
                     save_project(path, state)
@@ -517,6 +526,8 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
 
             state["selection"] = (selection if selection is not None
                                   else read_json(path / "selection.json"))
+            if discovered is not None:
+                state["automation_discovery"] = {"detected_at": discovered, "key": discovery_key}
         if action == "prepare":
             state.update(status="review", stage="ready for review")
         else:
@@ -630,6 +641,7 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
                     else:
                         render_source, W, H = loaded
                 try:
+                    started = time.monotonic()
                     output = render_clips.render({**segment, "id": segment["id"] + "-" + key[:8]}, data["words"], render_source, W, H, path,
                         options["aspect"], out_dir=out, style=options["style"],
                         do_tighten=options["tighten"], loudnorm=options["loudnorm"], preview=preview,
@@ -647,6 +659,17 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
                     save_project(path, state)
                     continue
                 state["renders"][key] = str(output)
+                if not preview:
+                    transcript_metrics = state.get("automation_transcription") or {}
+                    discovery_metrics = state.get("automation_discovery") or {}
+                    state.setdefault("automation_render_metrics", {})[Path(output).name] = {
+                        "render_seconds": round(time.monotonic() - started, 4),
+                        "available_at": time.time(),
+                        "detected_at": discovery_metrics.get("detected_at")
+                        if discovery_metrics.get("key") == state["cache"].get("discovery") else None,
+                        "source_transcription": transcript_metrics
+                        if transcript_metrics.get("key") == state["cache"].get("transcript") else {},
+                    }
                 outputs.append(str(output))
                 save_project(path, state)
             state["last_outputs"] = outputs

@@ -5,6 +5,8 @@ from pathlib import Path
 import sqlite3
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import realtime_priority
+
 
 DEFAULT_SETTINGS = {
     "live_clipping": True,
@@ -13,7 +15,8 @@ DEFAULT_SETTINGS = {
     "force_vertical_format": False,
     "duplicate_prevention": True,
     "minimum_clip_score": 6.0,
-    "daily_publication_limit": 3,
+    "daily_publication_limit": 5,
+    "priority_engine": realtime_priority.DEFAULT_PRIORITY,
     "ai_engine": "local",
     "ai_provider": "ollama",
     "require_publication_consent": True,
@@ -37,7 +40,7 @@ class SettingsUnavailable(Exception):
 
 
 def validate_settings(settings):
-    if not isinstance(settings, dict) or settings.keys() != DEFAULT_SETTINGS.keys():
+    if not isinstance(settings, dict) or set(settings) | {"priority_engine"} != DEFAULT_SETTINGS.keys():
         raise ValueError("Envía los ajustes de Automation completos con los campos admitidos.")
     for key, default in DEFAULT_SETTINGS.items():
         if isinstance(default, bool) and type(settings[key]) is not bool:
@@ -49,8 +52,8 @@ def validate_settings(settings):
     if type(score) not in (int, float) or not 6 <= score <= 10:
         raise ValueError("La puntuación mínima debe estar entre 6 y 10.")
     limit = settings["daily_publication_limit"]
-    if type(limit) is not int or not 1 <= limit <= 3:
-        raise ValueError("El límite diario debe ser un número entero entre 1 y 3.")
+    if type(limit) is not int or not 1 <= limit <= 5:
+        raise ValueError("El límite diario debe ser un número entero entre 1 y 5.")
     timezone = settings["timezone"]
     if not isinstance(timezone, str) or not 1 <= len(timezone) <= 128:
         raise ValueError("Introduce una zona horaria IANA, como America/Santo_Domingo.")
@@ -64,7 +67,8 @@ def validate_settings(settings):
         raise ValueError("Introduce una zona horaria IANA, como America/Santo_Domingo.") from None
     except ValueError:
         raise ValueError("Introduce una zona horaria IANA, como America/Santo_Domingo.") from None
-    return {**settings, "minimum_clip_score": float(score)}
+    return {**settings, "minimum_clip_score": float(score),
+            "priority_engine": realtime_priority.validate(settings.get("priority_engine", realtime_priority.DEFAULT_PRIORITY))}
 
 
 class SettingsStore:
@@ -74,7 +78,7 @@ class SettingsStore:
     @staticmethod
     def _snapshot(row=None):
         if row is None:
-            return {"revision": 0, "settings": DEFAULT_SETTINGS.copy()}
+            return {"revision": 0, "settings": validate_settings(DEFAULT_SETTINGS)}
         revision, payload = row
         try:
             return {"revision": revision, "settings": validate_settings(json.loads(payload))}

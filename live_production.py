@@ -21,6 +21,7 @@ import download_and_transcribe as dt
 import live_clips
 import projects
 import render_clips
+from realtime_priority import FAIR_WAIT, distribution, queue_order
 import score_clips
 import subtitle_quality as quality
 from live_capture import safe_stderr
@@ -289,6 +290,42 @@ class Pipeline:
                 error TEXT, metrics TEXT, result TEXT)""")
             conn.execute("CREATE INDEX IF NOT EXISTS jobs_session ON jobs(session, created)")
             conn.execute("CREATE INDEX IF NOT EXISTS jobs_state ON jobs(state, updated)")
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(jobs)")}
+            for field in ("sealed_at", "claimed_at", "transcription_seconds", "render_seconds", "technical_seconds"):
+                if field not in columns:
+                    conn.execute(f"ALTER TABLE jobs ADD COLUMN {field} REAL")
+
+    def operations_timing(self, project, filename):
+        if not project.startswith("live/"):
+            return {}
+        with self.connect() as conn:
+            row = conn.execute("""SELECT created AS detected_at,sealed_at,claimed_at,transcription_seconds,
+                render_seconds,technical_seconds,updated AS available_at
+                FROM jobs WHERE session=? AND result=? AND state='done' LIMIT 1""",
+                               (project[5:], filename)).fetchone()
+        return dict(row) if row else {}
+
+    def operations_pending(self, now):
+        with self.connect() as conn:
+            rows = [dict(row) for row in conn.execute("""SELECT id,session,state,score,created,sealed_at,claimed_at,lease
+                FROM jobs WHERE state IN (?,?,?,?,?)""", ACTIVE)]
+            stats = distribution(row[0] for row in conn.execute("""SELECT updated-claimed_at FROM jobs
+                WHERE state='done' AND claimed_at IS NOT NULL ORDER BY updated DESC LIMIT 120"""))
+        active = next((row for row in rows if (row["lease"] or 0) > now), None)
+        waiting = sorted((row for row in rows if row is not active and row["state"] != "collecting"),
+                         key=lambda row: queue_order(
+                             row["sealed_at"] or row["created"],
+                             row["score"] + 2 * max(0, 1 - max(0, now - row["created"]) / FAIR_WAIT),
+                             row["id"], now))
+        collecting = [row for row in rows if row["state"] == "collecting"]
+        service = stats["median"] if stats["samples"] >= 5 else None
+        remaining = 0 if not active else service - (now - active["claimed_at"]) if service is not None and active["claimed_at"] else None
+        estimates = {row["id"]: round(remaining + index * service, 1)
+                     for index, row in enumerate(waiting) if service is not None and remaining is not None and remaining >= 0}
+        return {"capacity": MAX_PENDING, "saturated": len(rows) >= MAX_PENDING,
+                "jobs": [{key: value for key, value in row.items() if key != "lease"}
+                         | {"eta_seconds": estimates.get(row["id"])} for row in
+                         ([active] if active else []) + waiting + collecting]}
 
     @contextmanager
     def connect(self, write=False):
@@ -427,8 +464,9 @@ class Pipeline:
         if (not media or media[-1][2] - media[0][1] + .08 < PROFILES[row["profile"]][0]
                 or not media[0][1] <= row["moment"] < media[-1][2]):
             error = error or "La captura terminó antes de preservar el contexto mínimo."
-        conn.execute("UPDATE jobs SET state=?,updated=?,error=? WHERE id=?",
-                     ("rejected" if error else "queued", time.time(), error, ident))
+        now = time.time()
+        conn.execute("UPDATE jobs SET state=?,updated=?,sealed_at=?,error=? WHERE id=?",
+                     ("rejected" if error else "queued", now, None if error else now, error, ident))
 
     def start(self):
         self.worker = threading.Thread(target=self._run, name="live-production", daemon=True)
@@ -442,11 +480,23 @@ class Pipeline:
             if conn.execute("SELECT 1 FROM jobs WHERE lease>? LIMIT 1", (now,)).fetchone():
                 return None
             job = conn.execute("""SELECT * FROM jobs WHERE state IN ('queued','transcribing','editing','quality')
-                               ORDER BY created LIMIT 1""").fetchone()
+                ORDER BY CASE WHEN COALESCE(sealed_at,created)<=? THEN 0 ELSE 1 END,
+                    CASE WHEN COALESCE(sealed_at,created)>? THEN
+                        score + 2 * MAX(0, 1 - MAX(0, ? - created) / ?) ELSE 0 END DESC,
+                    COALESCE(sealed_at,created),id LIMIT 1""",
+                               (now - FAIR_WAIT, now - FAIR_WAIT, now, FAIR_WAIT)).fetchone()
             if job:
-                conn.execute("UPDATE jobs SET state='transcribing',owner=?,lease=?,updated=? WHERE id=?",
-                             (self.owner, now + LEASE, now, job["id"]))
+                conn.execute("""UPDATE jobs SET state='transcribing',owner=?,lease=?,updated=?,
+                             claimed_at=COALESCE(claimed_at,?) WHERE id=?""",
+                             (self.owner, now + LEASE, now, now, job["id"]))
             return job
+
+    def _timing(self, ident, field, started):
+        if field not in {"transcription_seconds", "render_seconds", "technical_seconds"}:
+            raise ValueError("Etapa Live desconocida.")
+        with self.connect(write=True) as conn:
+            conn.execute(f"UPDATE jobs SET {field}=? WHERE id=? AND owner=?",
+                         (round(time.monotonic() - started, 4), ident, self.owner))
 
     def _beat(self, close, ident):
         while not close.wait(LEASE / 3):
@@ -532,6 +582,7 @@ class Pipeline:
         if transcript.is_file():
             info = projects.read_json(transcript)
         else:
+            started = time.monotonic()
             speech = quality.speech_ranges(source, duration, max(0., float(tracks["audio"].get("start_time") or 0)))
             words, language, metrics = self.whisper.transcribe(source, duration, options["live_whisper_device"]) if speech else ([], None, None)
             words = sorted((w for w in words if finite(w.get("start")) and finite(w.get("end"))
@@ -539,17 +590,22 @@ class Pipeline:
                            key=lambda w: (w["start"], w["end"]))
             info = {"words": words, "speech": speech, "language": language, "metrics": metrics}
             projects.atomic_json(transcript, info)
+            self._timing(ident, "transcription_seconds", started)
         metrics = {**info["metrics"], "time_since_detection_seconds": round(time.time() - job["created"], 3)} if info["metrics"] else None
         self._stage(ident, "editing", metrics)
         start, end = select_window(info["words"], info["speech"], duration, job["moment"] - media[0][1],
                                    job["profile"], options["live_pre_roll"])
         absolute = {"start": media[0][1] + start, "end": media[0][1] + end}
         self._check_overlap(home, absolute)
+        started = time.monotonic()
         files = self._render(home, directory, ident, start, end, tracks["video"], source, options, info)
+        self._timing(ident, "render_seconds", started)
         self._stage(ident, "quality")
         output = files["mp4"]
         voiced = any(left < end and right > start for left, right in info["speech"])
+        started = time.monotonic()
         report = self._check_output(output, end - start, voiced, info["speech"], start, end)
+        self._timing(ident, "technical_seconds", started)
         report["profile"] = job["profile"]
         report["requested_seconds"] = end - start
         report["voice"] = "present" if voiced else "not_detected"

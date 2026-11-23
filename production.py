@@ -275,6 +275,7 @@ class Production:
                 return
             editorial_id = job["editorial_id"]
             with use_resources(self.resources, cancellation):
+                technical_started = time.monotonic()
                 original_stamp = selection.stamp(original)
                 before = selection.stamp(media)
                 cached = self.store.cached_technical(ident, media.name, before, original_stamp)
@@ -309,7 +310,8 @@ class Production:
                            technical="passed", diagnosis=dump(report))
                     return
             cancellation.check()
-            change("analyzing", technical="passed", diagnosis=dump(report))
+            change("analyzing", technical="passed", diagnosis=dump(report),
+                   technical_seconds=round(time.monotonic() - technical_started, 4))
             if not editorial_id:
                 if not settings["ai_captions"]:
                     change("review", code="ai_disabled", error="La generación editorial automática está desactivada.")

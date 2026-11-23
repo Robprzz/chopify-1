@@ -17,7 +17,8 @@ APPROVED = {
     "force_vertical_format": False,
     "duplicate_prevention": True,
     "minimum_clip_score": 6.0,
-    "daily_publication_limit": 3,
+    "daily_publication_limit": 5,
+    "priority_engine": automation.DEFAULT_SETTINGS["priority_engine"],
     "ai_engine": "local",
     "ai_provider": "ollama",
     "require_publication_consent": True,
@@ -38,7 +39,7 @@ def test_settings_defaults_persist_and_retry_idempotently(tmp_path):
 
 @pytest.mark.parametrize(("field", "value"), [
     ("minimum_clip_score", 5.99), ("minimum_clip_score", True), ("minimum_clip_score", float("nan")),
-    ("daily_publication_limit", 4), ("daily_publication_limit", 2.0),
+    ("daily_publication_limit", 6), ("daily_publication_limit", 2.0),
     ("timezone", "America/Not_A_Zone"), ("timezone", "../UTC"),
     ("duplicate_prevention", False), ("require_publication_consent", False),
     ("ai_engine", "cloud"), ("ai_provider", "other"), ("live_clipping", 1),
@@ -108,14 +109,14 @@ def test_settings_in_chromium_survive_server_restart(tmp_path, chromium_page):
     page.on("pageerror", lambda error: errors.append(str(error)))
     open_automation = page.get_by_role("button", name="Automation", exact=True)
     save = page.get_by_role("button", name="Guardar ajustes")
-    limit = page.get_by_label("Límite diario", exact=False)
+    limit = page.get_by_label("Recomendaciones diarias", exact=False)
     vertical = page.get_by_label("Forzar exportación vertical")
 
     with running_server(tmp_path) as (httpd, base):
         project = request(base, "/api/projects", {"source": "recording.mp4"}, httpd.app.token)
         page.goto(base)
         open_automation.click()
-        expect(limit).to_have_value("3")
+        expect(limit).to_have_value("5")
         expect(vertical).not_to_be_checked()
         limit.fill("2")
         with page.expect_response(lambda r: r.url.endswith(SETTINGS_ENDPOINT)

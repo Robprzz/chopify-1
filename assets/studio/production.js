@@ -86,7 +86,7 @@ function renderProduction(data) {
         <td>${productionScore(job.detection)}</td><td>${productionScore(job.editorial)}</td>
         <td>${productionScore(job.priority)}</td><td>${escapeHTML(productionDecisions[job.decision] || "")}
         ${job.recommendation_rank ? ` · #${job.recommendation_rank}` : ""}
-        ${job.remote_review ? `<small>Telegram · ${escapeHTML(remoteReviewLabels[job.remote_review.decision])}</small>` : ""}
+        ${job.remote_review ? `<small>${escapeHTML(job.remote_review.origin)} · ${escapeHTML(remoteReviewLabels[job.remote_review.decision])}</small>` : ""}
         ${job.error || job.decision_reason ? `<small>${escapeHTML(job.error || job.decision_reason)}</small>` : ""}
         ${job.duplicate ? `<small>${duplicateMethods[job.duplicate.method]} · ${escapeHTML(job.duplicate.filename)}</small>` : ""}</td><td>${buttons.filter(([, , show]) => show).map(([action, label]) =>
           `<button type="button" data-production-action="${action}">${label}</button>`).join(" ")}</td></tr>`;
@@ -136,7 +136,7 @@ function showProductionDetail(job) {
     <p>${productionNames[job.state]} · ${timing(job.seconds)} · ${job.attempts} intentos</p>
     <p>Detección ${productionScore(job.detection)} · Editorial ${productionScore(job.editorial)} · Prioridad ${productionScore(job.priority)}
       · Contexto ${productionScore(job.context)} · Diferenciación ${productionScore(job.diversity)}</p>
-    ${review ? `<p>Revisión de Telegram · ${escapeHTML(remoteReviewLabels[review.decision])} · versión ${escapeHTML(review.revision)}</p>` : ""}
+    ${review ? `<p>Revisión en ${escapeHTML(review.origin)} · ${escapeHTML(remoteReviewLabels[review.decision])} · versión ${escapeHTML(review.revision)}</p>` : ""}
     ${job.error ? `<p>${escapeHTML(job.error)}</p>` : ""}
     ${findings.length ? `<ul>${findings.map(item => `<li>${escapeHTML(item)}</li>`).join("")}</ul>` : ""}
     ${(job.duplicate_history || []).map(match => `<p>${duplicateMethods[match.method]} ·

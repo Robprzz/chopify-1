@@ -1,5 +1,7 @@
 # Chopify Automation v1.0
 
+[Automation 3.1 · Real-Time Operations](AUTOMATION-31.md) documenta el ranking temporal, las mediciones y la validación en Windows.
+
 ## Fase 1 · Configuración local
 
 Abre Studio en `http://127.0.0.1:8765`, entra en **Automation**, edita tus preferencias y pulsa **Guardar ajustes**. Studio guarda la configuración por carpeta de proyectos en `.chopify-automation.sqlite3`. Al reiniciar con la misma carpeta, recupera la última revisión guardada. **Recargar ajustes** devuelve los valores guardados, incluidos los cambios hechos en otra pestaña.

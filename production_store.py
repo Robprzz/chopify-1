@@ -4,6 +4,7 @@ import time
 
 from editorial_store import dump
 from production_selection import duplicate, local_day, priority, score, text_similarity
+from realtime_priority import FAIR_WAIT, distinct as distinct_context
 
 
 ACTIVE = ("validating", "repairing", "revalidating", "analyzing", "understanding", "generating", "validating_proposals", "autocorrecting")
@@ -37,6 +38,12 @@ class Store:
                 )
             """)
             db.execute("CREATE INDEX IF NOT EXISTS production_pending ON production_jobs(finished, id)")
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(production_jobs)")}
+            for field in ("queued_at", "claimed_at", "technical_seconds"):
+                if field not in columns:
+                    db.execute(f"ALTER TABLE production_jobs ADD COLUMN {field} REAL")
+            db.execute("""CREATE TABLE IF NOT EXISTS production_opportunity (
+                job_id INTEGER PRIMARY KEY, event_kind TEXT NOT NULL, event_at REAL)""")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS production_events (
                     id INTEGER PRIMARY KEY, job_id INTEGER NOT NULL, run INTEGER NOT NULL,
@@ -59,7 +66,8 @@ class Store:
     def _review(db, job, run, editorial_id):
         if editorial_id is None:
             return None
-        row = db.execute("""SELECT r.decision,r.created,r.revision
+        row = db.execute("""SELECT r.decision,r.created,r.revision,
+                CASE WHEN r.actor LIKE 'telegram:%' THEN 'Telegram' ELSE 'Studio' END AS origin
             FROM production_reviews r JOIN editorial_jobs j ON j.id=? AND j.revision=r.revision
             WHERE r.job_id=? AND r.run=?""", (editorial_id, job, run)).fetchone()
         return dict(row) if row else None
@@ -113,9 +121,18 @@ class Store:
                 WHERE production_reviews.decision='postponed' AND excluded.decision!='postponed'""",
                 (job, run, revision, decision, actor, time.time())).rowcount
             if applied:
+                origin = "Telegram" if actor.startswith("telegram:") else "Studio"
                 self._event(db, job, run, "ready", "editorial_" + decision,
-                            f"Revisión editorial por Telegram · {decision} · versión {revision}.")
+                            f"Revisión editorial por {origin} · {decision} · versión {revision}.")
             return bool(applied)
+
+    def set_event(self, job, run, kind, stamp):
+        with self.connect(write=True) as db:
+            if not db.execute("SELECT 1 FROM production_jobs WHERE id=? AND run=?", (job, run)).fetchone():
+                raise ValueError("El trabajo de producción cambió.")
+            db.execute("""INSERT INTO production_opportunity VALUES(?,?,?)
+                ON CONFLICT(job_id) DO UPDATE SET event_kind=excluded.event_kind,event_at=excluded.event_at""",
+                       (job, kind, stamp))
 
     def cached_technical(self, job, file, current_stamp, original_stamp):
         with self.connect() as db:
@@ -186,9 +203,9 @@ class Store:
         added = 0
         with self.connect(write=True) as db:
             for project, filename in clips:
-                row = db.execute("""INSERT OR IGNORE INTO production_jobs(project,filename,state,created,updated)
-                                    VALUES (?,?,'generated',?,?) RETURNING id""",
-                                 (project, filename, now, now)).fetchone()
+                row = db.execute("""INSERT OR IGNORE INTO production_jobs(project,filename,state,created,updated,queued_at)
+                                    VALUES (?,?,'generated',?,?,?) RETURNING id""",
+                                 (project, filename, now, now, now)).fetchone()
                 if row is not None:
                     self._event(db, row[0], 1, "generated")
                     added += 1
@@ -207,6 +224,18 @@ class Store:
             row = db.execute("SELECT paused, max_repairs FROM production_config WHERE id=1").fetchone()
             return {"paused": bool(row[0]), "max_repairs": row[1]}
 
+    @staticmethod
+    def waiting(db, now, limit=1):
+        return db.execute("""SELECT p.*,o.event_kind,o.event_at FROM production_jobs p
+            LEFT JOIN production_opportunity o ON o.job_id=p.id
+            WHERE p.finished IS NULL AND p.owner IS NULL
+            ORDER BY CASE WHEN COALESCE(p.queued_at,p.created)<=? THEN 0 ELSE 1 END,
+            CASE WHEN COALESCE(p.queued_at,p.created)<=? THEN 0
+                 WHEN o.event_kind!='evergreen' AND o.event_at BETWEEN ? AND ? THEN 2
+                 WHEN o.event_kind IS NULL AND p.project LIKE 'live/%' AND p.created>=? THEN 1 ELSE 0 END DESC,
+            COALESCE(p.queued_at,p.created),p.id LIMIT ?""",
+                          (now - FAIR_WAIT, now - FAIR_WAIT, now - FAIR_WAIT, now, now - FAIR_WAIT, limit)).fetchall()
+
     def claim(self, owner):
         now = time.time()
         with self.connect(write=True) as db:
@@ -223,9 +252,11 @@ class Store:
             if (db.execute("SELECT paused FROM production_config").fetchone()[0]
                     or db.execute("SELECT 1 FROM production_jobs WHERE owner IS NOT NULL").fetchone()):
                 return None
-            row = db.execute("SELECT * FROM production_jobs WHERE finished IS NULL ORDER BY id LIMIT 1").fetchone()
-            if row is not None:
-                db.execute("UPDATE production_jobs SET owner=?, lease=? WHERE id=?", (owner, now + LEASE_SECONDS, row["id"]))
+            rows = self.waiting(db, now)
+            if rows:
+                row = rows[0]
+                db.execute("UPDATE production_jobs SET owner=?,lease=?,claimed_at=COALESCE(claimed_at,?) WHERE id=?",
+                           (owner, now + LEASE_SECONDS, now, row["id"]))
                 return dict(row)
             return None
 
@@ -238,7 +269,7 @@ class Store:
     def change(self, job, owner, state, *, code=None, error=None, editorial=None, context=None, **fields):
         # Internal callers use only schema-checked column names.
         allowed = {"active_filename", "editorial_id", "technical", "diagnosis", "attempts",
-                   "seconds", "repair_seconds", "editorial_seconds"}
+                   "seconds", "repair_seconds", "editorial_seconds", "technical_seconds"}
         if not fields.keys() <= allowed or state not in (*ACTIVE, *TERMINAL):
             raise ValueError("Transición de producción no válida.")
         now = time.time()
@@ -319,14 +350,14 @@ class Store:
     def retry(self, job, *, distinct=False):
         now = time.time()
         with self.connect(write=True) as db:
-            row = db.execute("""UPDATE production_jobs SET state='generated', updated=?, run=run+1,
+            row = db.execute("""UPDATE production_jobs SET state='generated', updated=?, queued_at=?,claimed_at=NULL,run=run+1,
                     cancel_requested=0, editorial_id=NULL, finished=NULL, attempts=0,
                     code=NULL, error=NULL, technical=NULL, diagnosis=NULL,
-                    seconds=0, repair_seconds=NULL, editorial_seconds=NULL
+                    seconds=0, repair_seconds=NULL, editorial_seconds=NULL, technical_seconds=NULL
                    WHERE id=? AND ((?=1 AND code='duplicate') OR
                      (?=0 AND (state IN ('review','rejected','failed','cancelled') OR state='ready')))
                    RETURNING run""",
-                             (now, job, distinct, distinct)).fetchone()
+                             (now, now, job, distinct, distinct)).fetchone()
             if not row:
                 raise ValueError("Solo se pueden reintentar trabajos que requieren atención.")
             self._event(db, job, row["run"], "generated", "duplicate_override" if distinct else None,
@@ -374,7 +405,7 @@ class Store:
         return data
 
     def status(self, before=None, *, settings=None, current=None, view="all", now=None):
-        settings = settings or {"timezone": "America/Santo_Domingo", "minimum_clip_score": 6, "daily_publication_limit": 3}
+        settings = settings or {"timezone": "America/Santo_Domingo", "minimum_clip_score": 6, "daily_publication_limit": 5}
         if view not in {"all", "recommended", "review", "duplicate", "discarded"}:
             raise ValueError("Filtro de producción desconocido.")
         day, start, end = local_day(time.time() if now is None else now, settings["timezone"])
@@ -393,18 +424,26 @@ class Store:
                 FROM production_jobs""").fetchone()
             problems = [dict(row) for row in db.execute("""SELECT code, count(*) AS count FROM production_events
                 WHERE code IS NOT NULL GROUP BY code ORDER BY count DESC, code LIMIT 8""")]
-            ranked = db.execute("""SELECT p.id,p.project,p.filename,e.file,e.evidence
+            ranked = db.execute("""SELECT p.id,p.run,p.project,p.filename,p.editorial_id,e.file,e.evidence
                 FROM production_jobs p JOIN production_evidence e ON p.id=e.job_id AND p.run=e.run
                 WHERE p.state='ready' AND p.technical='passed' AND p.finished>=? AND p.finished<?
-                    AND e.detection>=? AND e.priority IS NOT NULL
+                    AND e.detection>=? AND e.priority IS NOT NULL AND e.duplicate IS NULL
                 ORDER BY e.priority DESC,e.detection DESC,e.editorial DESC,p.id""",
                 (start, end, settings["minimum_clip_score"])).fetchall()
             recommended = []
+            recommended_evidence = []
             for row in ranked:
-                if current is None or current(row, json.loads(row["evidence"])):
-                    recommended.append(row["id"])
-                    if len(recommended) >= min(3, settings["daily_publication_limit"]):
-                        break
+                review = self._review(db, row["id"], row["run"], row["editorial_id"])
+                if review and review["decision"] != "approved":
+                    continue
+                evidence = json.loads(row["evidence"])
+                if (current is not None and not current(row, evidence)
+                        or any(not distinct_context(evidence, previous) for previous in recommended_evidence)):
+                    continue
+                recommended.append(row["id"])
+                recommended_evidence.append(evidence)
+                if len(recommended) >= settings["daily_publication_limit"]:
+                    break
             clauses = {
                 "all": "1",
                 "recommended": "p.id IN (SELECT value FROM json_each(?))",

@@ -106,6 +106,21 @@ class EditorialStore:
                        (dump(normalized), current + 1))
         return {"settings": normalized, "revision": current + 1}
 
+    def reusable_production(self, source, expected, known_digest):
+        from editorial_semantic import eligible
+
+        with self.connect() as db:
+            rows = db.execute("""SELECT id,source,settings,result FROM editorial_jobs
+                WHERE clip_id=? AND state='done' AND result IS NOT NULL ORDER BY id DESC""", (source["clip_id"],))
+            for row in rows:
+                settings = json.loads(row["settings"])
+                digest = settings.get("model_digest")
+                if (digest and (not known_digest or known_digest == digest)
+                        and all(settings.get(key) == value for key, value in expected.items())
+                        and json.loads(row["source"]) == source and eligible(json.loads(row["result"]))):
+                    return row["id"]
+        return None
+
     def submit(self, source, settings, fingerprint, force, previous_id=None):
         clip_id = source["clip_id"]
         with self.connect(write=True) as db:

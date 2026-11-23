@@ -434,7 +434,7 @@ class Handler(BaseHTTPRequestHandler):
             if parts == ["api", "automation", "settings"]:
                 return self.automation_settings_action()
             if len(parts) == 3 and parts[:2] == ["api", "production"]:
-                return self.production_action(parts[2], query=parse_qs(location.query, max_num_fields=1))
+                return self.production_action(parts[2], query=parse_qs(location.query, max_num_fields=2))
             if len(parts) == 3 and parts[:2] == ["api", "editorial"]:
                 return self.editorial_action(parts[2], query=parse_qs(location.query, max_num_fields=4))
             if len(parts) == 3 and parts[:2] == ["api", "subtitle-repair"]:
@@ -694,7 +694,8 @@ class Handler(BaseHTTPRequestHandler):
             if body is None:
                 if action == "status":
                     before = query.get("before")
-                    return self.send_json(store.status(identifier(int(before[0])) if before else None))
+                    cursor = identifier(int(before[0])) if before else None
+                    return self.send_json(worker.status(cursor, query.get("view", ["all"])[0]))
                 if action == "job":
                     return self.send_json(store.detail(identifier(int(query.get("id", ["0"])[0]))))
             elif action in ("pause", "resume"):
@@ -705,14 +706,14 @@ class Handler(BaseHTTPRequestHandler):
                 if body.keys() != {"max_repairs"} or type(body["max_repairs"]) is not int:
                     raise ValueError("Indica el máximo de reparaciones.")
                 return self.send_json(store.config(max_repairs=body["max_repairs"]))
-            elif action in ("cancel", "retry"):
+            elif action in ("cancel", "retry", "distinct"):
                 job = identifier(body.get("id"))
                 if action == "cancel":
                     editorial_id = store.cancel(job)
                     if editorial_id:
                         self.app.editorial.cancel(editorial_id)
                 else:
-                    store.retry(job)
+                    store.retry(job, distinct=action == "distinct")
                 worker.wake.set()
                 return self.send_json(store.detail(job))
             elif action == "enqueue":
@@ -720,6 +721,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.app.tiktok._clip(project, filename)
                 worker.enqueue(project, filename)
                 return self.send_json({"ok": True}, 202)
+        except automation.SettingsUnavailable as exc:
+            return self.send_json({"error": str(exc)}, 503)
         except sqlite3.Error:
             return self.send_json({"error": "La base de producción no está disponible."}, 503)
         return self.send_json({"error": "Acción de producción desconocida."}, 404)

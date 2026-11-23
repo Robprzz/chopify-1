@@ -202,6 +202,16 @@ def test_twenty_jobs_automatic_quality_repair_and_semantic_gate(server, monkeypa
     assets = {}
     for kind in KINDS:
         project, media = setup_asset(app.root, source, kind)
+        # Keep the repair branches independent of the duplicate gate.
+        if kind != "corrupt":
+            marker = project.encode("ascii")
+            with media.open("ab") as stream:
+                stream.write((8 + len(marker)).to_bytes(4, "big") + b"free" + marker)
+        if not project.startswith("live/"):
+            project_folder = media.parent.parent
+            state = projects.read_project(project_folder)
+            state["cache"]["source"] = project
+            projects.save_project(project_folder, state)
         for _ in range(2):
             request(base, "/api/production/enqueue", {"project": project, "filename": media.name}, token)
         assets[project] = (kind, media, media.read_bytes(), media.with_suffix(".srt").read_bytes())
@@ -211,9 +221,14 @@ def test_twenty_jobs_automatic_quality_repair_and_semantic_gate(server, monkeypa
     request(base, "/api/production/cancel", {"id": cancel["id"]}, token)
     request(base, "/api/production/resume", {}, token)
     result = until(lambda: request(base, "/api/production/status"), lambda state: state["metrics"]["pending"] == 0, 90)
-    assert result["counts"] == {"ready": 14, "review": 3, "rejected": 2, "cancelled": 1}
+    assert result["counts"] == {"ready": 10, "review": 3, "rejected": 6, "cancelled": 1}
+    assert result["recommended_count"] == 3
+    assert Counter(job["decision"] for job in result["jobs"]) == {
+        "recommended": 3, "eligible": 7, "duplicate": 4, "discarded": 3, "review": 3,
+    }
+    assert all(job["editorial_id"] is None for job in result["jobs"] if job["decision"] == "duplicate")
     assert result["metrics"]["repaired"] == 5
-    assert result["metrics"]["manual_repairs_avoided"] == 5
+    assert result["metrics"]["manual_repairs_avoided"] == 1
     assert calls == {"whisper": 1, "live_whisper": 1}
     summary = []
     for row in sorted(result["jobs"], key=lambda item: item["id"]):
@@ -318,6 +333,12 @@ def test_operations_chromium_pause_and_semantic_result(server, chromium_page, tm
     expect(page.locator("#production-jobs")).to_contain_text("Generado")
     page.get_by_role("button", name="Reanudar cola").click()
     expect(page.locator("#production-jobs")).to_contain_text("Listo para aprobación", timeout=20000)
+    page.locator("#production-filter").select_option("recommended")
+    expect(page.locator("#production-jobs")).to_contain_text("Recomendado · #1")
+    expect(page.locator("#production-jobs")).to_contain_text("8.20")
+    page.locator("#production-filter").select_option("discarded")
+    expect(page.locator("#production-empty")).to_be_visible()
+    page.locator("#production-filter").select_option("all")
     page.get_by_role("button", name="Ver detalle", exact=True).click()
     expect(page.locator("#production-detail")).to_contain_text("Multimedia decodificado")
     page.locator(".production-panel").screenshot(path=str(tmp_path / "operations-chromium.png"))

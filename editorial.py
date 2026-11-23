@@ -144,6 +144,20 @@ class Engine:
         platform = config["platform"] if platform is None else platform
         if not isinstance(platform, str) or platform not in PLATFORMS:
             raise ValueError("Selecciona un perfil editorial válido.")
+        raw_source = semantic_source = None
+        if production and not force:
+            path = self.clip_path(project, filename)
+            raw_source = read_clip(path, project, filename)
+            semantic_source = semantic_context(path, project, raw_source)
+            model = config["model"] or "qwen3:4b"
+            known = next((row["digest"] for row in self.model_status["models"] if row["name"] == model), None)
+            expected = {"platform": platform, "model": model, "profile": config["profiles"][platform],
+                        "weights": config["weights"], "identity": config["identity"], "timeout": config["timeout"],
+                        "repair_attempts": config["repair_attempts"], "prompt_version": editorial_semantic.VERSION}
+            reused = self.store.reusable_production(semantic_source, expected, known)
+            if reused is not None:
+                return {"job_id": reused, "reused": True}
+
         model = config["model"]
         status = self.refresh_models(force=not auto and not production) if model or semantic is not False else self.model_status
         if (production or semantic is not False) and not model:
@@ -157,9 +171,9 @@ class Engine:
                 source = TEST_SOURCE
             else:
                 path = self.clip_path(project, filename)
-                source = read_clip(path, project, filename)
+                source = raw_source or read_clip(path, project, filename)
                 if use_semantic:
-                    source = semantic_context(path, project, source)
+                    source = semantic_source or semantic_context(path, project, source)
         except (OSError, TypeError, KeyError, AttributeError, UnicodeError):
             raise ValueError("La transcripción del clip no se puede leer.") from None
         digest = next((item["digest"] for item in status["models"] if item["name"] == model), None)

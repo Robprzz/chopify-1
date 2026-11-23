@@ -75,3 +75,5 @@ AI Engine y el Centro de operaciones comparten un motor de redacción basado en 
 [Automation 2.4.1 · Identidad editorial y comprensión temática](EDITORIAL-241.md)
 
 [Automation 2.4.2 · Registro de evidencia y evaluación comparativa](EDITORIAL-242.md)
+
+[Automation 3.0 · Calidad, duplicados y selección de clips](AUTOMATION-30.md)

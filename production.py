@@ -1,4 +1,5 @@
 """Coordinate local technical QA, bounded repair and editorial preparation."""
+import json
 from pathlib import Path
 import math
 import secrets
@@ -16,6 +17,7 @@ from editorial_store import QueueFull, dump
 from local_process import run, use_resources
 import projects
 from production_store import Store
+import production_selection as selection
 import subtitle_quality as quality
 import subtitle_repair as repair
 
@@ -23,6 +25,42 @@ import subtitle_repair as repair
 MAX_SKEW = .22
 SCAN_INTERVAL = 15
 
+
+
+def continuity(media, cancellation):
+    """Check encoded time coverage in presentation order, including videos with B frames."""
+    result = run(["ffprobe", "-v", "error", "-protocol_whitelist", "file", "-f", "mov",
+                  "-show_packets", "-show_streams", "-show_entries",
+                  "packet=stream_index,pts_time,duration_time:stream=index,codec_type",
+                  "-of", "json", str(media)], 35, cancellation)
+    result.check_returncode()
+    data = json.loads(result.stdout)
+    tracks = {}
+    for stream in data["streams"]:
+        if stream["codec_type"] in ("video", "audio"):
+            tracks.setdefault(stream["codec_type"], stream["index"])
+    if len(tracks) != 2:
+        raise ValueError("Faltan pistas para medir continuidad.")
+    timeline = {index: [] for index in tracks.values()}
+    for packet in data["packets"]:
+        series = timeline.get(packet["stream_index"])
+        if series is not None:
+            start, duration = float(packet["pts_time"]), float(packet["duration_time"])
+            if not math.isfinite(start) or not math.isfinite(duration) or duration <= 0:
+                raise ValueError("Tiempos de paquetes inválidos.")
+            series.append((start, start + duration))
+    gaps = {}
+    for name, index in tracks.items():
+        packets = sorted(timeline[index])
+        if not packets:
+            raise ValueError("Pista sin paquetes.")
+        coverage_end = packets[0][1]
+        gap = 0.
+        for start, end in packets[1:]:
+            gap = max(gap, start - coverage_end)
+            coverage_end = max(coverage_end, end)
+        gaps[name] = round(gap, 4)
+    return gaps
 
 def media_check(media, cancellation):
     """Decode the MP4 locally, check the track clocks, then validate caption evidence."""
@@ -35,7 +73,7 @@ def media_check(media, cancellation):
     if "audio" not in streams:
         return "no_audio", {"errors": ["El MP4 no contiene audio para verificar el diálogo."], "duration": duration}
     try:
-        starts = [float(streams[k].get("start_time") or 0) for k in ("video", "audio")]
+        starts = [float(streams[k]["start_time"]) for k in ("video", "audio")]
         ends = [a + float(streams[k]["duration"]) for a, k in zip(starts, ("video", "audio"))]
         if not all(math.isfinite(t) for t in (*starts, *ends)) or any(end <= start for start, end in zip(starts, ends)):
             return "av_unverified", {"errors": ["El MP4 no informa relojes de pista válidos."], "duration": duration}
@@ -61,7 +99,15 @@ def media_check(media, cancellation):
         return "ffmpeg_missing", {"errors": ["FFmpeg es necesario para verificar la integridad del MP4."]}
     except (OSError, subprocess.SubprocessError):
         return "media_decode", {"errors": ["FFmpeg detectó errores al decodificar el MP4."], "duration": duration}
+    try:
+        gaps = continuity(media, cancellation)
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        return "continuity_unverified", {"errors": ["No se pudo verificar la continuidad de ambas pistas."]}
+    if max(gaps.values()) > .50:
+        return "continuity_gap", {"errors": ["Se detectó un corte de más de medio segundo en una pista."],
+                                  "continuity_gaps": gaps}
     report = quality.diagnose(media)
+    report["continuity_gaps"] = gaps
     report.update(integrity="decoded", av_start_skew=round(abs(starts[0] - starts[1]), 3),
                   av_end_skew=round(abs(ends[0] - ends[1]), 3))
     if report["errors"]:
@@ -154,8 +200,12 @@ class Production:
         allow_live = self.settings.read()["settings"]["live_clipping"]
         clips = [(project, filename) for project, filename in self.catalog()
                  if allow_live or not project.startswith("live/")]
-        if clips and not self.stopping.is_set():
+        if self.stopping.is_set():
+            return
+        if clips:
             self.store.enqueue_many(clips)
+        self.store.invalidate([job for job in self.store.ready_evidence()
+                               if not self.current_evidence(job, json.loads(job["evidence"]))])
 
     def _run(self):
         next_scan = 0
@@ -173,6 +223,19 @@ class Production:
                 next_scan = min(next_scan, time.monotonic() + 2)
             self.wake.wait(.5)
             self.wake.clear()
+
+    def current_evidence(self, job, evidence):
+        try:
+            original = self.clip_path(job["project"], job["filename"])
+            media = self.clip_path(job["project"], job["file"])
+            return (selection.stamp(media) == evidence["file_stamp"]
+                    and selection.stamp(original) == evidence["original_stamp"])
+        except (OSError, ValueError):
+            return False
+
+    def status(self, before=None, view="all"):
+        return self.store.status(before, settings=self.settings.read()["settings"],
+                                 current=self.current_evidence, view=view)
 
     def _monitor(self, job, cancellation, done):
         while not done.wait(.5):
@@ -203,14 +266,51 @@ class Production:
             if job["project"].startswith("live/") and not settings["live_clipping"]:
                 change("review", code="live_disabled", error="Automation para Live está desactivado.")
                 return
+            original = self.clip_path(job["project"], job["filename"])
             media = self.clip_path(job["project"], job["active_filename"] or job["filename"])
+            detection, source, interval = selection.identity(original, job["project"])
+            if detection is not None and detection < settings["minimum_clip_score"]:
+                change("rejected", code="low_score", error="El score de detección está por debajo del mínimo configurado.",
+                       diagnosis=dump({"detection": detection, "minimum": settings["minimum_clip_score"]}))
+                return
             editorial_id = job["editorial_id"]
-            if not editorial_id:
-                with use_resources(self.resources, cancellation):
-                    media, ok = self._technical(job, media, settings["subtitle_correction"], cancellation, change)
-                if not ok:
+            with use_resources(self.resources, cancellation):
+                original_stamp = selection.stamp(original)
+                before = selection.stamp(media)
+                cached = self.store.cached_technical(ident, media.name, before, original_stamp)
+                if editorial_id and not cached:
+                    change("review", code="input_changed", error="El análisis previo requiere verificar la exportación vigente.")
                     return
-                cancellation.check()
+                if cached:
+                    report, evidence = cached
+                    evidence.update(source=source, interval=interval)
+                else:
+                    media, report = self._technical(job, media, detection is not None and settings["subtitle_correction"],
+                                                    cancellation, change, detection)
+                    if report is None:
+                        return
+                    before = selection.stamp(media)
+                if detection is None:
+                    change("review", code="score_unknown", error="Falta el score de detección verificable.",
+                           technical="passed", diagnosis=dump(report))
+                    return
+                if not cached:
+                    evidence = selection.evidence(media, original, source, interval, report, cancellation)
+                if (not before or not original_stamp or evidence["file_stamp"] != before
+                        or evidence["original_stamp"] != original_stamp
+                        or not self.current_evidence({**job, "file": media.name}, evidence)):
+                    change("review", code="input_changed", error="Los archivos cambiaron durante el control.")
+                    return
+                report["detection"] = detection
+                duplicate = self.store.record_evidence(ident, self.owner, media.name, detection, evidence, report,
+                                                       self.current_evidence)
+                if duplicate:
+                    change("rejected", code="duplicate", error="Exportación repetida según la evidencia registrada.",
+                           technical="passed", diagnosis=dump(report))
+                    return
+            cancellation.check()
+            change("analyzing", technical="passed", diagnosis=dump(report))
+            if not editorial_id:
                 if not settings["ai_captions"]:
                     change("review", code="ai_disabled", error="La generación editorial automática está desactivada.")
                     return
@@ -229,7 +329,10 @@ class Production:
                 cancellation.check()
                 result = self.editor.store.detail(editorial_id)
                 if result["state"] in ("done", "failed", "cancelled"):
-                    self._editorial_result(result, change)
+                    if not self.current_evidence({**job, "file": media.name}, evidence):
+                        change("review", code="input_changed", error="Los archivos cambiaron durante el análisis.")
+                    else:
+                        self._editorial_result(result, change)
                     break
                 cancellation.event.wait(.25)
         except Cancelled:
@@ -250,21 +353,26 @@ class Production:
             done.set()
             monitor.join()
 
-    def _technical(self, job, media, auto_repair, cancellation, change):
+    def _technical(self, job, media, auto_repair, cancellation, change, detection):
         change("validating", technical=None)
+        initial = selection.stamp(media)
         code, report = media_check(media, cancellation)
+        report["detection"] = detection
+        if initial != selection.stamp(media):
+            change("review", code="input_changed", error="Los archivos cambiaron durante el control.")
+            return media, None
         cancellation.check()
         if not code:
             change("analyzing", technical="passed", diagnosis=dump(report))
-            return media, True
+            return media, report
         reason = (report["errors"] or report.get("warnings") or ["El clip no superó la comprobación."])[0]
         if code not in {"subtitles", "voice_coverage"}:
-            terminal = "rejected" if code in {"media_unreadable", "media_decode", "av_sync"} else "review"
+            terminal = "rejected" if code in {"media_unreadable", "media_decode", "av_sync", "continuity_gap", "no_audio"} else "review"
             change(terminal, code=code, error=reason, diagnosis=dump(report), technical="failed")
-            return media, False
+            return media, None
         if not auto_repair:
             change("review", code=code, error=reason, diagnosis=dump(report), technical="failed")
-            return media, False
+            return media, None
 
         origin = self.clip_path(job["project"], job["filename"])
         repair_started = time.monotonic()
@@ -295,11 +403,16 @@ class Production:
                                         attempt, base, cancellation)
                 change("revalidating", attempts=attempt, active_filename=amended.name,
                        repair_seconds=time.monotonic() - repair_started)
+                initial = selection.stamp(amended)
                 code, report = media_check(amended, cancellation)
+                report["detection"] = detection
+                if initial != selection.stamp(amended):
+                    change("review", code="input_changed", error="La variante cambió durante el control.")
+                    return amended, None
                 cancellation.check()
                 if not code:
                     change("analyzing", technical="passed", diagnosis=dump(report))
-                    return amended, True
+                    return amended, report
                 reason = (report["errors"] or report.get("warnings") or [failure])[0]
                 failure = reason
                 change("repairing", code=code, error=failure, diagnosis=dump(report))
@@ -309,7 +422,7 @@ class Production:
                        repair_seconds=time.monotonic() - repair_started)
         change("review", code="repair_exhausted", error=failure if maximum else reason,
                diagnosis=dump(report), technical="failed")
-        return media, False
+        return media, None
 
     def _repair(self, job, original, model, evidence, attempt, base, cancellation):
         export_id = f"auto-{job['id']}-{job['run']}-{attempt}"
@@ -354,8 +467,12 @@ class Production:
                    editorial_seconds=elapsed)
             return
         result = job.get("result") or {}
-        if eligible(result):
-            change("ready", editorial_seconds=elapsed)
+        editorial = selection.score(result.get("editorial_score"))
+        context = selection.score((result.get("criteria", {}).get("context") or {}).get("score"))
+        if eligible(result) and result.get("standalone") is True and editorial is not None and context is not None:
+            change("ready", editorial_seconds=elapsed, editorial=editorial, context=context)
         else:
-            change("review", code="editorial_review", editorial_seconds=elapsed,
-                   error=job.get("error") or "Se requiere validación semántica con Ollama local para preparar la aprobación.")
+            change("review", code="editorial_review", editorial_seconds=elapsed, editorial=editorial, context=context,
+                   error=job.get("error") or ("El resultado editorial carece de contexto independiente verificable."
+                                             if eligible(result) else
+                                             "Ninguna variante editorial válida está lista para aprobación."))

@@ -292,10 +292,15 @@
           <p id="production-status" role="status"></p>
           <p id="production-error" role="alert" hidden></p>
           <dl id="production-metrics" class="production-metrics"></dl>
+          <label>Filtrar clips <select id="production-filter">
+            <option value="all">Todos</option><option value="recommended">Recomendados</option>
+            <option value="review">Revisión requerida</option><option value="duplicate">Duplicados</option>
+            <option value="discarded">Descartados</option>
+          </select></label>
           <div class="production-table-wrap">
             <table>
-              <thead><tr><th scope="col">Clip</th><th scope="col">Estado</th><th scope="col">Validación</th>
-                <th scope="col">Reparaciones</th><th scope="col">Acciones</th></tr></thead>
+              <thead><tr><th scope="col">Clip</th><th scope="col">Estado</th><th scope="col">Detección</th><th scope="col">Editorial</th>
+                <th scope="col">Prioridad</th><th scope="col">Decisión y motivo</th><th scope="col">Acciones</th></tr></thead>
               <tbody id="production-jobs"></tbody>
             </table>
           </div>

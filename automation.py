@@ -12,7 +12,7 @@ DEFAULT_SETTINGS = {
     "subtitle_correction": True,
     "force_vertical_format": False,
     "duplicate_prevention": True,
-    "minimum_clip_score": 7.0,
+    "minimum_clip_score": 6.0,
     "daily_publication_limit": 3,
     "ai_engine": "local",
     "ai_provider": "ollama",
@@ -46,8 +46,8 @@ def validate_settings(settings):
         if settings[key] != required:
             raise ValueError("Automation requiere IA local con Ollama, prevención de duplicados y aprobación de cada envío.")
     score = settings["minimum_clip_score"]
-    if type(score) not in (int, float) or not 7 <= score <= 10:
-        raise ValueError("La puntuación mínima debe estar entre 7 y 10.")
+    if type(score) not in (int, float) or not 6 <= score <= 10:
+        raise ValueError("La puntuación mínima debe estar entre 6 y 10.")
     limit = settings["daily_publication_limit"]
     if type(limit) is not int or not 1 <= limit <= 3:
         raise ValueError("El límite diario debe ser un número entero entre 1 y 3.")

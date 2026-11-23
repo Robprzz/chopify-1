@@ -147,7 +147,7 @@ def test_live_clip_reaches_publications_in_chromium(server, chromium_page, monke
 
     # Real capture, render, media and preview. Replace only the trigger and speech inference.
     monkeypatch.setattr(live_signals.HypeDetector, "evaluate",
-                        lambda *args: {"score": 9, "signals": {}})
+                        lambda *args, **kwargs: {"score": 9, "signals": {"audio": 9}})
     monkeypatch.setattr(download_and_transcribe, "_load_model", lambda *args: object())
     monkeypatch.setattr(download_and_transcribe, "_transcribe_media", lambda model, media, offset: (
         [], [{"word": "victoria", "start": offset + 0.2, "end": offset + 0.8}], None, None,
@@ -222,10 +222,26 @@ def test_live_clip_reaches_publications_in_chromium(server, chromium_page, monke
             page.get_by_role("button", name="Start live session").click()
         assert reply.value.status == 201
         session = reply.value.json()["id"]
+        if split:
+            deadline = time.monotonic() + 15
+            captured_skew = None
+            while captured_skew is None and time.monotonic() < deadline:
+                buffer = app.app.live_sessions[session].buffer
+                if buffer:
+                    with buffer.pin() as captured:
+                        if captured:
+                            assert all(set(probe_streams(segment)) == {"video", "audio"}
+                                       for segment in captured)
+                            captured_skew = marker_skew(next(iter(captured)))
+                if captured_skew is None:
+                    time.sleep(0.1)
+            assert captured_skew is not None and captured_skew < 0.075
         assert page.request.get(base + "/api/projects").json() == {"projects": []}
         assert not list(app.app.root.glob("**/transcript.json"))
         link = page.locator("#live-clips a").first
         expect(link).to_be_visible(timeout=25000)
+        expect(page.locator("#live-components")).to_contain_text("Transcripción")
+        expect(page.locator("#live-score")).to_contain_text("Umbral 6")
         mp4 = link.get_attribute("href")
         assert mp4.startswith(f"/media/live/{session}/clips/")
         response = page.request.get(base + mp4, headers={"Range": "bytes=0-31"})
@@ -246,10 +262,6 @@ def test_live_clip_reaches_publications_in_chromium(server, chromium_page, monke
         assert saved["triggers"][0]["files"]["mp4"].endswith(mp4.rsplit("/", 1)[-1])
         if split:
             assert tracks_seen == {"video", "audio"}
-            buffer = app.app.live_sessions[session].buffer
-            captured = buffer.ready_segments()
-            assert captured
-            assert all(set(probe_streams(segment)) == {"video", "audio"} for segment in captured)
             clip = exports / mp4.rsplit("/", 1)[-1]
             color = subprocess.check_output([
                 "ffmpeg", "-v", "error", "-i", str(clip), "-vf", "crop=4:4:60:50,format=rgb24",
@@ -257,7 +269,6 @@ def test_live_clip_reaches_publications_in_chromium(server, chromium_page, monke
             ], timeout=15)
             assert color[1] > 200 and color[0] < 20 and color[2] < 20
             assert set(probe_streams(clip)) == {"video", "audio"}
-            assert marker_skew(captured[0]) < 0.075
             assert marker_skew(clip) < 0.075
             page.wait_for_function(
                 """async clip => {

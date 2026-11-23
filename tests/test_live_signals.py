@@ -152,3 +152,24 @@ def test_analyzer_tracks_ad_like():
     frame[:, :, 2] = 220
     analyzer._mark_ad(frame)
     assert analyzer.ad_like
+
+
+def test_signal_retention_is_bounded_and_stale_chat_does_not_penalize_score():
+    bus = live_signals.SignalBus(retention=10000)
+    for n in range(5000):
+        bus.add("chat", n, 10)
+    assert len(bus.values("chat", 5000, 10000)) == 4096
+    for n in range(9):
+        bus.add("audio", 5000.0 + n, 0)
+    bus.add("audio", 5009, 10)
+    result = live_signals.HypeDetector().evaluate(bus, 5009, freshness=8)
+    assert result == {"score": 10.0, "signals": {"audio": 10.0}}
+
+
+def test_single_or_steady_startup_sample_does_not_create_a_peak():
+    bus = live_signals.SignalBus()
+    detector = live_signals.HypeDetector()
+    bus.add("audio", 1., .35)
+    assert detector.evaluate(bus, 1.)["signals"] == {}
+    bus.add("audio", 2., .35)
+    assert detector.evaluate(bus, 2.) == {"score": 0., "signals": {"audio": 0.}}

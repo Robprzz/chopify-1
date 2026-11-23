@@ -164,6 +164,8 @@
               <select id="live-aspect"><option>16:9</option><option>9:16</option><option>1:1</option></select>
             </label>
           </div>
+          <label for="live-threshold">Umbral de detección Live (0–10)</label>
+          <input id="live-threshold" type="number" min="0" max="10" step="any" placeholder="Usar el mínimo de Automation (6/10 por defecto)" />
           <label for="live-brief">Campaign brief (optional)</label>
           <textarea id="live-brief" rows="4"
             placeholder="Paste requirements; chopify will only save clips that match."></textarea>
@@ -175,6 +177,13 @@
         <div id="live-error" role="alert" hidden></div>
         <div id="live-health" class="muted"></div>
         <div id="live-score"></div>
+        <dl id="live-components" class="production-metrics"></dl>
+        <div id="live-manual" class="publication-actions" hidden>
+          <label for="live-export-seconds">Ventana del búfer</label>
+          <select id="live-export-seconds"><option>30</option><option>60</option><option>90</option></select>
+          <button id="live-export" type="button">Exportar últimos segundos</button>
+        </div>
+        <p id="live-export-status" role="status"></p>
         <div id="live-clips"></div>
       </section>
       <section id="publications-view" class="view" lang="es" hidden>
@@ -263,7 +272,7 @@
             <label class="check"><input type="checkbox" name="force_vertical_format" /> Forzar exportación vertical</label>
             <div class="form-grid">
               <label>Puntuación mínima (7–10)
-                <input type="number" name="minimum_clip_score" min="7" max="10" step="any" required />
+                <input type="number" name="minimum_clip_score" min="6" max="10" step="any" required />
               </label>
               <label>Límite diario (1–3)
                 <input type="number" name="daily_publication_limit" min="1" max="3" step="1" required />

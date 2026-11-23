@@ -1249,7 +1249,7 @@ def test_live_options_defaults():
     assert options["live_pre_roll"] == 30
     assert options["live_tail"] == 5
     assert options["live_window"] == 10
-    assert options["live_threshold"] == 8.0
+    assert options["live_threshold"] == 6.0
     assert options["live_cooldown"] == 60
     assert options["live_max_clips"] == 10
     assert options["live_no_chat"] is False
@@ -1308,7 +1308,7 @@ def test_fit_flag_is_exposed(monkeypatch):
     import live
     seen = {}
     monkeypatch.setattr(live, "run_live",
-                        lambda url, options, root, on_log=None, brief_text=None: seen.update(options))
+                        lambda url, options, root, **kwargs: seen.update(options))
     monkeypatch.setattr(chopify, "check_environment", lambda: None)
     monkeypatch.setattr(sys, "argv", [
         "chopify", "--live", "https://x/l.m3u8", "--fit", "contain",
@@ -1322,7 +1322,7 @@ def test_live_flag_is_exposed(monkeypatch):
     import live
     seen = {}
 
-    def fake_run_live(url, options, root, on_log=None, brief_text=None):
+    def fake_run_live(url, options, root, on_log=None, brief_text=None, explicit_keys=None):
         seen.update(url=url, options=options, root=root)
         return None
 

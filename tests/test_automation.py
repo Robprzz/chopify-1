@@ -16,7 +16,7 @@ APPROVED = {
     "subtitle_correction": True,
     "force_vertical_format": False,
     "duplicate_prevention": True,
-    "minimum_clip_score": 7.0,
+    "minimum_clip_score": 6.0,
     "daily_publication_limit": 3,
     "ai_engine": "local",
     "ai_provider": "ollama",
@@ -37,7 +37,7 @@ def test_settings_defaults_persist_and_retry_idempotently(tmp_path):
 
 
 @pytest.mark.parametrize(("field", "value"), [
-    ("minimum_clip_score", 6.99), ("minimum_clip_score", True), ("minimum_clip_score", float("nan")),
+    ("minimum_clip_score", 5.99), ("minimum_clip_score", True), ("minimum_clip_score", float("nan")),
     ("daily_publication_limit", 4), ("daily_publication_limit", 2.0),
     ("timezone", "America/Not_A_Zone"), ("timezone", "../UTC"),
     ("duplicate_prevention", False), ("require_publication_consent", False),

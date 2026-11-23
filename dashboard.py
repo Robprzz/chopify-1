@@ -277,6 +277,13 @@ class Studio:
         session.stop()
         return session
 
+    def export_live(self, session_id, seconds):
+        with self.live_lock:
+            session = self.live_sessions.get(session_id)
+        if session is None:
+            raise ValueError("Sesión Live desconocida.")
+        session.request_export(seconds)
+
     def live_state(self, session_id):
         with self.live_lock:
             session = self.live_sessions.get(session_id)
@@ -300,6 +307,7 @@ class Studio:
             return {
                 "projects": sum(not future.done() for future in self.futures.values()),
                 "live": sum(getattr(session, "status", None) in {"starting", "running"}
+                            or getattr(session, "exporting", lambda: False)()
                             for session in self.live_sessions.values()),
                 "production": self.production.active(),
                 "editorial": self.editorial.busy(),
@@ -334,6 +342,10 @@ class Studio:
         self.editorial.pause_dispatch(True)
         for session in sessions:
             session.stop()
+        for session in sessions:
+            wait_export = getattr(session, "wait_for_export", None)
+            if wait_export:
+                wait_export()
         for child in children:
             if child.poll() is not None:
                 continue
@@ -547,7 +559,16 @@ class Handler(BaseHTTPRequestHandler):
                 source = body.get("source")
                 if not isinstance(source, str) or not source.strip():
                     raise ValueError("Provide a live source URL.")
-                options = projects.validate_options(body.get("options", {}))
+                raw_options = body.get("options", {})
+                if not isinstance(raw_options, dict):
+                    raise ValueError("Live options must be a JSON object.")
+                if "live_threshold" not in raw_options:
+                    try:
+                        minimum = self.app.automation_settings.read()["settings"]["minimum_clip_score"]
+                    except automation.SettingsUnavailable as exc:
+                        return self.send_json({"error": str(exc)}, 503)
+                    raw_options = {**raw_options, "live_threshold": minimum}
+                options = projects.validate_options(raw_options)
                 brief_text = body.get("brief")
                 if brief_text is not None and not isinstance(brief_text, str):
                     raise ValueError("Brief must be text.")
@@ -556,6 +577,9 @@ class Handler(BaseHTTPRequestHandler):
                 except OSError:
                     return self.send_json({"error": "Could not save the live session. Check access to the Studio projects folder."}, 500)
                 return self.send_json({"id": session.id}, 201)
+            if len(parts) == 4 and parts[:2] == ["api", "live"] and parts[3] == "export":
+                self.app.export_live(parts[2], body.get("seconds"))
+                return self.send_json({"queued": True}, 202)
             with self.app.lock:
                 if parts == ["api", "watermark"]:
                     if "settings" not in body or body.keys() - {"settings", "image_data"}:

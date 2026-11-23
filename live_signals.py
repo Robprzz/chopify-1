@@ -5,18 +5,19 @@ import math
 import re
 import socket
 import statistics
-import subprocess
 import tempfile
 import threading
 import time
 from codecs import getincrementaldecoder
 from collections import defaultdict, deque
+from contextlib import nullcontext
 from pathlib import Path
 
 import numpy as np
 
 import download_and_transcribe as dt
 import evidence
+from live_capture import SegmentError, decode_segment
 import score_clips
 import visual
 
@@ -50,8 +51,9 @@ class SignalBus:
 
     def __init__(self, retention=300.0):
         self._lock = threading.Lock()
-        self._samples = defaultdict(deque)
+        self._samples = defaultdict(lambda: deque(maxlen=4096))
         self.retention = float(retention)
+        self._revision = 0
 
     def add(self, name, t, value):
         if name not in SIGNALS:
@@ -60,6 +62,7 @@ class SignalBus:
             return
         with self._lock:
             self._samples[name].append((float(t), float(value)))
+            self._revision += 1
             cutoff = float(t) - self.retention
             queue = self._samples[name]
             while queue and queue[0][0] <= cutoff:
@@ -76,6 +79,13 @@ class SignalBus:
         with self._lock:
             return [value for stamp, value in self._samples.get(name, ())
                     if t - float(window) < stamp <= t + 1e-9]
+
+    def recent_times(self, t, window, previous_revision):
+        with self._lock:
+            if self._revision == previous_revision:
+                return self._revision, []
+            times = {stamp for queue in self._samples.values() for stamp, _ in queue if t - window <= stamp <= t}
+            return self._revision, sorted(times)[-36:]
 
     def available(self, t, window):
         return {name for name in SIGNALS if self.values(name, t, window)}
@@ -94,15 +104,16 @@ class HypeDetector:
     def __init__(self, weights=None):
         self.weights = dict(weights or DEFAULT_WEIGHTS)
 
-    def evaluate(self, bus, t):
+    def evaluate(self, bus, t, freshness=None):
         signals = {}
         for name in SIGNALS:
             history = bus.values(name, t, 60.0)
-            if not history:
+            recent = bus.values(name, t, freshness) if freshness is not None else history
+            if len(history) < 2 or not recent:
                 continue
-            baseline = statistics.median(history) if len(history) >= 5 else 0.0
+            baseline = statistics.median(history[:-1])
             scale = max(SCALES[name], max(history) - baseline)
-            signals[name] = round(normalize(history[-1], baseline, scale), 4)
+            signals[name] = round(normalize(recent[-1], baseline, scale), 4)
         if not signals:
             return {"score": 0.0, "signals": {}}
         total_weight = sum(self.weights[name] for name in signals)
@@ -135,13 +146,26 @@ class BaseAnalyzer:
         self.bus = bus
         self.error = None
         self.available = True
-        self._seen = set()
+        self.last_index = -1
+        self.processed = self.failed = self.retries = self.dropped = 0
+        self.last_error = None
+        self.through = None
+        self._bounds = None
+        self._lock = threading.Lock()
+        self._stop = None
+
+    def status(self, now):
+        with self._lock:
+            return {"state": ("disabled" if not self.available else "degraded" if self.error else
+                              "waiting" if self.through is None else "ok"),
+                    "processed": self.processed, "errors": self.failed, "retries": self.retries,
+                    "dropped": self.dropped, "last_index": self.last_index, "last_error": self.last_error,
+                    "lag_seconds": round(max(0, now - self.through), 2) if self.through is not None else None}
 
     def _new_segments(self):
         ready = getattr(self.buffer, "ready_segments", None)
         segments = ready() if callable(ready) else self.buffer.segments()
-        return [p for p in segments
-                if self.buffer.index_of(p) not in self._seen]
+        return [p for p in segments if self.buffer.index_of(p) > self.last_index]
 
     def _decode(self, path):
         raise NotImplementedError
@@ -150,19 +174,53 @@ class BaseAnalyzer:
         raise NotImplementedError
 
     def run(self, stop_event):
+        self._stop = stop_event
         while not stop_event.is_set():
             try:
-                for path in self._new_segments():
-                    if stop_event.is_set():
-                        break
-                    index = self.buffer.index_of(path)
-                    payload = self._decode(path)
-                    self._publish(index, payload)
-                    self._seen.add(index)
-            except Exception as exc:  # one bad segment must not kill the session
-                self.error = f"{type(exc).__name__}: {exc}"
-                self.available = False
-                return
+                paths = self._new_segments()
+            except OSError:
+                paths = []
+            # Keep up with the live edge. Each analyzer advances independently.
+            with self._lock:
+                self.dropped += max(0, len(paths) - 24)
+            for path in paths[-24:]:
+                if stop_event.is_set():
+                    return
+                index = self.buffer.index_of(path)
+                fallback = self.buffer.index_to_time(index)
+                pin = getattr(self.buffer, "pin", None)
+                with (pin([path]) if pin else nullcontext({path: (fallback, fallback + 4)})) as selected:
+                    with self._lock:
+                        self.last_index = index
+                        if not selected:
+                            self.dropped += 1
+                    if not selected:
+                        continue
+                    self._bounds = selected[path]
+                    for attempt in range(2):
+                        if stop_event.is_set():
+                            return
+                        try:
+                            payload = self._decode(path)
+                            if stop_event.is_set():
+                                return
+                            with self._lock:
+                                self._publish(index, payload)
+                                self.through = self._bounds[1]
+                                self.processed += 1
+                                self.error = None
+                            break
+                        except Exception as exc:
+                            # Never include shell commands, URLs, or model exception text.
+                            detail = getattr(exc, "detail", {"stage": self.name,
+                                             "message": f"Fallo de análisis ({type(exc).__name__})."})
+                            with self._lock:
+                                self.last_error = {**detail, "segment": path.name}
+                                self.error = detail["message"]
+                                if attempt:
+                                    self.failed += 1
+                                else:
+                                    self.retries += 1
             stop_event.wait(self.delay)
 
 
@@ -171,10 +229,13 @@ class AudioAnalyzer(BaseAnalyzer):
     delay = 0.5
 
     def _decode(self, path):
-        cmd = ["ffmpeg", "-v", "error", "-i", str(path), "-vn",
+        cmd = ["ffmpeg", "-nostdin", "-v", "error", "-xerror", "-threads", "1", "-protocol_whitelist", "file,pipe",
+               "-i", str(path), "-map", "0:a:0", "-t", "30",
                "-ac", "1", "-ar", "16000", "-f", "f32le", "pipe:1"]
-        result = subprocess.run(cmd, capture_output=True, check=True)
-        return np.frombuffer(result.stdout, dtype=np.float32).copy()
+        raw = decode_segment(cmd, self.name)
+        if not raw:
+            raise SegmentError(self.name, "La pista de audio no produjo muestras.")
+        return np.frombuffer(raw, dtype=np.float32).copy()
 
     def _publish(self, index, samples):
         rows = evidence.features_from_samples(samples)
@@ -184,7 +245,7 @@ class AudioAnalyzer(BaseAnalyzer):
         if values is None:
             values = np.asarray(rows).reshape(-1)
         for i, value in enumerate(values):
-            t = self.buffer.index_to_time(index) + i
+            t = self._bounds[0] + i
             self.bus.add("audio", t, float(value))
 
 
@@ -201,13 +262,15 @@ class VisualAnalyzer(BaseAnalyzer):
             self.ad_like = True
 
     def _decode(self, path):
-        cmd = ["ffmpeg", "-v", "error", "-i", str(path), "-vf",
+        cmd = ["ffmpeg", "-nostdin", "-v", "error", "-xerror", "-threads", "1", "-protocol_whitelist", "file,pipe",
+               "-i", str(path), "-map", "0:v:0", "-t", "30", "-threads", "1", "-vf",
                "fps=2,scale=160:90", "-pix_fmt", "rgb24",
                "-f", "rawvideo", "pipe:1"]
-        result = subprocess.run(cmd, capture_output=True, check=True)
-        raw = result.stdout
+        raw = decode_segment(cmd, self.name)
         frame_size = 160 * 90 * 3
         count = len(raw) // frame_size
+        if not count:
+            raise SegmentError(self.name, "La pista de video no produjo fotogramas.")
         return [np.frombuffer(raw[i * frame_size:(i + 1) * frame_size],
                               dtype=np.uint8).reshape(90, 160, 3)
                 for i in range(count)]
@@ -215,11 +278,12 @@ class VisualAnalyzer(BaseAnalyzer):
     def _publish(self, index, frames):
         if not frames:
             return
+        self.ad_like = False
         for frame in frames:
             self._mark_ad(frame)
         features = visual.features_from_frames(frames)
         for i, value in enumerate(features.motion):
-            t = self.buffer.index_to_time(index) + i / 2.0
+            t = self._bounds[0] + i / 2.0
             self.bus.add("visual", t, float(value))
 
 
@@ -230,39 +294,51 @@ class TranscriptAnalyzer(BaseAnalyzer):
     name = "transcript"
     delay = 1.0
 
-    def __init__(self, buffer, bus, model=None, device="cpu", enabled=True):
+    def __init__(self, buffer, bus, model=None, device="cpu", enabled=True, shared=None):
         super().__init__(buffer, bus)
         self.model = model
+        self.shared = shared or {"lock": threading.Lock(), "model": model}
         self.device = device
         self.enabled = enabled
         if not enabled:
             self.available = False
         self.words = []
-        self.through = 0.0
 
     def _decode(self, path):
-        bounds = self.buffer.closed_ranges().get(path)
-        if bounds is None:
-            start = self.buffer.index_to_time(self.buffer.index_of(path))
-            return [], start, start
-        start, end = bounds
-        if self.model is None:
-            self.model = dt._load_model(LIVE_TRANSCRIPT_MODEL, self.device, "int8")
-        with tempfile.TemporaryDirectory(dir=self.buffer.directory) as directory:
+        start, end = self._bounds
+        with tempfile.TemporaryDirectory() as directory:
             wav = Path(directory) / "transcript.wav"
-            subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(path), "-ac", "1",
-                            "-ar", "16000", str(wav)], check=True, capture_output=True)
-            _, words, _, _ = dt._transcribe_media(self.model, wav, offset=start)
+            decode_segment(["ffmpeg", "-nostdin", "-y", "-v", "error", "-xerror", "-threads", "1", "-protocol_whitelist", "file,pipe",
+                            "-i", str(path), "-map", "0:a:0", "-t", "30", "-ac", "1",
+                            "-ar", "16000", str(wav)], self.name)
+            lock = self.shared["lock"]
+            while not lock.acquire(timeout=.2):
+                if self._stop and self._stop.is_set():
+                    return [], start, end
+            try:
+                if self._stop and self._stop.is_set():
+                    return [], start, end
+                if self.shared["model"] is None:
+                    self.shared["model"] = dt._load_model(LIVE_TRANSCRIPT_MODEL, self.device, "int8")
+                self.model = self.shared["model"]
+                _, words, _, _ = dt._transcribe_media(self.model, wav, offset=start)
+            finally:
+                lock.release()
         return words, start, end
+
+    def snapshot(self):
+        with self._lock:
+            return self.through, list(self.words)
 
     def _publish(self, index, payload):
         words, start, end = payload
         self.words.extend(words)
-        self.words = [w for w in self.words if w["end"] >= start - 60.0]
+        self.words = [w for w in self.words if w["end"] >= start - max(120., self.buffer.retention)][-6000:]
         for i in range(math.ceil(end - start)):
             t = start + i
             window = [w for w in self.words if t - 10.0 <= w["start"] <= t]
-            self.bus.add("transcript", t, transcript_score(window))
+            if window:
+                self.bus.add("transcript", t, transcript_score(window))
         self.through = end
 
     def run(self, stop_event):
@@ -313,7 +389,7 @@ class ChatAnalyzer(BaseAnalyzer):
             return [float(messages)]
 
     def _publish(self, index, payload):
-        t = self.buffer.index_to_time(index)
+        t = self._bounds[0]
         for value in payload:
             self.bus.add("chat", t, value)
 
@@ -327,14 +403,14 @@ class ChatAnalyzer(BaseAnalyzer):
             self.available = False
 
 
-def start_analyzers(buffer, bus, options, platform, channel, model=None):
+def start_analyzers(buffer, bus, options, platform, channel, model=None, shared=None):
     """Start analyzer threads; return (thread, analyzer) pairs."""
     pairs = []
     specs = [
         (AudioAnalyzer(buffer, bus), {}),
         (VisualAnalyzer(buffer, bus), {}),
         (TranscriptAnalyzer(buffer, bus, model, options.get("device", "cpu"),
-                            not options.get("live_no_transcript", False)), {}),
+                            not options.get("live_no_transcript", False), shared=shared), {}),
         (ChatAnalyzer(buffer, bus, platform, channel,
                       not options.get("live_no_chat", False)), {}),
     ]

@@ -1,7 +1,9 @@
 """Resolve live URLs and keep a bounded rolling buffer of HLS segments."""
 from __future__ import annotations
 
+from contextlib import contextmanager
 import csv
+from collections import deque
 import json
 import math
 import re
@@ -32,6 +34,40 @@ PLATFORMS = (
     ("twitch.tv", "twitch"), ("youtube.com", "youtube"), ("youtu.be", "youtube"),
     ("kick.com", "kick"),
 )
+
+
+def safe_stderr(value):
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="replace")
+    lines = []
+    for line in (value or "").splitlines()[-8:]:
+        if re.search(r"(?i)authorization|cookie|bearer|token|signature|password|secret|api.key", line):
+            continue
+        line = re.sub(r"(?i)\b[a-z][a-z0-9+.-]*://[^\s'\"]+", "[URL]", line)
+        lines.append(line[-240:])
+    return " ".join(lines)[-1200:]
+
+
+class SegmentError(RuntimeError):
+    def __init__(self, stage, message, code=None, stderr="", timeout=None):
+        super().__init__(message)
+        self.detail = {"stage": stage, "message": message, "exit_code": code,
+                       "stderr": safe_stderr(stderr), "timeout_seconds": timeout}
+
+
+def decode_segment(command, stage, timeout=12):
+    try:
+        return subprocess.run(command, capture_output=True, check=True, timeout=timeout).stdout
+    except subprocess.TimeoutExpired as exc:
+        raise SegmentError(stage, "FFmpeg agotó el tiempo de decodificación.", stderr=exc.stderr,
+                           timeout=timeout) from None
+    except subprocess.CalledProcessError as exc:
+        code = exc.returncode
+        if 2**31 <= code < 2**32:
+            code -= 2**32  # Windows exposes signed FFmpeg exits as DWORDs.
+        raise SegmentError(stage, "FFmpeg no pudo decodificar la pista solicitada.", code, exc.stderr) from None
+    except OSError:
+        raise SegmentError(stage, "No se pudo iniciar FFmpeg.") from None
 
 
 @dataclass
@@ -219,13 +255,24 @@ class SegmentBuffer:
         self.max_height = options.get("live_max_height")
         self.scale_capture = scale_capture
         self.capture_problem = None
+        self.cleanup_problem = None
         self.segment_problem = None
-        self._validation_lock = threading.Lock()
+        self._validation_lock = threading.RLock()
+        self._pins = {}
+        self._retired = False
+        self._bad_streak = 0
+        self.last_closed_at = 0.0
+        self.last_closed_index = -1
+        self.last_segment_error = None
+        self.rejected_segments = 0
+        self.stderr_tail = deque(maxlen=4)
+        self._probe_cache = None
         self._validated = set()
         self._skipped = set()
         self._has_valid_segment = False
         self.process = None
         self.started_at = 0.0
+        self.started_monotonic = 0.0
         self._stop = threading.Event()
         self._cleaner = None
         self._diagnostics = None
@@ -266,6 +313,7 @@ class SegmentBuffer:
     def start(self):
         self.directory.mkdir(parents=True, exist_ok=True)
         self.started_at = time.time()
+        self.started_monotonic = time.monotonic()
         self.log_path = self.directory / "ffmpeg.log"
         self.process = subprocess.Popen(self.ffmpeg_command(), stdout=subprocess.DEVNULL,
                                         stderr=subprocess.PIPE)
@@ -279,6 +327,10 @@ class SegmentBuffer:
         with self.process.stderr as stderr:
             while line := stderr.readline(8192):
                 message = line.lower()
+                summary = safe_stderr(line)
+                if summary:
+                    with self._validation_lock:
+                        self.stderr_tail.append(summary)
                 if any(word in message for word in (b"http error", b"server returned", b"connection", b"timed out", b"resolve hostname")):
                     self.capture_problem = NETWORK_ERROR
                 elif b"matches no streams" in message:
@@ -296,8 +348,14 @@ class SegmentBuffer:
         while not self._stop.wait(5.0):
             try:
                 self.cleanup()
+                self.cleanup_problem = None
+                with self._validation_lock:
+                    files = self.segments()
+                    if files and files[-1].stat().st_size > self.max_bytes and self.alive:
+                        self.segment_problem = "El segmento abierto excedió el límite del búfer."
+                        ingest._kill_tree(self.process)
             except OSError:
-                pass
+                self.cleanup_problem = "No se pudo limpiar el búfer; verifica permisos y archivos en uso."
 
     @property
     def alive(self):
@@ -307,7 +365,10 @@ class SegmentBuffer:
         self._stop.set()
         if self.process is not None and self.alive:
             ingest._kill_tree(self.process)
-            self.process.wait()
+            try:
+                self.process.wait(timeout=4)
+            except subprocess.TimeoutExpired:
+                self.capture_problem = "No se pudo detener el proceso de captura en 4 s."
         if self._cleaner is not None:
             self._cleaner.join(timeout=2.0)
         if self._diagnostics is not None:
@@ -319,44 +380,83 @@ class SegmentBuffer:
         return sorted(p for p in self.directory.glob("segment[0-9]*.ts")
                       if re.fullmatch(r"segment\d{8}\.ts", p.name))
 
+    def _closed(self):
+        paths = self.segments()
+        if self.process is None:  # Inactive fixture/offline buffers.
+            return {path: (self.index_to_time(self.index_of(path)),
+                           self.index_to_time(self.index_of(path) + 1)) for path in paths[:-1]}
+        try:
+            with (self.directory / "segments.csv").open(encoding="utf-8", newline="") as handle:
+                complete = [line for line in handle if line.endswith("\n")]
+            ranges = {}
+            for row in csv.reader(complete):
+                if len(row) == 3:
+                    start, end = map(float, row[1:])
+                    if math.isfinite(start) and math.isfinite(end) and start < end:
+                        ranges[row[0]] = (start, end)
+            return {path: ranges[path.name] for path in paths if path.name in ranges}
+        except (OSError, ValueError, csv.Error):
+            return {}
+
     def ready_segments(self):
-        """Segments safe to decode: the newest one is still being written."""
-        segments = self.segments()
-        closed = segments if self.process is not None and self.process.poll() == 0 else segments[:-1]
-        if not self.audio_url and not self.max_height:
-            return closed
+        return list(self.closed_ranges())
+
+    @contextmanager
+    def pin(self, paths=None):
+        """Keep an immutable, closed snapshot alive while a consumer uses it."""
         with self._validation_lock:
-            self._validated.intersection_update(closed)
-            finished = self.process is not None and self.process.poll() == 0
-            for path in closed:
-                if self.segment_problem:
-                    break
-                if path in self._validated or path in self._skipped:
-                    continue
-                problem = self._check_segment(path)
-                if not problem:
-                    self._validated.add(path)
-                    self._has_valid_segment = True
-                elif self.audio_url and problem in (MISSING_TRACK, SYNC_ERROR) and (
-                        (not self._has_valid_segment and len(self._skipped) < 2 and (not finished or path != closed[-1]))
-                        or (finished and self._has_valid_segment and path == closed[-1])):
-                    # Different playlist live edges can leave leading or trailing partial segments.
-                    self._skipped.add(path)
-                else:
-                    self.segment_problem = problem
-            if finished and not self._has_valid_segment and self._skipped and not self.segment_problem:
-                self.segment_problem = self._check_segment(closed[-1]) if closed else MISSING_TRACK
-            return [path for path in closed if path in self._validated]
+            if self._retired:
+                selected = {}
+            elif paths is None:
+                selected = self.closed_ranges()
+            else:
+                requested = set(paths)
+                selected = {path: bounds for path, bounds in self.closed_ranges().items() if path in requested}
+            for path in selected:
+                self._pins[path] = self._pins.get(path, 0) + 1
+        try:
+            yield selected
+        finally:
+            with self._validation_lock:
+                for path in selected:
+                    self._pins[path] -= 1
+                    if not self._pins[path]:
+                        del self._pins[path]
+                        if self._retired:
+                            path.unlink(missing_ok=True)
+                if self._retired and not self._pins:
+                    self._retired_files()
+
+    def _retired_files(self):
+        (self.directory / "segments.csv").unlink(missing_ok=True)
+        if re.fullmatch(r"capture-\d{6,}", self.directory.name):
+            (self.directory / "ffmpeg.log").unlink(missing_ok=True)
+            try:
+                self.directory.rmdir()
+            except OSError:
+                pass
+
+    def retire(self):
+        """Called after capture has stopped; pinned files belong to their readers."""
+        with self._validation_lock:
+            self._retired = True
+            for path in self.segments():
+                if path not in self._pins:
+                    path.unlink(missing_ok=True)
+            if not self._pins:
+                self._retired_files()
 
     def _check_segment(self, path):
         try:
-            result = self.runner(["ffprobe", "-v", "error", "-show_entries",
-                                  "stream=codec_type,height,start_time,duration", "-of", "json", str(path)], timeout=5)
+            result = self.runner(["ffprobe", "-v", "error", "-protocol_whitelist", "file",
+                                  "-f", "mpegts", "-show_entries", "stream=codec_type,codec_name,height,start_time,duration", "-of", "json", str(path)], timeout=5)
             tracks = {stream["codec_type"]: stream for stream in json.loads(result.stdout)["streams"]}
             if "video" not in tracks:
                 return MISSING_TRACK if self.audio_url else CAPTURE_ERROR
             if self.max_height and int(tracks["video"]["height"]) > self.max_height:
                 return HEIGHT_ERROR
+            if self.process is not None and "audio" not in tracks and self.audio_url is None:
+                return MISSING_TRACK
             if not self.audio_url:
                 return None
             if not {"audio", "video"} <= tracks.keys():
@@ -367,7 +467,13 @@ class SegmentBuffer:
                     or any(end <= start for start, end in zip(starts, ends))
                     or max(abs(starts[0] - starts[1]), abs(ends[0] - ends[1])) > MAX_AV_SKEW):
                 return SYNC_ERROR
-        except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
+        except subprocess.TimeoutExpired as exc:
+            self._probe_detail = {"exit_code": None, "timeout_seconds": 5, "stderr": safe_stderr(exc.stderr)}
+            return "FFprobe agotó el tiempo al verificar las pistas."
+        except subprocess.CalledProcessError as exc:
+            self._probe_detail = {"exit_code": exc.returncode, "stderr": safe_stderr(exc.stderr)}
+            return "FFprobe no pudo leer las pistas del segmento."
+        except (OSError, ValueError, TypeError, KeyError):
             return SYNC_ERROR if self.audio_url else CAPTURE_ERROR
         return None
 
@@ -389,35 +495,67 @@ class SegmentBuffer:
                 if left < end and right > start]
 
     def closed_ranges(self):
-        ready = self.ready_segments()
-        try:
-            with (self.directory / "segments.csv").open(encoding="utf-8", newline="") as handle:
-                ranges = {row[0]: (float(row[1]), float(row[2])) for row in csv.reader(handle)
-                          if len(row) == 3}
-            return {path: ranges[path.name] for path in ready if path.name in ranges}
-        except (OSError, ValueError):
-            return {path: (self.index_to_time(self.index_of(path)),
-                           self.index_to_time(self.index_of(path) + 1)) for path in ready}
+        with self._validation_lock:
+            if self._retired:
+                return {}
+            closed = self._closed()
+            if closed:
+                newest = next(reversed(closed))
+                index = self.index_of(newest)
+                if index > self.last_closed_index:
+                    self.last_closed_index = index
+                    self.last_closed_at = time.monotonic()
+            if self.process is None and not self.audio_url and not self.max_height:
+                return closed
+            self._validated.intersection_update(closed)
+            self._skipped.intersection_update(closed)
+            for path, (start, end) in closed.items():
+                if self.segment_problem:
+                    break
+                if path in self._validated or path in self._skipped:
+                    continue
+                self._probe_detail = {}
+                problem = ("Segmento cerrado de más de 30 s; revisa el intervalo de fotogramas clave."
+                           if end - start > 30 else self._check_segment(path))
+                if not problem:
+                    self._validated.add(path)
+                    self._has_valid_segment = True
+                    self._bad_streak = 0
+                    continue
+                self._skipped.add(path)
+                self.rejected_segments += 1
+                self._bad_streak += 1
+                self.last_segment_error = {"segment": path.name, "message": problem, **self._probe_detail}
+                if problem == HEIGHT_ERROR or self._bad_streak >= 3:
+                    self.segment_problem = problem
+            return {path: bounds for path, bounds in closed.items() if path in self._validated}
 
     def cleanup(self):
         now = time.time()
-        paths = self.ready_segments()
-        keep = []
-        for path in paths:
-            if now - path.stat().st_mtime > self.retention:
+        with self._validation_lock:
+            paths = self._closed()
+            keep = []
+            for path in paths:
+                if not path.is_file():
+                    continue
+                stat = path.stat()
+                if path not in self._pins and now - stat.st_mtime > self.retention:
+                    path.unlink(missing_ok=True)
+                else:
+                    keep.append((path, stat.st_size))
+            total = sum(size for _, size in keep)
+            for path, size in keep:
+                if total <= self.max_bytes:
+                    break
+                if path in self._pins:
+                    continue
                 path.unlink(missing_ok=True)
-            else:
-                keep.append(path)
-        total = sum(p.stat().st_size for p in keep)
-        for path in keep:
-            if total <= self.max_bytes:
-                break
-            size = path.stat().st_size
-            path.unlink(missing_ok=True)
-            total -= size
+                total -= size
 
     def probe(self):
-        paths = self.ready_segments()
-        if not paths:
-            raise FileNotFoundError("No segments yet; wait for the buffer to fill.")
-        return ingest._probe_local(paths[-1], run=self.runner)
+        with self.pin() as paths:
+            if not paths:
+                raise FileNotFoundError("No segments yet; wait for the buffer to fill.")
+            if self._probe_cache is None:
+                self._probe_cache = ingest._probe_local(next(reversed(paths)), run=self.runner)
+            return self._probe_cache

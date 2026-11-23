@@ -1024,6 +1024,8 @@ $("#live-form").addEventListener(
     $("#live-start-error").hidden = true;
     try {
       const options = { aspect: $("#live-aspect").value, live_max_height: Number($("#live-max-height").value) };
+      const threshold = $("#live-threshold");
+      if (threshold.value !== "") options.live_threshold = threshold.valueAsNumber;
       const result = await api("/api/live", { source, options, brief });
       state.liveId = result.id;
       await refreshLive();
@@ -1045,6 +1047,18 @@ $("#live-stop").addEventListener(
   }),
 );
 
+$("#live-export").addEventListener("click", safe(async () => {
+  const button = $("#live-export");
+  button.disabled = true;
+  try {
+    await api("/api/live/" + state.liveId + "/export", { seconds: Number($("#live-export-seconds").value) });
+    $("#live-export-status").textContent = "Exportación en cola.";
+  } catch (error) {
+    $("#live-export-status").textContent = error.message;
+    button.disabled = false;
+  }
+}));
+
 const LIVE_NEXT_ACTION = {
   ok: "Watching",
   degraded: "Waiting for segments",
@@ -1063,7 +1077,7 @@ async function refreshLive() {
     $("#live-error").hidden = !$("#live-error").textContent;
   }
   $("#live-status").textContent = detail
-    ? `${detail.status} · ${Math.round(detail.stream_time)}s · ${detail.triggers.length} clips`
+    ? `${detail.status} · ${Math.round(detail.stream_time)}s · ${detail.export?.completed ?? detail.triggers.length} clips`
     : sessions.length
       ? `${sessions.length} session(s) on disk`
       : "Not running.";
@@ -1073,16 +1087,43 @@ async function refreshLive() {
       + `${LIVE_NEXT_ACTION[health.state] || "Watching"} · brief `
       + `${health.brief_source || "none"}/${health.brief_provider || "none"}`
     : "";
-  const scores = detail?.recent_scores || [];
-  $("#live-score").textContent = scores.length
-    ? `score ${Number(scores[scores.length - 1]).toFixed(2)}`
+  const score = health?.detection?.last_score;
+  $("#live-score").textContent = detail
+    ? `Detección ${score == null ? "sin señales recientes" : Number(score).toFixed(2)} / 10 · Umbral ${detail.threshold ?? "—"}`
     : "";
+  $("#live-manual").hidden = detail?.status !== "running";
+  $("#live-export").disabled = ["queued", "exporting"].includes(detail?.export?.state);
+  $("#live-export-status").textContent = detail?.export?.message || "";
+  const tech = (name, track) => {
+    const item = health?.analyzers?.[name];
+    if (!item) return track && health?.tracks?.[track] === false ? "Pista ausente" : "En espera";
+    const diagnostic = item.last_error;
+    return `${item.state} · ${item.processed} procesados · ${item.errors} errores · ${item.retries} reintentos · ${item.dropped} omitidos`
+      + (item.lag_seconds == null ? "" : ` · retraso ${item.lag_seconds}s`)
+      + (diagnostic ? ` · ${diagnostic.segment}: ${diagnostic.message}`
+        + (diagnostic.exit_code == null ? "" : ` (${diagnostic.exit_code})`)
+        + (diagnostic.timeout_seconds == null ? "" : ` (${diagnostic.timeout_seconds}s)`)
+        + (diagnostic.stderr ? ` ${diagnostic.stderr}` : "") : "");
+  };
+  const capture = health?.capture;
+  const components = detail ? [
+    ["Captura", capture ? `${capture.state} · ${capture.closed_segments} cerrados · ${capture.available} disponibles · ${capture.errors} errores`
+      + (capture.exit_code == null ? "" : ` · FFmpeg ${capture.exit_code}`)
+      + (capture.last_error ? ` · ${capture.last_error.segment}: ${capture.last_error.message}` : "")
+      + (capture.message ? ` · ${capture.message}` : "")
+      + (capture.stderr ? ` · ${capture.stderr}` : "") : "En espera"],
+    ["Audio", tech("audio", "audio")], ["Video", tech("visual", "video")], ["Transcripción", tech("transcript")],
+    ["Detección", score == null ? "En espera" : Object.keys(health.detection.signals).join(", ")],
+    ["Exportación", `${detail.export?.completed || 0} clips · ${detail.export?.errors || 0} errores`],
+  ] : [];
+  $("#live-components").innerHTML = components.map(([label, value]) =>
+    `<div><dt>${escapeHTML(label)}</dt><dd>${escapeHTML(value)}</dd></div>`).join("");
   const clips = $("#live-clips");
   clips.replaceChildren();
   for (const record of detail?.triggers || []) {
     const row = document.createElement("div");
     row.className = "live-clip";
-    row.textContent = `#${record.id} · ${Number(record.start).toFixed(1)}s-${Number(record.end).toFixed(1)}s · ${record.score}`;
+    row.textContent = `#${record.id} · ${Number(record.start).toFixed(1)}s-${Number(record.end).toFixed(1)}s · ${record.manual ? "Manual" : (record.score ?? "—")}`;
     const video = record.files?.mp4;
     if (video && state.liveId) {
       const link = document.createElement("a");

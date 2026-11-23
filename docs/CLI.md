@@ -83,7 +83,7 @@ for signals, session files, and rights notes.
 | `--live-pre-roll` | `30` | Seconds saved before a trigger (5–300). | `45` |
 | `--live-tail` | `5` | Seconds saved after a trigger (0–60). | `10` |
 | `--live-window` | `10` | Scoring window in seconds (2–60). | `15` |
-| `--live-threshold` | `8.0` | Hype score needed to save a clip (0–10). | `7.5` |
+| `--live-threshold` | `6.0` | Hype score needed to save a clip (0–10). | `7.5` |
 | `--live-cooldown` | `60` | Minimum seconds between clips (0–3600). | `120` |
 | `--live-max-clips` | `10` | Session clip cap, `0` for unlimited. | `20` |
 | `--live-no-chat` | off | Disable the chat signal. | (flag) |

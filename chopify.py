@@ -410,7 +410,7 @@ def main():
         live_options = video_types.apply_format(
             live_options, live_resolved["format"], live_explicit_keys)
         live.run_live(args.live, live_options, Path(args.projects_dir).resolve(),
-                      brief_text=brief_text)
+                      brief_text=brief_text, explicit_keys=live_explicit_keys)
         return
     if not (args.url or args.batch or args.project):
         ap.error("provide a local video, URL, --batch file, or --project directory")

@@ -99,7 +99,7 @@ def test_http_gates_and_reuse_avoid_new_model_or_media_work(tmp_path, monkeypatc
         app.editorial.ensure()
         configured(app.editorial.store)
         source = media_file(root / "clean.mp4")
-        for kind, rating in (("valid", 8.2), ("same", 8.2), ("low", 6.5), ("corrupt", 9),
+        for kind, rating in (("valid", 8.2), ("same", 8.2), ("low", 5.5), ("corrupt", 9),
                              ("bad_subtitles", 9), ("unknown", None)):
             project, clip = setup_asset(root, source, kind)
             path = clip.with_suffix(".meta.json")

@@ -51,8 +51,21 @@ def finished_record(state, media):
             original = projects.read_json(manifest)["subtitles"]["repaired_from"]
         except (OSError, ValueError, TypeError, KeyError):
             return None
-    return next((record for record in state.get("triggers", []) if not record.get("error")
-                 and Path(record.get("files", {}).get("mp4") or "").name == original), None)
+    record = next((record for record in state.get("triggers", []) if not record.get("error")
+                   and Path(record.get("files", {}).get("mp4") or "").name == original), None)
+    if record:
+        return record
+    ident = original.split("-", 1)[0]
+    if re.fullmatch(r"[a-f0-9]{12}", ident):
+        try:
+            from subtitle_quality import local_text
+            import json
+            item = json.loads(local_text(media.parent.parent / "records" / (ident + ".json"), 16384))
+            if original in finished_names({"triggers": [item]}):
+                return item
+        except (OSError, ValueError, TypeError, KeyError):
+            pass
+    return None
 
 
 def live_exports(root):
@@ -64,7 +77,8 @@ def live_exports(root):
             clips = live_clips_dir(root, session_id)
             repaired = {p.name for p in clips.glob("auto-*-corregido.mp4")
                         if PRODUCTION_REPAIR.fullmatch(p.name) and finished_record(state, p)}
-            for name in sorted(finished_names(state) | repaired):
+            archived = {path.name for path in clips.glob("*.mp4") if finished_record(state, path)}
+            for name in sorted(finished_names(state) | archived | repaired):
                 path = live_clip_path(root, session_id, name)
                 if path.suffix == ".mp4" and path.is_file():
                     yield {"project": f"live/{session_id}", "project_name": f"Live · {session_id}",
@@ -78,16 +92,17 @@ class ClipRecord:
     id: str
     start: float
     end: float
-    score: float
+    score: float | None
     signals: dict
     files: dict = field(default_factory=dict)
     error: str | None = None
+    manual: bool = False
 
 
 @dataclass
 class Trigger:
     time: float
-    score: float
+    score: float | None
     signals: dict
 
 
@@ -127,13 +142,16 @@ def stitch(paths, destination, runner=None):
         raise ValueError("No segments available for this clip window.")
     destination = Path(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    listing = destination.parent / "window_list.txt"
-    listing.write_text("".join(f"file '{p.resolve().as_posix()}'\n" for p in paths),
-                       encoding="utf-8")
-    cmd = ["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0",
+    listing = destination.with_suffix(".concat.txt")
+    escaped = [p.resolve().as_posix().replace("'", "'\\''") for p in paths]
+    listing.write_text("".join(f"file '{path}'\n" for path in escaped), encoding="utf-8")
+    cmd = ["ffmpeg", "-y", "-v", "error", "-xerror", "-protocol_whitelist", "file,pipe", "-f", "concat", "-safe", "0",
            "-i", str(listing), "-c", "copy", "-movflags", "+faststart",
            str(destination)]
-    runner(cmd)
+    try:
+        runner(cmd, timeout=25)
+    finally:
+        listing.unlink(missing_ok=True)
     return destination
 
 
@@ -147,10 +165,10 @@ class LiveClipWriter:
         self.clips_dir.mkdir(parents=True, exist_ok=True)
         self.windows_dir.mkdir(parents=True, exist_ok=True)
 
-    def write(self, trigger, options, probe, words, segments, renderer=None, ranges=None):
+    def write(self, trigger, options, probe, words, segments, renderer=None, ranges=None, manual_window=None):
         """Render one clip; return a ClipRecord (with .error on failure)."""
         render_fn = renderer or render_clips.render
-        start, end = plan_window(
+        start, end = manual_window or plan_window(
             trigger.time, options["live_buffer"], options["live_pre_roll"],
             options["live_tail"], options["min_len"], options["max_len"],
             max(right for _, right in ranges.values()) if ranges else trigger.time + options["live_tail"])
@@ -158,27 +176,38 @@ class LiveClipWriter:
             segments = [path for path in segments if ranges[path][0] < end and ranges[path][1] > start]
         offset = ranges[segments[0]][0] if ranges and segments else start
         start = max(start, offset)
-        record = ClipRecord(uuid.uuid4().hex[:12], start, end, trigger.score, trigger.signals)
+        record = ClipRecord(uuid.uuid4().hex[:12], start, end, trigger.score, trigger.signals,
+                            manual=manual_window is not None)
+        window = self.windows_dir / f"{record.id}.mp4"
         try:
             mark = self.watermark.for_render() if self.watermark else None
             brand = branding.load_brand(options["brand"]) if options["brand"] else None
-            window = stitch(segments, self.windows_dir / f"{record.id}.mp4")
+            window = stitch(segments, window)
             seg = {"id": record.id, "start": round(start - offset, 3), "end": round(end - offset, 3)}
             with self.resources:
                 render_fn(seg, remap_words(words, offset, end), window,
                           probe["width"], probe["height"], str(self.session_dir),
                           options["aspect"], out_dir=str(self.clips_dir),
-                          style=options["style"], do_tighten=options["tighten"],
+                          style=options["style"], do_tighten=options["tighten"] and manual_window is None,
                           loudnorm=options["loudnorm"], brand=brand,
                           layout=options["layout"], centers=options["centers"],
                           caption=options["caption"], fit=options["fit"],
                           facecam_box=options["facecam_box"],
                           facecam_height=options["facecam_height"], mark=mark, retain_for_repair=True,
+                          timeout=max(60, min(600, (end - start) * 8 + 60)),
                           transcript_info={"model": LIVE_TRANSCRIPT_MODEL if words else None,
                                            "origin": "Transcripción Live"})
             record.files = {"window": str(window)}
             for path in sorted(self.clips_dir.glob(f"{record.id}-*")):
                 record.files[path.suffix.lstrip(".") or "file"] = str(path)
         except Exception as exc:
-            record.error = f"{type(exc).__name__}: {exc}"
+            from live_capture import safe_stderr
+            detail = safe_stderr(getattr(exc, "stderr", ""))
+            status = getattr(exc, "returncode", None)
+            message = str(exc) if isinstance(exc, (ValueError, OSError)) else ""
+            record.error = f"{type(exc).__name__}" + (f" (código {status})" if status is not None else "")
+            detail = detail or safe_stderr(message)
+            if detail:
+                record.error += f": {detail}"
+            window.unlink(missing_ok=True)
         return record

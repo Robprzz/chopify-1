@@ -10,7 +10,7 @@ Abre Studio en `http://127.0.0.1:8765`, entra en **Automation**, edita tus prefe
 | Generar textos de publicación con IA | Sí | Editable |
 | Corregir subtítulos | Sí | Editable |
 | Forzar exportación vertical | No | Editable |
-| Puntuación mínima del clip | 7,0 | De 7 a 10 |
+| Puntuación mínima del clip | 6,0 | De 6 a 10 |
 | Límite diario | 3 | De 1 a 3 |
 | Zona horaria | `America/Santo_Domingo` | Zona IANA válida |
 | Prevención de duplicados | Sí | Obligatoria |

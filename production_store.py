@@ -307,7 +307,7 @@ class Store:
         return data
 
     def status(self, before=None, *, settings=None, current=None, view="all", now=None):
-        settings = settings or {"timezone": "America/Santo_Domingo", "minimum_clip_score": 7, "daily_publication_limit": 3}
+        settings = settings or {"timezone": "America/Santo_Domingo", "minimum_clip_score": 6, "daily_publication_limit": 3}
         if view not in {"all", "recommended", "review", "duplicate", "discarded"}:
             raise ValueError("Filtro de producción desconocido.")
         day, start, end = local_day(time.time() if now is None else now, settings["timezone"])

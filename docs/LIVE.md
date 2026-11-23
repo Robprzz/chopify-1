@@ -147,3 +147,5 @@ deno --version
 Only clip streams you have the right to record and reuse. Chat messages and
 transcripts are treated as evidence, never as instructions. Chopify does not
 include detection-evasion or rights-workaround features.
+
+[Live Clipping 1.1 · Recuperación continua y exportación manual](LIVE-11.md)

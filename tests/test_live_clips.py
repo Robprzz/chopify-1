@@ -85,9 +85,29 @@ def test_stitch_builds_concat_list(tmp_path):
     for p in paths:
         p.write_bytes(b"x")
     calls = []
-    live_clips.stitch(paths, paths[-1].parent / "window.mp4",
-                      runner=lambda cmd, **kw: calls.append(cmd))
+    entries = []
+
+    def inspect(cmd, **kwargs):
+        calls.append(cmd)
+        entries.append(live_clips.Path(cmd[cmd.index("-i") + 1]).read_text())
+
+    live_clips.stitch(paths, paths[-1].parent / "window.mp4", runner=inspect)
     assert calls and "concat" in calls[0]
-    listing = (paths[0].parent / "window_list.txt").read_text()
-    assert "segment00000002.ts" in listing
-    assert "segment00000004.ts" in listing
+    assert "segment00000002.ts" in entries[0]
+    assert "segment00000004.ts" in entries[0]
+    assert not (tmp_path / "window.concat.txt").exists()
+
+
+def test_archive_keeps_a_manual_clip_after_it_leaves_session_summary(tmp_path):
+    import projects
+    root = tmp_path / "live" / "abcdef123456"
+    (root / "clips").mkdir(parents=True)
+    (root / "records").mkdir()
+    ident = "112233445566"
+    media = root / "clips" / (ident + "-clip.mp4")
+    media.write_bytes(b"fixture")
+    record = {"id": ident, "manual": True, "score": None, "files": {"mp4": str(media)}}
+    projects.atomic_json(root / "records" / (ident + ".json"), record)
+    projects.atomic_json(root / "live_session.json", {"triggers": []})
+    assert live_clips.finished_record({"triggers": []}, media) == record
+    assert list(live_clips.live_exports(tmp_path))[0]["filename"] == media.name

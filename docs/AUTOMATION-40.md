@@ -10,7 +10,7 @@ La barra lateral permite contraer el menú y recuerda la última sección en ese
 
 La pantalla conserva la estructura de la maqueta aprobada, con barra lateral clara, controles azul marino, cuatro tarjetas, banner de captura, lista de prioridades y columna de operaciones. Los contadores, miniaturas y actividad proceden de los datos locales. El nombre de perfil aparece cuando el operador lo configura. Los estados vacíos reflejan un espacio de trabajo nuevo.
 
-Los archivos originales de marca no estaban disponibles en el checkout. Los SVG y el icono de escritorio incluidos son provisionales. Las rutas esperadas y el mecanismo para incorporar los archivos oficiales se documentan en [Referencias de diseño](../design/references/README.md).
+Studio utiliza el logotipo horizontal oficial en la barra lateral expandida y el símbolo oficial en la vista compacta, el favicon y el icono de escritorio. Los originales y la maqueta aprobada se conservan en [Referencias de diseño](../design/references/README.md).
 
 ## Calendario y ruta urgente
 

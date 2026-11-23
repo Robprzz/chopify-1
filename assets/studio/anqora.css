@@ -47,8 +47,8 @@ summary { cursor: pointer; color: var(--button-blue); }
   z-index: 20;
 }
 .brand-home { border: 0; padding: 7px 7px 7px 1px; height: 81px; width: 100%; background: transparent; text-align: left; }
-.brand-full { display: block; width: min(100%, 252px); height: auto; }
-.brand-mark { display: none; width: 38px; height: 38px; }
+.brand-full { display: block; width: 100%; height: auto; max-height: 66px; object-fit: contain; object-position: left center; }
+.brand-mark { display: none; width: 44px; height: auto; }
 .main-navigation { display: grid; gap: 8px; }
 .main-navigation button { display: flex; align-items: center; gap: 15px; min-width: 0; width: 100%; min-height: 48px; padding-inline: 15px; border: 0; background: transparent; text-align: left; font-size: 15px; color: var(--ink); }
 .main-navigation button:hover { background: #e7eefb; }
@@ -170,7 +170,7 @@ main > footer { padding: 0 26px 24px; color: var(--muted); border: 0; }
   .rail, .rail-collapsed .rail { position: fixed; padding: 0 5px 10px; gap: 8px; height: 100%; }
   .brand-home { height: 60px; display: grid; place-items: center; padding: 0; }
   .brand-full, .main-navigation button span, .system-indicator div { display: none; }
-  .brand-mark { display: block; margin: auto; width: 33px; }
+  .brand-mark { display: block; margin: auto; width: 39px; }
   .main-navigation { gap: 4px; }
   .main-navigation button { justify-content: center; padding: 6px; min-height: 43px; }
   .main-navigation button:last-child { margin-top: 5px; }

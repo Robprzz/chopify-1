@@ -337,3 +337,20 @@ def test_live_duplicate_start_reservation_and_url_aliases(server, monkeypatch):
     assert saved["threshold"] == 6
     request(base, f"/api/live/{ident}/stop", {}, httpd.app.token)
     assert start(alternate)["id"] != ident
+
+
+def test_studio_branding_pngs_take_precedence_and_svg_fallback(tmp_path, monkeypatch):
+    import dashboard
+
+    installed = dashboard.load_static_files()
+    for route, filename in (("anqora-logo", "anqora-horizontal.png"),
+                            ("anqora-symbol", "anqora-symbol.png")):
+        assert installed[route] == ((dashboard.STATIC / filename).read_bytes(), "image/png")
+
+    for filename, _ in dashboard.STATIC_FILES.values():
+        shutil.copyfile(dashboard.STATIC / filename, tmp_path / filename)
+    monkeypatch.setattr(dashboard, "STATIC", tmp_path)
+    monkeypatch.setattr(dashboard, "HERE", tmp_path)
+    fallback = dashboard.load_static_files()
+    assert fallback["anqora-logo"] == fallback["anqora.svg"]
+    assert fallback["anqora-symbol"] == fallback["anqora-mark.svg"]

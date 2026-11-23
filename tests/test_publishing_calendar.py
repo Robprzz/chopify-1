@@ -229,6 +229,18 @@ def test_anqora_dashboard_responsive(server, chromium_page, width, height):
     expect(page.locator("#home-live")).to_contain_text("Sin captura activa")
     assert page.evaluate("document.documentElement.scrollWidth === innerWidth")
     assert page.title() == "Anqora Media Studio"
+    assert page.locator('link[rel="icon"]').get_attribute("href") == "/anqora-symbol"
+    for route in ("/anqora-logo", "/anqora-symbol"):
+        response = page.request.get(base + route)
+        assert response.ok and response.headers["content-type"] == "image/png"
+    logo, mark = page.locator(".brand-full"), page.locator(".brand-mark")
+    if width > 640:
+        expect(logo).to_be_visible()
+        assert logo.evaluate("image => image.naturalWidth") == 2172
+        page.locator("#rail-toggle").click()
+        expect(logo).to_be_hidden()
+    expect(mark).to_be_visible()
+    assert mark.evaluate("image => image.naturalWidth") == 512
 
 
 def test_current_automation_evidence_and_explicit_tiktok_consent(server, monkeypatch):

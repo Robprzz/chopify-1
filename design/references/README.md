@@ -1,11 +1,11 @@
 # Referencias de diseño de Anqora
 
-La maqueta y los dos logotipos se pudieron consultar como imágenes insertadas en la conversación. Los archivos originales enumerados en el adjunto no estaban disponibles en el checkout ni como archivos descargables durante esta implementación.
+Este directorio conserva los tres PNG originales del paquete oficial de Anqora Media Studio 4.0.
 
-| Archivo esperado | Uso |
+| Archivo | Uso |
 |---|---|
-| `referencias/dashboard_ultima_propuesta.png` | Comparación visual. La interfaz se construye en HTML y CSS. |
-| `branding/anqora_logotipo_horizontal.png` | Logotipo horizontal. Studio lo carga al arrancar cuando está disponible. |
-| `branding/anqora_avatar_tiktok.png` | Recurso de marca para redes sociales. La marca de agua se configura por separado. |
+| [Maqueta aprobada](referencias/dashboard_ultima_propuesta.png) | Referencia para el diseño del dashboard en HTML y CSS. |
+| [Logotipo horizontal](branding/anqora_logotipo_horizontal.png) | Original transparente. La copia idéntica en `assets/studio/anqora-horizontal.png` se sirve desde `/anqora-logo`. |
+| [Avatar oficial de TikTok](branding/anqora_avatar_tiktok.png) | Recurso de marca para redes sociales. La marca de agua se configura por separado. |
 
-Conserva los originales en estas rutas. Los derivados aprobados pueden ir en `assets/studio/anqora-horizontal.png` y `assets/studio/anqora-symbol.png`. Si se añade un icono de Windows derivado del símbolo oficial, usa `assets/studio/anqora.ico`. Studio utiliza recursos provisionales incluidos en el checkout hasta que estén disponibles los archivos correspondientes.
+Studio sirve el símbolo oficial de `assets/studio/anqora-symbol.png` desde `/anqora-symbol` para la vista compacta y el favicon. El icono de escritorio `assets/studio/anqora.ico` deriva del mismo símbolo. Las rutas web conservan un SVG de respaldo para instalaciones que carezcan del PNG correspondiente.

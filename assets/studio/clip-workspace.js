@@ -67,6 +67,12 @@ async function showClipEditor(input, origin = workspaceView) {
   rememberClipPosition();
   const serial = ++clipEditor.serial;
   clipEditor.clip = {...existing,...input,url,id};
+  const ranking = workspaceData?.priority.find(item => item.project === input.project && item.filename === input.filename);
+  $("#clip-publishing-priority").textContent = ranking?.priority != null ?
+    "Prioridad " + ranking.priority.toFixed(1) + "/10 · Detección " + (ranking.score ?? "sin datos") +
+    " · " + (ranking.age == null ? "Antigüedad sin verificar" : "Hace " + Math.round(ranking.age) + " min") :
+    "El clip todavía no tiene una recomendación de Automation. Puedes prepararlo manualmente.";
+
   clipEditor.origin = origin === "clip-editor-view" ? clipEditor.origin : origin;
   setPreference("last-clip", id);
   clipPlatform.value = getPreference("clip-platform","tiktok");

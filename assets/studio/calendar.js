@@ -192,6 +192,14 @@ async function openCalendarDetail(id = null, key = null, immediate = false) {
     (detail.stale ? " · Versión obsoleta. Actualiza la referencia." : "") + (detail.error ? " · " + detail.error : "") : "";
   $("#calendar-events").innerHTML = (detail?.history || []).map(item => `<li>${escapeHTML(new Date(item.at*1000).toLocaleString())} ·
     ${escapeHTML(calendarStatuses[item.action] || ({created:"Creada",updated:"Actualizada"}[item.action]) || item.action)}${item.detail ? " · " + escapeHTML(calendarStatuses[item.detail] || item.detail) : ""}</li>`).join("");
+  const deliveryLabels = {dispatching:"En proceso",delivered_to_inbox:"Entregado al buzón",
+    published:"Publicación confirmada",failed:"Falló",uncertain:"Pendiente de verificación"};
+  $("#calendar-deliveries").replaceChildren(...(detail?.deliveries || []).map(attempt => {
+    const item = document.createElement("li");
+    item.textContent = new Date(attempt.started*1000).toLocaleString() + " · " + deliveryLabels[attempt.state] +
+      (attempt.error ? " · " + attempt.error : "");
+    return item;
+  }));
   const terminal = detail && ["cancelled","published"].includes(detail.status);
   const readonly = Boolean(terminal || detail?.external_id);
   $("#calendar-edit-tools").hidden = readonly;

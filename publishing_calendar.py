@@ -87,6 +87,14 @@ class Calendar:
             db.execute("""CREATE TABLE IF NOT EXISTS inbox_schedule(
                 plan TEXT PRIMARY KEY, owner TEXT NOT NULL, revision INTEGER NOT NULL, state TEXT NOT NULL)""")
 
+        with self.connect(write=True) as db:
+            db.execute("""CREATE TABLE IF NOT EXISTS delivery_attempts(
+                id TEXT PRIMARY KEY, plan TEXT NOT NULL, authorization_revision INTEGER NOT NULL,
+                project TEXT NOT NULL, file TEXT NOT NULL, digest TEXT NOT NULL, platform TEXT NOT NULL,
+                account TEXT, started REAL NOT NULL, state TEXT NOT NULL, provider_status TEXT,
+                provider_id TEXT, updated REAL NOT NULL, error TEXT)""")
+            db.execute("CREATE INDEX IF NOT EXISTS delivery_attempts_plan ON delivery_attempts(plan,started)")
+
         from growth import Growth
         self.growth = Growth(self)
 
@@ -352,10 +360,22 @@ class Calendar:
             if ((row["project"], row["file"]) != (review["project"], review["filename"])
                     or review["digest"] not in clip.get("hashes", [])):
                 raise Conflict("Selecciona en TikTok el archivo exacto de la programación.")
+            now = time.time()
+            db.execute("""INSERT INTO delivery_attempts
+                (id,plan,authorization_revision,project,file,digest,platform,account,started,state,updated)
+                VALUES(?,?,?,?,?,?,?,?,?,'dispatching',?)""",
+                (review["id"],ident,revision,row["project"],row["file"],review["digest"],row["platform"],
+                 review.get("owner"),now,now))
             # This callback runs only after TikTok validates the account, consent,
             # file review and duplicates, for explicit browser or persisted consent.
             self._transition(db, row, "requires_action", "Consentimiento registrado. Esperando evidencia del envío.",
                              consent=time.time(), external_id=review["id"], attempts=row["attempts"] + 1)
+
+    @staticmethod
+    def _delivery_evidence(db, ident, state, provider_status, provider_id, error):
+        db.execute("""UPDATE delivery_attempts SET state=?,provider_status=?,provider_id=?,error=?,updated=?
+            WHERE id=? AND (state IS NOT ? OR provider_status IS NOT ? OR provider_id IS NOT ? OR error IS NOT ?)""",
+            (state,provider_status,provider_id,error,time.time(),ident,state,provider_status,provider_id,error))
 
     def _recover(self, db, row, receipts, now, sending):
         if row["status"] in TERMINAL:
@@ -364,6 +384,7 @@ class Calendar:
             receipt = receipts.get(row["external_id"])
             key = receipt.get("status") if receipt else None
             if key == "PUBLISH_COMPLETE":
+                self._delivery_evidence(db,row["external_id"],"published",key,receipt.get("publish_id"),None)
                 self._transition(db, row, "published", confirmation="api", publish_id=receipt.get("publish_id"),
                                  confirmed_at=receipt.get("checked_at") or receipt.get("updated"))
                 return
@@ -376,6 +397,9 @@ class Calendar:
             else:
                 state, reason = "requires_action", "Resultado sin confirmar. Consulta el historial o el buzón antes de actuar."
             publish_id = receipt.get("publish_id") if receipt else row["publish_id"]
+            delivery = "delivered_to_inbox" if key == "SEND_TO_USER_INBOX" else (
+                "uncertain" if state == "requires_action" else "dispatching" if state == "processing" else state)
+            self._delivery_evidence(db,row["external_id"],delivery,key,publish_id,reason)
             if (row["status"], row["error"], row["publish_id"]) != (state, reason, publish_id):
                 self._transition(db, row, state, reason, publish_id=publish_id)
             return
@@ -422,6 +446,9 @@ class Calendar:
                     item.update(stale=True, media_available=False)
                 item["history"] = [dict(event) for event in db.execute(
                     "SELECT at,action,detail FROM calendar_events WHERE plan=? ORDER BY id DESC LIMIT 100", (ident,))]
+                item["deliveries"] = [dict(attempt) for attempt in db.execute(
+                    """SELECT id,authorization_revision,started,state,provider_status,provider_id,updated,error
+                       FROM delivery_attempts WHERE plan=? ORDER BY started DESC LIMIT 25""", (ident,))]
                 return item
             zone = zone_for(prefs["timezone"])
             target = date.fromisoformat(around) if around else datetime.fromtimestamp(now, zone).date()

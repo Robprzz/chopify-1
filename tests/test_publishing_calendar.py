@@ -150,6 +150,8 @@ def test_tiktok_recovers_ambiguity_inbox_and_verified_confirmation(agenda):
     inbox = store.snapshot(row["id"])
     assert inbox["status"] == "requires_action" and "buzón" in inbox["error"]
     assert inbox["confirmation"] is None
+    assert inbox["deliveries"][0]["state"] == "delivered_to_inbox"
+    assert inbox["deliveries"][0]["provider_status"] == "SEND_TO_USER_INBOX"
     agenda.receipts[0].update(status="PUBLISH_COMPLETE", checked_at=agenda.clock.now + 100)
     published = agenda.open().snapshot(row["id"])
     assert published["status"] == "published" and published["confirmation"] == "api"

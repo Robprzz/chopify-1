@@ -23,6 +23,10 @@ Para sugerir un horario con datos, escribe el mismo identificador de cuenta en e
 
 Las tablas de métricas, configuración y preparación se añaden al SQLite de 4.2. Los planes, captions y recibos existentes conservan su formato. La preparación reutiliza el catálogo y las verificaciones de medios. El registro de resultados evita volver a preparar una versión después de reiniciar.
 
+El historial de cada plan muestra los intentos nuevos con evidencia del proveedor y distingue entrega al buzón, resultado incierto y publicación confirmada. Los recibos anteriores siguen consultables en el historial ya existente. Ver recomendación muestra la prioridad de Automation cuando está disponible.
+
 La preparación automática reutiliza captions disponibles. La generación completa por lote, la evaluación editorial ampliada, la ingesta oficial de métricas y el análisis por tema o duración quedan pendientes.
 
 [Capturas de Chromium](../design/validation/workspace-50)
+
+Referencias oficiales de la evaluación de integraciones. [TikTok Direct Post](https://developers.tiktok.com/docs/en/content-posting-api-get-started) · [YouTube Data API y cuotas](https://developers.google.com/youtube/data/guides/quota_and_compliance_audits) · [Publicación en páginas de Facebook](https://developers.facebook.com/docs/graph-api/reference/page/feed/) · [Meta Insights](https://developers.facebook.com/docs/insights/guides)

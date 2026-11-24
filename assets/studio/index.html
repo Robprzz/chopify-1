@@ -146,7 +146,7 @@
             </form>
             <p id="calendar-detail-status" role="status"></p>
             <div id="calendar-actions" class="publication-actions"></div>
-            <details><summary>Historial</summary><ul id="calendar-events"></ul></details>
+            <details><summary>Historial</summary><ul id="calendar-events"></ul><ul id="calendar-deliveries" aria-label="Intentos de entrega"></ul></details>
           </aside>
         </div>
       </section>
@@ -625,7 +625,7 @@
         <div class="clip-editor-grid">
           <div class="workspace-card clip-preview-card">
             <div id="clip-preview-surface"><video id="clip-editor-video" controls playsinline preload="metadata" aria-label="Vista previa del clip"></video><img id="clip-mark-preview" alt="Marca de agua de la próxima exportación" hidden /></div>
-            <p id="clip-editor-media" class="muted"></p>
+            <p id="clip-editor-media" class="muted"></p><details><summary>Ver recomendación</summary><p id="clip-publishing-priority"></p></details>
             <details><summary>Portada y marca de agua</summary>
               <p class="muted">La portada se usa en Studio. La marca se aplica a una nueva versión del video.</p>
               <form id="clip-art-form">

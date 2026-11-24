@@ -429,8 +429,9 @@ function initSettings() {
   });
 }
 $("#settings-query").addEventListener("input",event => {
-  const query = event.target.value.toLocaleLowerCase();
-  for (const item of settingsNav) item.hidden = !item.textContent.toLocaleLowerCase().includes(query);
+  const normalize = text => text.normalize("NFD").replace(/\p{M}/gu,"").toLocaleLowerCase().trim();
+  const query = normalize(event.target.value);
+  for (const item of settingsNav) item.hidden = !normalize(item.textContent + " " + item.dataset.keywords).includes(query);
   $("#settings-empty").hidden = settingsNav.some(item => !item.hidden);
 });
 for (const id of sessionPrefs) {

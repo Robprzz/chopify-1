@@ -392,7 +392,7 @@ def test_studio_http_panel_never_returns_bot_token(server, chromium_page, tmp_pa
     assert forbidden.value.code == 403
     page.goto(base)
     page.locator("#show-settings").click()
-    page.get_by_role("button", name="Telegram", exact=True).click()
+    page.locator("[data-setting=integrations]").click()
     expect(page.get_by_role("heading", name="Telegram Control Center")).to_be_visible()
     token_field = page.locator("#telegram-token")
     expect(token_field).to_have_attribute("type", "password")

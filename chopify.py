@@ -331,6 +331,7 @@ def main():
                     help="optional safety cap; default all passing clips")
     ap.add_argument("--min-len", type=int, default=15, help="min clip seconds")
     ap.add_argument("--max-len", type=int, default=300, help="max clip seconds")
+    ap.add_argument("--render-recovery", choices=("stable", "subtitles", "watermark"), help=argparse.SUPPRESS)
     ap.add_argument("--automation-export", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--no-input", action="store_true",
                     help="never prompt; use flags and defaults")
@@ -459,7 +460,7 @@ def main():
             sources = json.loads(Path(args.batch).read_text(encoding="utf-8-sig"))
             results = projects.run_batch(sources, Path(args.projects_dir).resolve(), options,
                 action=args.action, preview=args.preview, pick=args.clips, resume=args.resume,
-                on_detection=detection_cb, explicit_keys=explicit_keys)
+                on_detection=detection_cb, explicit_keys=explicit_keys, recovery=args.render_recovery)
             print(json.dumps(results, indent=2))
             if any(r["status"] == "failed" for r in results):
                 raise SystemExit(1)
@@ -501,7 +502,7 @@ def main():
         if interactive and args.action == "all":
             result = projects.run_project(path, action="prepare", preview=args.preview,
                                           resume=args.resume, on_detection=detection_cb,
-                                          explicit_keys=explicit_keys)
+                                          explicit_keys=explicit_keys, recovery=args.render_recovery)
             state = projects.read_project(path)
             _print_selection(path, state, args.explain)
             printed_summary = True
@@ -526,12 +527,12 @@ def main():
             result = projects.run_project(path, action="render", preview=args.preview,
                                           pick=args.clips, resume=args.resume,
                                           automation_export=args.automation_export, on_detection=detection_cb,
-                                          explicit_keys=explicit_keys)
+                                          explicit_keys=explicit_keys, recovery=args.render_recovery)
         else:
             result = projects.run_project(path, action=args.action, preview=args.preview,
                                           pick=args.clips, resume=args.resume,
                                           automation_export=args.automation_export, on_detection=detection_cb,
-                                          explicit_keys=explicit_keys)
+                                          explicit_keys=explicit_keys, recovery=args.render_recovery)
         if not printed_summary:
             _print_selection(path, result, args.explain)
         if args.action != "prepare":

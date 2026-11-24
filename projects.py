@@ -301,12 +301,14 @@ def validate_segments(segments, duration):
 
 
 def run_project(path, action="all", preview=False, pick=None, resume=True,
-                progress=None, on_detection=None, explicit_keys=None, automation_export=False):
+                progress=None, on_detection=None, explicit_keys=None, automation_export=False, recovery=None):
     """Prepare candidates or render saved candidates; checkpoint every successful clip."""
     workspace = Path(path).parent
     path = Path(path).resolve()
     state = read_project(path)
     options = validate_options(state["options"])
+    if recovery == "stable":
+        options = {**options, "layout": "single", "camera_mode": "stable"}
     if action not in {"all", "prepare", "render"}:
         raise ValueError("Unknown project action.")
     def stage(name):
@@ -555,7 +557,11 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
             segments = score_clips.pick_segments(segments, pick)
             out = path / ("previews" if preview else "clips")
             out.mkdir(exist_ok=True)
-            mark = watermark.Store(workspace).for_render()
+            state["render_recovery"] = None
+            try:
+                mark = None if recovery == "watermark" else watermark.Store(workspace).for_render()
+            except watermark.WatermarkError as exc:
+                raise render_clips.WatermarkRenderFailure(str(exc), "watermark") from exc
             mark_identity = [mark.settings] if mark else []
             brand = branding.load_brand(options["brand"]) if options["brand"] else None
             logo_identity = file_identity(brand["logo"]) if brand and brand["logo"] else None
@@ -597,7 +603,7 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
                         sections.SECTION_VERSION])
                 key = digest([segment, data["words"], file_identity(source),
                               options, brand, logo_identity, preview,
-                              source_offset, section_key, TIMELINE_VERSION, *mark_identity])
+                              source_offset, section_key, TIMELINE_VERSION, *mark_identity, *([recovery] if recovery else [])])
                 cached = state["renders"].get(key)
                 expected_suffixes = [".mp4", ".srt"] if preview else [".mp4", ".srt", ".png", ".meta.json"]
                 if resume and cached and all(Path(cached).with_suffix(ext).is_file() for ext in expected_suffixes):
@@ -633,7 +639,7 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
                                 segment, data["words"],
                                 file_identity(source), options, brand,
                                 logo_identity, preview, source_offset,
-                                section_key, TIMELINE_VERSION, *mark_identity])
+                                section_key, TIMELINE_VERSION, *mark_identity, *([recovery] if recovery else [])])
                         except (Exception, SystemExit) as exc:
                             failed_sections[group_index] = str(exc)
                             render_errors.append(
@@ -649,10 +655,16 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
                         do_tighten=options["tighten"], loudnorm=options["loudnorm"], preview=preview,
                         brand=brand, layout=options["layout"], centers=options["centers"], camera_mode=options["camera_mode"],
                         caption=options["caption"], source_offset=source_offset, mark=mark,
-                        retain_for_repair=automation_export,
+                        retain_for_repair=automation_export, burn_subtitles=recovery != "subtitles",
                         transcript_info={"model": data.get("model"), "origin": "project",
                                          "transcript_version": data.get("transcript_version"),
                                          "transcript_hash": digest(data["words"])})
+                except render_clips.RenderFailure as exc:
+                    state["last_outputs"] = outputs
+                    if exc.alternative:
+                        state["render_recovery"] = {"alternative": exc.alternative,
+                            "pick": str(int(segment["id"])), "preview": preview}
+                    raise
                 except (Exception, SystemExit) as exc:
                     if not render_from_sections:
                         raise
@@ -689,7 +701,11 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
         save_project(path, state)
         return state
     except (Exception, SystemExit) as exc:
-        state.update(status="failed", error=str(exc), stage=state.get("stage", "failed"))
+        alternative = exc.alternative if isinstance(exc, render_clips.RenderFailure) else None
+        if alternative and not state.get("render_recovery"):
+            state["render_recovery"] = {"alternative": alternative, "pick": pick, "preview": preview}
+        state.update(status="review" if alternative else "failed", error=str(exc),
+                     stage="render recovery" if alternative else state.get("stage", "failed"))
         save_project(path, state)
         raise
 

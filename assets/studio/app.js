@@ -390,7 +390,7 @@ function updateBrands(selected = "") {
 }
 const projectLabels = {
   new: "Nuevo", waiting: "En espera", queued: "En cola", running: "En proceso",
-  complete: "Completado", interrupted: "Interrumpido", failed: "Fallido",
+  complete: "Completado", "render recovery": "Alternativa disponible", interrupted: "Interrumpido", failed: "Fallido",
   error: "Error", ready: "Listo", prepare: "Preparación", render: "Exportación",
   "render incomplete": "Exportación parcial", "rendered": "Exportado", review: "En revisión",
 };
@@ -445,6 +445,15 @@ async function selectProject(id) {
   renderDetail();
   await refreshProjects();
 }
+const recoveryLabels = {stable:"Exportar con encuadre vertical estable", subtitles:"Exportar sin subtítulos incrustados",
+  watermark:"Exportar sin marca de agua"};
+$("#render-recovery").addEventListener("click",safe(async () => {
+  const alternative = state.detail.project.render_recovery?.alternative;
+  if (!recoveryLabels[alternative] || !confirm(recoveryLabels[alternative] + " para este intento. ¿Continuar?")) return;
+  await api(`/api/projects/${state.id}/render-recovery`,{alternative,confirmed:true});
+  const detail = await api(`/api/projects/${state.id}`);
+  if (detail.project.id === state.id) { state.detail = detail; updateStatus(detail); }
+}));
 function updateStatus(detail) {
   const progress = detail.progress || {};
   const total = Number(progress.total);
@@ -462,6 +471,9 @@ function updateStatus(detail) {
     (errors.length ? `${errors.length} clip(s) failed to render.` : "");
   $("#job-error").hidden = !error;
   $("#job-error").textContent = error;
+  const recovery = recoveryLabels[detail.project.render_recovery?.alternative];
+  $("#render-recovery").hidden = detail.busy || !recovery || detail.project.stage !== "render recovery";
+  $("#render-recovery").textContent = recovery || "";
   $("#log").textContent = detail.log || "Aún no se ha ejecutado ningún trabajo.";
   state.busy = detail.busy;
   for (const selector of [

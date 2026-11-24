@@ -326,7 +326,7 @@ class Studio:
                 continue
         return sorted(result, key=lambda p: p["created"], reverse=True)
 
-    def enqueue(self, project_id, action, preview=False, pick=None, *, output=None):
+    def enqueue(self, project_id, action, preview=False, pick=None, *, output=None, recovery=None):
         if action not in {"prepare", "render", "all"}:
             raise ValueError("Unknown action.")
         if not isinstance(preview, bool):
@@ -338,13 +338,18 @@ class Studio:
             if self.busy(project_id):
                 raise ValueError("This project is already queued or running.")
             state = projects.read_project(path)
+            if recovery is not None:
+                pending = state.get("render_recovery") or {}
+                if recovery not in {"stable", "subtitles", "watermark"} or pending.get("alternative") != recovery:
+                    raise ValueError("La alternativa de render ya no está disponible.")
+                preview, pick = pending["preview"], pending["pick"]
             if output is not None:
                 state["options"] = projects.validate_options({**state["options"], **output})
             state.update(status="queued", stage=action, error=None)
             projects.save_project(path, state)
-            future = self.executor.submit(self._run, path, action, preview, pick)
+            future = self.executor.submit(self._run, path, action, preview, pick, recovery)
             self.futures[project_id] = future
-            if action != "prepare" and not preview:
+            if action != "prepare" and not preview and not recovery:
                 future.add_done_callback(lambda _: self._editorial_exports(project_id, path))
 
     def _editorial_exports(self, project_id, path):
@@ -357,17 +362,20 @@ class Studio:
         for output in state.get("last_outputs", []):
             self._production_clip(project_id, Path(output).name)
 
-    def _run(self, path, action, preview, pick):
+    def _run(self, path, action, preview, pick, recovery=None):
         cmd = [sys.executable, "-X", "utf8", str(HERE / "chopify.py"), "--project", str(path),
                "--action", action, "--out", str(path / ("previews" if preview else "clips"))]
         # Studio jobs run unattended: never wait for interactive CLI questions.
         cmd.extend(["--no-input", "--automation-export"])
+        if recovery:
+            cmd.extend(["--render-recovery", recovery])
         if preview:
             cmd.append("--preview")
         if pick:
             cmd += ["--clips", pick]
         try:
-            with self.resources, (path / "job.log").open("w", encoding="utf-8") as log:
+            with self.resources, (path / "job.log").open("a", encoding="utf-8") as log:
+                print(f"\n--- {action} {time.strftime('%Y-%m-%d %H:%M:%S')} ---", file=log, flush=True)
                 with self.lock:
                     if self.closing:
                         return
@@ -380,7 +388,7 @@ class Studio:
                     self.processes.discard(child)
             if code:
                 state = projects.read_project(path)
-                state.update(status="interrupted" if self.closing else "failed",
+                state.update(status="interrupted" if self.closing else ("review" if state.get("stage") == "render recovery" else "failed"),
                              error="Studio se cerró. Reanuda el proyecto para continuar." if self.closing else (
                                  state.get("error") or "Job failed. Open the job log for setup or input details."))
                 projects.save_project(path, state)
@@ -967,6 +975,11 @@ class Handler(BaseHTTPRequestHandler):
                         duration = projects.read_json(path / "transcript.json")["duration"]
                         segments = projects.validate_segments(body["candidates"], duration)
                         projects.atomic_json(path / "segments.json", segments)
+                    elif action == "render-recovery":
+                        recovery = body.get("alternative")
+                        if recovery not in ("stable", "subtitles", "watermark") or body.get("confirmed") is not True:
+                            raise ValueError("Confirma la alternativa de render.")
+                        self.app.enqueue(project_id, "render", recovery=recovery)
                     elif action == "run":
                         if "output" in body:
                             output = body["output"]

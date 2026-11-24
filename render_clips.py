@@ -288,14 +288,19 @@ def sanitize(text, maxlen=70):
 def ffprobe_dims(path):
     out = subprocess.run(
         ["ffprobe", "-v", "error", "-select_streams", "v:0",
-         "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", str(path)],
+         "-show_entries", "stream=width,height:stream_side_data=rotation", "-of", "json", str(path)],
         capture_output=True, encoding="utf-8", errors="backslashreplace", check=True).stdout.strip()
-    w, h = out.split("x")[:2]
-    return int(w), int(h)
+    video = json.loads(out)["streams"][0]
+    width, height = int(video["width"]), int(video["height"])
+    rotation = next((item["rotation"] for item in video.get("side_data_list", []) if "rotation" in item), 0)
+    # FFmpeg applies the display matrix before the first filter.
+    return (height, width) if abs(rotation) % 180 == 90 else (width, height)
 
 
 def crop_for(W, H, tw, th):
     """Largest centred crop of the WxH source matching the target aspect."""
+    if min(W, H, tw, th) < 2:
+        raise RenderFailure("El video fuente y el lienzo deben medir al menos 2 × 2 píxeles.")
     tar = tw / float(th)
     src = W / float(H)
     if abs(src - tar) < 1e-3:
@@ -306,8 +311,8 @@ def crop_for(W, H, tw, th):
     else:                                # source taller -> crop height
         cw = W
         ch = int(round(W / tar))
-    cw -= cw % 2
-    ch -= ch % 2
+    cw = max(2, cw - cw % 2)
+    ch = max(2, ch - ch % 2)
     x0 = max(0, (W - cw) // 2)
     y0 = max(0, (H - ch) // 2)
     return cw, ch, x0, y0
@@ -555,12 +560,40 @@ def caption_from_args(args):
     return branding.validate_caption(caption) if supplied else None
 
 
-def render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAULT_STYLE,
+class RenderFailure(ValueError):
+    def __init__(self, message, alternative=None):
+        super().__init__(message)
+        self.alternative = alternative
+
+
+class WatermarkRenderFailure(RenderFailure, watermark.WatermarkError):
+    pass
+
+
+def ffmpeg_failure(stderr, returncode, *, layout, mark):
+    code = returncode - 2**32 if 2**31 <= returncode < 2**32 else returncode
+    details = stderr.lower()
+    if re.search(r"parsed_(subtitles|ass)_|no such filter.{0,5}subtitles|unable to open _caption\.ass", details):
+        return RenderFailure(f"FFmpeg no pudo incrustar los subtítulos ({code}). Consulta el registro.", "subtitles")
+    if mark and ("parsed_colorchannelmixer_" in details or str(mark.image).lower() in details):
+        return WatermarkRenderFailure(f"FFmpeg no pudo procesar la marca de agua ({code}). Consulta el registro.", "watermark")
+    if layout in {"stacked", "split", "smart"} and re.search(
+            r"parsed_(crop|scale|vstack|overlay|sendcmd)_|no such filter.{0,5}(crop|vstack|sendcmd)", details):
+        return RenderFailure(f"FFmpeg rechazó la composición vertical ({code}). Consulta el registro.", "stable")
+    return RenderFailure(f"FFmpeg no pudo exportar el MP4 ({code}). Consulta el registro para conocer el error.")
+
+
+def render(*args, **kwargs):
+    with tempfile.TemporaryDirectory(prefix="anqora-render-") as scratch:
+        return _render(*args, **kwargs, scratch=Path(scratch))
+
+
+def _render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAULT_STYLE,
            do_tighten=False, loudnorm=False, preview=False, brand=None,
            layout="single", centers=(0.25, 0.75), caption=None,
            source_offset=0.0, fit="cover", facecam_box=None,
            facecam_height=0.34, mark=None, transcript_info=None, timeout=None, allow_model_download=True,
-           retain_for_repair=False, camera_mode="auto"):
+           retain_for_repair=False, camera_mode="auto", *, scratch, burn_subtitles=True):
     out_dir = (Path(out_dir) if out_dir else default_out()).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     source = Path(source).resolve()
@@ -602,7 +635,7 @@ def render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAUL
     render_src = source
     if do_tighten:
         keeps = tighten.plan_cuts(words, start, end)
-        render_src = out_dir / "_tight_source.mp4"
+        render_src = scratch / "_tight_source.mp4"
         tighten.apply_cuts(source, keeps, start, render_src,
                            source_offset=offset)
         cap_words, dur = tighten.remap_words(words, start, keeps)
@@ -629,10 +662,10 @@ def render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAUL
         vf, seam_margin = stacked_graph(W, H, tw, th, facecam_height, box)
         caption_override = dict(caption or {})
         caption_override["margin"] = None
-        build_ass(cap_words, start, start + dur, out_dir / "_caption.ass",
+        build_ass(cap_words, start, start + dur, scratch / "_caption.ass",
                   tw, th, font_size, seam_margin, style, brand, caption_override, groups=groups)
     else:
-        build_ass(cap_words, start, start + dur, out_dir / "_caption.ass",
+        build_ass(cap_words, start, start + dur, scratch / "_caption.ass",
                   tw, th, font_size, margin_v, style, brand, caption, groups=groups)
 
     vertical = aspect == "9:16"
@@ -658,12 +691,12 @@ def render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAUL
                 motion["fallback"] = {"reason": "no se verificaron dos posiciones estables"}
                 framing = None
             elif framing.reliable:
-                smart_camera.write_commands(framing.points, W, cw, out_dir / "_crop.cmd", dur)
+                smart_camera.write_commands(framing.points, W, cw, scratch / "_crop.cmd", dur)
     if not vertical and layout == "single" and needs_track:
         framing = smart_camera.plan(
             detect_track(render_src, local_start, dur, W, workdir, allow_model_download, timeout), W, cw, dur)
         if framing.reliable:
-            smart_camera.write_commands(framing.points, W, cw, out_dir / "_crop.cmd", dur)
+            smart_camera.write_commands(framing.points, W, cw, scratch / "_crop.cmd", dur)
 
     blur_w, blur_h = (tw // 8) * 2, (th // 8) * 2
     stable = (f"[0:v]split=2[bg][fg];[bg]crop={cw}:{ch}:{x0}:{y0},"
@@ -700,10 +733,10 @@ def render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAUL
     suffix = ".preview" if preview else ""
     prefix = sanitize(str(seg["id"])) + "-" if seg.get("id") else ""
     out = out_dir / (prefix + sanitize(seg.get("hook", "clip")) + suffix + ".mp4")
-    if mark and out.exists():
+    if out.exists():
         out = out.with_name(f"{out.stem}-{uuid.uuid4().hex[:8]}{out.suffix}")
     def command(graph, destination):
-        cmd = ["ffmpeg", "-nostdin", "-y", "-ss", f"{local_start:.3f}", "-i", str(render_src)]
+        cmd = ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{local_start:.3f}", "-i", str(render_src)]
         if mark:
             w, h, x, y = mark.geometry(tw, th)
             cmd += ["-f", "image2", "-pattern_type", "none", "-i", str(mark.image)]
@@ -723,6 +756,8 @@ def render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAUL
                      "[captioned][logo]overlay=W-w-24:24:eof_action=repeat,setsar=1[v]")
         elif graph.startswith("[0:v]") and not graph.endswith("[v]"):
             graph += "[v]"
+        if not burn_subtitles:
+            graph = graph.replace(",subtitles=_caption.ass", "")
         cmd += ["-t", f"{dur:.3f}"]
         if graph.endswith("[v]"):
             cmd += ["-filter_complex_threads", "1", "-filter_complex", graph, "-map", "[v]", "-map", "0:a?"]
@@ -744,21 +779,32 @@ def render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAUL
             cmd = command(graph, temporary)
             print(">", " ".join(cmd), flush=True)
             try:
-                subprocess.run(cmd, check=True, cwd=str(out_dir),
-                               timeout=timeout or max(60, min(7200, dur * 12 + 60)))
-            except (OSError, subprocess.SubprocessError):
-                if mark:
-                    raise watermark.WatermarkError("FFmpeg no pudo incorporar la marca de agua al MP4. Comprueba la imagen PNG y los filtros de FFmpeg.") from None
-                raise
+                result = subprocess.run(cmd, check=True, cwd=scratch, stderr=subprocess.PIPE, encoding="utf-8",
+                                        errors="backslashreplace", timeout=timeout or max(60, min(7200, dur * 12 + 60)))
+                if result.stderr:
+                    print(result.stderr, file=sys.stderr, flush=True)
+            except subprocess.CalledProcessError as exc:
+                print(exc.stderr or "FFmpeg no devolvió stderr.", file=sys.stderr, flush=True)
+                raise ffmpeg_failure(exc.stderr or "", exc.returncode, layout=mode if mode == "smart" else layout,
+                                     mark=mark) from exc
+            except subprocess.TimeoutExpired as exc:
+                if exc.stderr:
+                    print(exc.stderr.decode("utf-8", "backslashreplace") if isinstance(exc.stderr, bytes)
+                          else exc.stderr, file=sys.stderr, flush=True)
+                raise RenderFailure("FFmpeg superó el tiempo de render. Consulta el registro.") from exc
+            except OSError as exc:
+                raise RenderFailure("No se pudo iniciar FFmpeg. Comprueba su instalación.") from exc
 
-        try:
-            encode(vf)
-        except (subprocess.CalledProcessError, watermark.WatermarkError):
-            if not vertical or mode != "smart":
-                raise
-            encode(stable)
-            mode = "stable"
-            motion["fallback"] = {"reason": "el filtro de seguimiento no pudo renderizar"}
+        if burn_subtitles:
+            ass = scratch / "_caption.ass"
+            try:
+                content = ass.read_text(encoding="utf-8-sig")
+                if not all(section in content for section in ("[Script Info]", "[V4+ Styles]", "[Events]")):
+                    raise ValueError("Encabezados ASS incompletos.")
+            except (OSError, ValueError) as exc:
+                print(f"ASS: {exc}", file=sys.stderr, flush=True)
+                raise RenderFailure("No se pudo validar el archivo ASS. Consulta el registro.", "subtitles") from exc
+        encode(vf)
         if motion is not None and not preview:
             source_spans = None
 
@@ -789,9 +835,11 @@ def render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAUL
             motion["applied"] = mode
         temporary.replace(out)
     srt = captions.write_srt(cap_words, start, start + dur, out.with_suffix(".srt"), groups=groups)
-    ass = out_dir / "_caption.ass"
+    ass = scratch / "_caption.ass"
     track = None
     if not preview:
+        if not burn_subtitles:
+            caption_error = "Exportación autorizada sin subtítulos incrustados."
         from subtitle_quality import artifact_hash
         ass_output = out.with_suffix(".ass")
         shutil.copyfile(ass, ass_output)
@@ -800,7 +848,7 @@ def render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAUL
             "words": sum(len(captions.cue_text(group).split()) for group in groups),
             "timing": {k: resolved[k] for k in captions.TIMING_FIELDS},
             "srt_hash": artifact_hash(srt), "ass_hash": artifact_hash(ass_output),
-            "media_hash": artifact_hash(out), "tightened": bool(do_tighten),
+            "media_hash": artifact_hash(out), "tightened": bool(do_tighten), "burned_in": burn_subtitles,
             "render_options": {"style": style, "fit": fit, "layout": requested_layout, "centers": requested_centers,
                                "camera_mode": camera_mode,
                                "caption": caption, "facecam_box": facecam_box, "facecam_height": facecam_height},
@@ -808,7 +856,7 @@ def render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAUL
             **({"caption_error": caption_error} if caption_error else {}),
         }
 
-    for tmpf in (out_dir / "_caption.ass", out_dir / "_crop.cmd"):
+    for tmpf in (scratch / "_caption.ass", scratch / "_crop.cmd"):
         try:
             tmpf.unlink()
         except OSError:
@@ -912,10 +960,13 @@ def stacked_graph(W, H, tw, th, facecam_height, box):
     """Return (filter graph fragment, ASS bottom margin) for facecam + gameplay."""
     fh = int(round(th * facecam_height)) // 2 * 2
     gh = th - fh
+    if min(W, H, tw, fh, gh) < 2 or not all(math.isfinite(value) and 0 <= value <= 1 for value in box):
+        raise RenderFailure("Las dimensiones de la composición vertical no son válidas.", "stable")
     fcw = max(2, int(round(box[2] * W)) // 2 * 2)
     fch = max(2, int(round(box[3] * H)) // 2 * 2)
-    fcx = min(W - fcw, int(box[0] * W) // 2 * 2)
-    fcy = min(H - fch, int(box[1] * H) // 2 * 2)
+    fcw, fch = min(W - W % 2, fcw), min(H - H % 2, fch)
+    fcx = max(0, min((W - fcw) // 2 * 2, int(box[0] * W) // 2 * 2))
+    fcy = max(0, min((H - fch) // 2 * 2, int(box[1] * H) // 2 * 2))
     gcw, gch, gcx, gcy = crop_for(W, H, tw, gh)
     graph = (f"[0:v]split=2[cam][game];"
              f"[cam]crop={fcw}:{fch}:{fcx}:{fcy},scale={tw}:{fh}[top];"

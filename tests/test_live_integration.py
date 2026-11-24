@@ -101,7 +101,7 @@ def test_live_start_explains_missing_resolver(server, chromium_page, monkeypatch
         page.locator("#live-start").click()
     assert reply.value.status == 400
     expect(page.locator("#live-start-error")).to_contain_text("yt-dlp is missing from Studio's Python environment")
-    expect(page.locator("#live-status")).to_have_text("Not running.")
+    expect(page.locator("#live-status")).to_have_text("Sin captura activa.")
 
 
 def test_live_capture_downscales_when_source_exceeds_selected_limit(tmp_path):

@@ -39,6 +39,7 @@ import studio_system
 import studio_windows
 import tiktok
 import video_types
+import asset_lifecycle
 import watermark
 from unicode_io import configure_utf8, utf8_environment
 
@@ -120,7 +121,10 @@ def save_format(body, root=None):
 def project_detail(root, project_id):
     """Build the JSON payload for one project, including selection.json."""
     path = projects.project_path(root, project_id)
+    if asset_lifecycle.hidden(root, project_id):
+        raise FileNotFoundError("Proyecto en la papelera.")
     state = projects.read_project(path)
+    trash = asset_lifecycle.entries(root)
     data = {"project": state, "busy": False, "candidates": [],
             "transcript": None, "selection": {}, "files": [], "log": ""}
     for filename, key in [("segments.json", "candidates"),
@@ -130,7 +134,8 @@ def project_detail(root, project_id):
             data[key] = projects.read_json(path / filename)
     for directory in ("previews", "clips"):
         for file in sorted((path / directory).glob("*")):
-            if file.suffix in {".mp4", ".srt", ".png", ".json"}:
+            if (file.suffix in {".mp4", ".srt", ".png", ".json"}
+                    and (directory != "clips" or not asset_lifecycle.hidden(root, project_id, file.name, records=trash))):
                 data["files"].append({"name": file.name, "kind": directory,
                                       "url": f"/media/{project_id}/{directory}/{file.name}"})
     if (path / "job.log").exists():
@@ -209,6 +214,7 @@ class Studio:
     def _production_catalog(self):
         from live_clips import PRODUCTION_REPAIR, live_exports
 
+        trash = asset_lifecycle.entries(self.root)
         for path in self.root.glob("*/project.json"):
             try:
                 projects.project_path(self.root, path.parent.name)
@@ -218,12 +224,14 @@ class Studio:
                 outputs = set(state.get("last_outputs", [])) | set((state.get("renders") or {}).values())
                 for output in sorted(outputs):
                     clip = Path(output)
-                    if clip.suffix == ".mp4" and clip.parent.name == "clips" and clip.is_file():
+                    if (clip.suffix == ".mp4" and clip.parent.name == "clips" and clip.is_file()
+                            and not asset_lifecycle.hidden(self.root, path.parent.name, clip.name, records=trash)):
                         yield path.parent.name, clip.name
             except (OSError, ValueError, TypeError, KeyError):
                 continue
         for clip in live_exports(self.root):
-            if not PRODUCTION_REPAIR.fullmatch(clip["filename"]):
+            if (not PRODUCTION_REPAIR.fullmatch(clip["filename"])
+                    and not asset_lifecycle.hidden(self.root, clip["project"], clip["filename"], records=trash)):
                 yield clip["project"], clip["filename"]
 
     def _production_clip(self, project, filename):
@@ -239,14 +247,16 @@ class Studio:
 
     def list_projects(self):
         result = []
+        trash = asset_lifecycle.entries(self.root)
         for path in self.root.glob("*/project.json"):
             try:
-                result.append(projects.read_project(path.parent))
+                if not asset_lifecycle.hidden(self.root, path.parent.name, records=trash):
+                    result.append(projects.read_project(path.parent))
             except (ValueError, OSError):
                 continue
         return sorted(result, key=lambda p: p["created"], reverse=True)
 
-    def enqueue(self, project_id, action, preview=False, pick=None):
+    def enqueue(self, project_id, action, preview=False, pick=None, *, output=None):
         if action not in {"prepare", "render", "all"}:
             raise ValueError("Unknown action.")
         if not isinstance(preview, bool):
@@ -258,6 +268,8 @@ class Studio:
             if self.busy(project_id):
                 raise ValueError("This project is already queued or running.")
             state = projects.read_project(path)
+            if output is not None:
+                state["options"] = projects.validate_options({**state["options"], **output})
             state.update(status="queued", stage=action, error=None)
             projects.save_project(path, state)
             future = self.executor.submit(self._run, path, action, preview, pick)
@@ -372,7 +384,11 @@ class Studio:
                     records[path.stem] = record
             except (OSError, ValueError, KeyError, TypeError, AttributeError):
                 continue
-        detail["triggers"] = sorted(records.values(), key=lambda item: item.get("start", 0))
+        trash = asset_lifecycle.entries(self.root)
+        detail["triggers"] = sorted((record for record in records.values()
+                                    if not asset_lifecycle.hidden(self.root, "live/" + session_id,
+                                        Path(record.get("files", {}).get("mp4") or "").name, records=trash)),
+                                    key=lambda item: item.get("start", 0))
         detail["production"] = self.live_production.status(session_id)
         if "export" in detail:
             detail["export"]["completed"] = sum(bool(row.get("files", {}).get("mp4")) and not row.get("error")
@@ -583,6 +599,8 @@ class Handler(BaseHTTPRequestHandler):
                 }
                 payload.update(config_payload(self.app.root))
                 return self.send_json(payload)
+            if parts == ["api", "trash"]:
+                return self.send_json({"items": asset_lifecycle.entries(self.app.root)})
             if parts == ["api", "projects"]:
                 return self.send_json({"projects": self.app.list_projects()})
             if parts == ["api", "automation", "settings"]:
@@ -613,8 +631,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(data)
             if len(parts) == 5 and parts[:2] == ["media", "live"] and parts[3] == "clips":
                 from live_clips import live_clip_path
+                if asset_lifecycle.hidden(self.app.root, "live/" + parts[2], parts[4]):
+                    raise FileNotFoundError
                 return self.send_file(live_clip_path(self.app.root, parts[2], parts[4]))
             if parts and parts[0] == "media" and len(parts) >= 3:
+                if asset_lifecycle.hidden(self.app.root, parts[1], parts[3] if len(parts) == 4 and parts[2] == "clips" else None):
+                    raise FileNotFoundError
                 path = projects.project_path(self.app.root, parts[1]).resolve()
                 if parts[2:] == ["source"]:
                     source = projects.read_json(path / "transcript.json")["video"]
@@ -771,12 +793,46 @@ class Handler(BaseHTTPRequestHandler):
                     path = self.app.root / "brands" / f"{name}.json"
                     projects.atomic_json(path, brand)
                     return self.send_json({"name": name, "path": str(path)})
+                if parts == ["api", "trash", "restore"]:
+                    return self.send_json(asset_lifecycle.restore(self.app.root, body.get("id")))
+                if parts == ["api", "trash", "clip"]:
+                    project, filename = body.get("project"), body.get("filename")
+                    with self.app.tiktok.lock:
+                        if self.app.tiktok.sending:
+                            raise ValueError("Espera a que termine el envío en curso.")
+                        media = self.app.tiktok._clip(project, filename)
+                        trashed = asset_lifecycle.send_to_trash(self.app.root, project, media.name, media.stem)
+                    return self.send_json(trashed)
                 if len(parts) == 4 and parts[:2] == ["api", "projects"]:
                     project_id, action = parts[2:]
                     path = projects.project_path(self.app.root, project_id)
+                    if asset_lifecycle.hidden(self.app.root, project_id):
+                        raise FileNotFoundError
                     state = projects.read_project(path)
                     if self.app.busy(project_id):
                         raise ValueError("Wait for this project's current job to finish before editing.")
+                    if action == "manage":
+                        command = body.get("action")
+                        if path.is_symlink() or path.resolve() != path:
+                            raise ValueError("La carpeta de proyecto debe ser local.")
+                        if command == "trash":
+                            with self.app.tiktok.lock:
+                                if self.app.tiktok.sending:
+                                    raise ValueError("Espera a que termine el envío en curso.")
+                                trashed = asset_lifecycle.send_to_trash(
+                                    self.app.root, project_id, None, state.get("name") or project_id)
+                            return self.send_json(trashed)
+                        if command == "rename":
+                            name = body.get("name")
+                            if not isinstance(name, str) or not name.strip() or len(name.strip()) > 120:
+                                raise ValueError("El nombre debe contener de 1 a 120 caracteres.")
+                            state["name"] = name.strip()
+                        elif command == "archive" or command == "unarchive":
+                            state["archived"] = command == "archive"
+                        else:
+                            raise ValueError("Acción de proyecto desconocida.")
+                        projects.save_project(path, state)
+                        return self.send_json(state)
                     if action == "settings":
                         settings = dict(body)
                         if "brand_name" in settings:
@@ -793,7 +849,14 @@ class Handler(BaseHTTPRequestHandler):
                         segments = projects.validate_segments(body["candidates"], duration)
                         projects.atomic_json(path / "segments.json", segments)
                     elif action == "run":
-                        self.app.enqueue(project_id, body.get("action", "prepare"), body.get("preview", False), body.get("pick"))
+                        if "output" in body:
+                            output = body["output"]
+                            if (body.get("action") != "render" or not isinstance(output, dict)
+                                    or output.keys() - {"aspect", "layout", "camera_mode"}):
+                                raise ValueError("Configuración de exportación no válida.")
+                            self.app.enqueue(project_id, "render", body.get("preview", False), body.get("pick"), output=output)
+                        else:
+                            self.app.enqueue(project_id, body.get("action", "prepare"), body.get("preview", False), body.get("pick"))
                     else:
                         return self.send_json({"error": "Not found."}, 404)
                     return self.send_json({"ok": True})

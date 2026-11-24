@@ -99,7 +99,7 @@ function renderProduction(data) {
 }
 
 async function refreshProduction() {
-  if ($("#automation-view").hidden || productionView.busy) return;
+  if (($("#home-view").hidden && $("#automation-view").hidden) || productionView.busy) return;
   productionView.busy = true;
   try {
     const query = new URLSearchParams({ view: $("#production-filter").value });
@@ -152,7 +152,9 @@ function showProductionDetail(job) {
       ${event.message ? " · " + escapeHTML(event.message) : ""}</li>`).join("")}</ul></details>`;
 }
 
-$("#show-automation").addEventListener("click", refreshProduction);
+window.addEventListener("studio-view", event => {
+  if (["home-view", "automation-view"].includes(event.detail)) refreshProduction();
+});
 $("#production-limit").addEventListener("input", event => { event.target.dataset.dirty = "true"; });
 $("#production-pause").addEventListener("click", () => productionAction(async () => {
   await productionAPI(productionView.paused ? "resume" : "pause", {});
@@ -202,6 +204,6 @@ $("#production-enqueue").addEventListener("click", () => productionAction(async 
   const clip = editorialView.clips.find(item => editorialClipKey(item) === $("#editorial-clip").value);
   if (!clip) throw new Error("Selecciona un clip terminado.");
   await productionAPI("enqueue", { project: clip.project, filename: clip.filename });
-  $("#production-heading").scrollIntoView({ block: "start" });
+  await workspaceAction("queue");
 }));
 setInterval(refreshProduction, 1800);

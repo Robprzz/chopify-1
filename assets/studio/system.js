@@ -127,7 +127,6 @@ async function systemRun(operation, success = "") {
 }
 
 async function systemOpen() {
-  state.id = null;
   switchView("system-view");
   await systemRun(async () => {
     await systemRefresh();

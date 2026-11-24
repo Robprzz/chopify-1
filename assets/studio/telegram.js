@@ -63,7 +63,6 @@ const telegramAction = (handler) => safe(async (event) => {
 });
 
 $("#show-telegram").addEventListener("click", safe(async () => {
-  state.id = null;
   switchView("telegram-view");
   await studioConfig;
   await refreshTelegram(true);

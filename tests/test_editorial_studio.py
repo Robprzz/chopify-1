@@ -294,11 +294,13 @@ def test_editorial_browser_generation_and_history_after_restart(tmp_path, chromi
     with mock_ollama() as (_, provider), running_server(tmp_path) as (httpd, base):
         httpd.app.editorial.provider = provider
         page.goto(base)
-        page.get_by_role("button", name="Automation", exact=True).click()
+        page.locator("#show-settings").click()
+        page.locator("#show-ai-settings").click()
         expect(page.locator("#editorial-ollama")).to_contain_text("Ollama disponible")
         page.locator("#editorial-model").select_option(MODEL)
         page.get_by_role("button", name="Guardar configuración de AI Engine").click()
         expect(page.locator("#notice")).to_contain_text("AI Engine guardados")
+        page.locator("#show-editorial").click()
         page.locator("#editorial-clip").select_option(f"{project}/{clip.name}")
         page.get_by_text("Opciones de generación y recuperación", exact=True).click()
         page.get_by_role("button", name="Generar extractos", exact=True).click()
@@ -318,11 +320,13 @@ def test_editorial_browser_generation_and_history_after_restart(tmp_path, chromi
         first_variant.get_by_role("button", name="Copiar", exact=True).click()
         expect(page.locator("#notice")).to_contain_text("Texto editorial copiado.")
         assert "Mi edición de tomates" in page.evaluate("navigator.clipboard.readText()")
-        page.locator("#automation-view").screenshot(path=str(tmp_path / "ai-engine.png"))
+        page.locator("#editorial-view").screenshot(path=str(tmp_path / "ai-engine.png"))
     with running_server(tmp_path) as (_, base):
         page.goto(base)
-        page.get_by_role("button", name="Automation", exact=True).click()
+        page.locator("#show-editorial").click()
         expect(page.locator("#editorial-result h3")).to_have_text("Mi edición de tomates", timeout=10000)
         expect(page.locator("#editorial-result")).to_contain_text("Ollama")
+        page.locator("#show-settings").click()
+        page.locator("#show-ai-settings").click()
         expect(page.locator("#editorial-ollama")).to_contain_text("Respaldo local activo")
     assert not errors

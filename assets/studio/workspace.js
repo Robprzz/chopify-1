@@ -2,11 +2,13 @@
 
 const workspaceViews = {
   "home-view": "show-home", "live-view": "show-live", "clips-view": "show-clips-library",
-  "new-view": "show-clips-library", "project-view": "show-clips-library", "automation-view": "show-automation",
+  "new-view": "show-projects", "project-view": "show-projects", "projects-view": "show-projects",
+  "editorial-view": "show-editorial", "automation-view": "show-settings", "ai-settings-view": "show-settings",
+  "trash-view": "show-settings",
   "calendar-view": "show-publications", "publications-view": "show-settings", "statistics-view": "show-statistics",
   "settings-view": "show-settings", "system-view": "show-settings", "watermark-view": "show-settings", "telegram-view": "show-settings",
 };
-const workspaceEntry = {...workspaceViews, "new-view": "new-project", "publications-view": "show-tiktok",
+const workspaceEntry = {...workspaceViews, "automation-view": "show-automation", "ai-settings-view": "show-ai-settings", "trash-view": "show-trash", "new-view": "new-project", "publications-view": "show-tiktok",
   "system-view": "show-system", "watermark-view": "show-watermark", "telegram-view": "show-telegram"};
 const workspaceStates = {generated:"Nuevo clip detectado", ready:"Lista para revisión", review:"Revisión pendiente",
   rejected:"Rechazado", failed:"Fallido", exported:"Exportado", cancelled:"Cancelado",
@@ -34,9 +36,9 @@ function mediaDuration(value) {
     part(Math.floor(seconds / 60) % 60) + ":" + part(seconds % 60);
 }
 function clipThumb(clip) {
-  return `<a class="thumb" href="${escapeHTML(clip.url)}" target="_blank" rel="noopener" aria-label="Reproducir ${escapeHTML(clip.title)}">${clip.thumbnail ?
+  return `<button type="button" class="thumb" data-workspace="preview-clip" data-key="${escapeHTML(clip.url)}" aria-label="Reproducir ${escapeHTML(clip.title)}">${clip.thumbnail ?
     `<img src="${escapeHTML(clip.thumbnail)}" loading="lazy" alt="" />` : workspaceIcon("clip")}
-    ${clip.duration == null ? "" : `<time>${mediaDuration(clip.duration)}</time>`}</a>`;
+    ${clip.duration == null ? "" : `<time>${mediaDuration(clip.duration)}</time>`}</button>`;
 }
 function patchWorkspace(selector, markup) {
   const node = $(selector);
@@ -47,7 +49,7 @@ function patchWorkspace(selector, markup) {
 }
 function updateWorkspaceProfile() {
   const profile = getPreference("profile");
-  $("#home-greeting").textContent = profile ? "Hola, " + profile : "Inicio";
+  $("#home-greeting").textContent = profile ? "Hola, " + profile : "Centro de operaciones";
   $("#workspace-profile").textContent = profile;
   $("#workspace-profile").hidden = !profile;
 }
@@ -63,6 +65,7 @@ function renderWorkspace(data) {
     ["live", data.active.length, "Capturas activas", data.active.length ? "En ejecución" : "Sin actividad", "live"],
     ["clip", today.clips, "Clips de hoy", "Exportaciones terminadas", "clips"],
     ["stack", today.review, "Por revisar", today.urgent + " urgentes", "pending"],
+    ["stack", data.statistics.pending, "Trabajos pendientes", data.statistics.errors + " incidencias del período", "queue"],
     ["star", today.recommended + "/" + today.limit, "Recomendados", "Selección diaria", "recommended"],
   ];
   patchWorkspace("#home-kpis", counts.map(([icon, value, label, desc, action]) =>
@@ -84,6 +87,9 @@ function renderWorkspace(data) {
   patchWorkspace("#home-live", `<div class="live-visual">${visual}</div><div>${liveText}</div>` + (session
     ? `<button data-workspace="session" data-key="${escapeHTML(session.id)}">Ver sesión</button>`
     : '<button data-workspace="new-live">Iniciar captura</button>'));
+  patchWorkspace("#home-recent", data.clips.slice(0, 5).map(clip => `<article class="home-clip">${clipThumb(clip)}
+    <div><strong>${escapeHTML(clip.title)}</strong><p>${escapeHTML(clip.source)}</p></div>
+    <div class="priority-actions">${clipActions(clip)}</div></article>`).join("") || '<p class="empty-card">Los clips nuevos aparecerán aquí.</p>');
   patchWorkspace("#home-clips", data.priority.slice(0,5).map(clip => `<article class="home-clip">${clipThumb(clip)}
     <div><strong>${escapeHTML(clip.title)}</strong><p>${clip.age == null ? "Antigüedad sin verificar" : "Hace " + Math.round(clip.age) + " min"}
       · Calidad verificada${clip.level === "urgent" ? " · Urgente" : ""}</p></div><span class="score-pill">★ ${clip.priority?.toFixed(1) ?? "—"}</span>
@@ -119,6 +125,55 @@ async function refreshWorkspace(force = false) {
   }).finally(() => { workspaceLoading = null; });
   return workspaceLoading;
 }
+function clipActions(clip) {
+  const id = escapeHTML(clip.project + "/" + clip.filename);
+  return `<button data-workspace="edit-clip" data-key="${id}">Revisión editorial</button>
+    ${clip.level && !clip.review ? `<button data-workspace="correction" data-job="${clip.job}">Solicitar corrección</button>` : ""}
+    <button data-workspace="plan-clip" data-key="${id}">Programar</button>
+    ${!clip.project.startsWith("live/") ? `<button data-workspace="open-project" data-key="${escapeHTML(clip.project)}">Abrir proyecto</button>` : ""}
+    <button data-workspace="trash-clip" data-key="${id}">Enviar a la papelera</button>`;
+}
+function showClipPreview(url) {
+  const dialog = $("#clip-preview-dialog");
+  $("#clip-preview-video").src = url;
+  if (!dialog.open) dialog.showModal();
+}
+$("#clip-preview-dialog").addEventListener("close", () => {
+  const video = $("#clip-preview-video");
+  video.pause();
+  video.removeAttribute("src");
+  video.load();
+});
+
+async function refreshTrash() {
+  const {items} = await api("/api/trash");
+  $("#asset-trash-list").innerHTML = items.length ? [...items].reverse().map(item =>
+    `<article class="workspace-card project-entry"><div><strong>${escapeHTML(item.title)}</strong>
+    <p class="muted">${item.file ? "Clip" : "Proyecto"} · ${escapeHTML(item.project)}</p></div>
+    <button data-workspace="restore-asset" data-key="${escapeHTML(item.id)}">Restaurar</button></article>`
+  ).join("") : '<p class="empty-card">La papelera está vacía.</p>';
+}
+async function manageProject(id, action) {
+  const request = {action: action.replace("-project", "")};
+  if (request.action === "rename") {
+    const detail = await api(`/api/projects/${id}`);
+    request.name = prompt("Nombre del proyecto", detail.project.name || projectName(detail.project.source));
+    if (request.name === null) return;
+  }
+  if (request.action === "trash" && !confirm("¿Enviar el proyecto a la papelera? Puedes restaurarlo después.")) return;
+  const result = await api(`/api/projects/${id}/manage`, request);
+  if (state.id === id) {
+    if (request.action === "trash") {
+      state.id = state.detail = null;
+      setPreference("project", "");
+    } else if (state.detail) {
+      Object.assign(state.detail.project, result);
+      $("#project-title").textContent = result.name || projectName(result.source);
+    }
+  }
+  await refreshProjects();
+  notice(request.action === "trash" ? "Proyecto enviado a la papelera." : "Proyecto actualizado.");
+}
 function renderLibrary() {
   const query = $("#clip-library-query").value.toLocaleLowerCase();
   const filter = $("#clip-library-filter").value;
@@ -136,10 +191,8 @@ function renderLibrary() {
     <div class="library-info"><strong>${escapeHTML(clip.title)}</strong><p>${escapeHTML(clip.source)}
     · ${escapeHTML(new Date(clip.created * 1000).toLocaleDateString())} · ${workspaceStates[clip.status] || "En producción"}</p>
     <p>Detección ${clip.score ?? "—"} · Prioridad ${clip.priority?.toFixed(1) ?? "—"} · ${escapeHTML(platform || "Sin plataforma")}</p></div>
-    <div class="publication-actions">${clip.job ? `<button data-workspace="review" data-job="${clip.job}">Revisar e historial</button>` : ""}
-    ${clip.level && !clip.review ? `<button data-workspace="correction" data-job="${clip.job}">Solicitar corrección</button>` : ""}
-    <button data-workspace="edit-clip" data-key="${key}">Editar metadatos</button>
-    <button data-workspace="plan-clip" data-key="${key}">Programar</button>
+    <div class="publication-actions">${clipActions(clip)}
+    ${clip.job ? `<button data-workspace="job-detail" data-job="${clip.job}">Historial técnico</button>` : ""}
     <a href="${escapeHTML(clip.url)}" download>Exportar MP4</a></div></article>`;
   }).join("") || '<p class="empty-card">No hay exportaciones que coincidan con la búsqueda.</p>');
 }
@@ -156,8 +209,10 @@ function renderStatistics(data) {
     : "Todavía no hay muestras de procesamiento en este período.";
 }
 function showWorkspace(view) {
-  state.id = null; switchView(view);
-  if (view === "clips-view") { renderLibrary(); refreshProjects().catch(() => {}); }
+  switchView(view);
+  if (view === "clips-view") renderLibrary();
+  if (view === "projects-view") refreshProjects().catch(error => notice(error.message, true));
+  if (view === "trash-view") refreshTrash().catch(error => notice(error.message, true));
   if (view === "settings-view") {
     api("/api/telegram/status").then(data => {
       $("#workspace-telegram-state").textContent = data.connection === "online" ? "Telegram conectado" :
@@ -166,6 +221,24 @@ function showWorkspace(view) {
   }
 }
 async function workspaceAction(action, key, job) {
+  if (action === "open-project") return selectProject(key);
+  if (action === "preview-clip") return showClipPreview(key);
+  if (["rename-project","archive","unarchive","trash-project"].includes(action)) return manageProject(key, action);
+  if (action === "restore-asset") {
+    await api("/api/trash/restore",{id:key});
+    await refreshTrash();
+    notice("Elemento restaurado.");
+    return;
+  }
+  if (action === "trash-clip") {
+    const clip = workspaceData?.clips.find(item => item.project + "/" + item.filename === key);
+    if (!clip || !confirm("¿Enviar el clip a la papelera? Puedes restaurarlo después.")) return;
+    await api("/api/trash/clip", {project:clip.project, filename:clip.filename});
+    document.activeElement?.blur();
+    await refreshWorkspace(true);
+    notice("Clip enviado a la papelera.");
+    return;
+  }
   if (action === "clips" || action === "editing") return showWorkspace("clips-view");
   if (["live","new-live","session","live-settings"].includes(action)) {
     if (key) selectLive(key);
@@ -196,18 +269,21 @@ async function workspaceAction(action, key, job) {
     await refreshWorkspace(true);
     return;
   }
-  $("#show-automation").click();
-  if (action === "ai") $("#editorial-heading").scrollIntoView({block:"start"});
-  if (action === "queue") $("#production-heading").scrollIntoView({block:"start"});
-  if (action === "pending" || action === "recommended") {
+  if (action === "queue" || action === "job-detail") {
+    showWorkspace("home-view");
+    if (job) {
+      const detail = await api("/api/production/job?id=" + encodeURIComponent(job));
+      showProductionDetail(detail);
+    }
+    $(job ? "#production-detail" : "#production-heading").scrollIntoView({block:"start"});
+    return;
+  }
+  if (["review", "pending", "recommended"].includes(action)) {
+    const clip = workspaceData?.clips.find(item => item.job === Number(job));
+    await openEditorial(clip);
     $("#realtime-filter").value = action === "recommended" ? "recommended" : "all";
     renderRealtime();
-    $("#realtime-heading").scrollIntoView({block:"start"});
-  }
-  if (action === "review" && job) {
-    const detail = await api("/api/production/job?id=" + encodeURIComponent(job));
-    showProductionDetail(detail);
-    $("#production-detail").scrollIntoView({block:"start"});
+    if (!clip) $("#realtime-heading").scrollIntoView({block:"start"});
   }
 }
 
@@ -217,10 +293,11 @@ document.addEventListener("click", safe(async event => {
   if ($("#workspace-dialog").open) $("#workspace-dialog").close();
   await workspaceAction(target.dataset.workspace, target.dataset.key, target.dataset.job);
 }));
-for (const [button, view] of [["show-home","home-view"],["show-clips-library","clips-view"],
+for (const [button, view] of [["show-home","home-view"],["show-clips-library","clips-view"],["show-projects","projects-view"],["show-trash","trash-view"],
   ["show-statistics","statistics-view"],["show-settings","settings-view"]]) {
   $("#" + button).addEventListener("click", () => showWorkspace(view));
 }
+$("#projects-filter").addEventListener("change", safe(refreshProjects));
 $("#brand-home").addEventListener("click", () => showWorkspace("home-view"));
 $("#rail-toggle").addEventListener("click", () => {
   setPreference("collapsed", getPreference("collapsed") === "1" ? "0" : "1"); updateCollapsedRail();
@@ -300,8 +377,11 @@ window.addEventListener("studio-ready", () => {
   const saved = getPreference("view","home-view");
   const project = getPreference("project");
   if (saved === "project-view" && /^[a-f0-9]{12}$/.test(project)) {
-    selectProject(project).catch(() => showWorkspace("clips-view"));
-  } else $("#" + (workspaceEntry[saved] || "show-home")).click();
+    selectProject(project).catch(() => showWorkspace("projects-view"));
+  } else {
+    if (project) state.id = project;
+    $("#" + (workspaceEntry[saved] || "show-home")).click();
+  }
 });
 setInterval(() => {
   if (!document.hidden && ["home-view","clips-view","calendar-view","statistics-view"].includes(workspaceView)) refreshWorkspace();

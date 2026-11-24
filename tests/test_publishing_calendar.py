@@ -181,8 +181,8 @@ def test_calendar_ui_and_navigation_over_http(tmp_path, chromium_page):
     (output / "Entrevista.mp4").write_bytes(b"local export fixture")
     with running_server(tmp_path) as (_, base):
         page.goto(base)
-        expect(page.locator("#home-greeting")).to_have_text("Inicio")
-        expect(page.locator(".main-navigation button")).to_have_count(7)
+        expect(page.locator("#home-greeting")).to_have_text("Centro de operaciones")
+        expect(page.locator(".main-navigation button")).to_have_count(8)
         expect(page.locator("#home-kpis")).to_contain_text("0/5")
         assert page.evaluate("getComputedStyle(document.body).backgroundColor") == "rgb(247, 249, 253)"
         assert "rgb(16, 27, 53)" in page.locator(".home-intro .primary").evaluate("e => getComputedStyle(e).backgroundImage")

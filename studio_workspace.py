@@ -80,6 +80,7 @@ def snapshot(app, days):
     plans = [row for row in calendar["plans"] if row["status"] != "cancelled"]
     with app.live_production.connect() as db:
         live = db.execute("SELECT state,created,updated FROM jobs WHERE created>=? OR updated>=?", (cutoff, cutoff)).fetchall()
+        pending_live = db.execute("SELECT count(*) FROM jobs WHERE state IN ('collecting','queued','transcribing','editing','quality')").fetchone()[0]
     period = [row for row in rows if row["finished"] is not None and row["finished"] >= cutoff]
     observed = [row["seconds"] for row in period if row["state"] == "ready" and row["claimed_at"] is not None]
     publishing = app.calendar.statistics(cutoff)
@@ -89,7 +90,9 @@ def snapshot(app, days):
               "finished": sum(row["created"] >= cutoff for row in clips),
               "rejected": sum(row["state"] == "rejected" for row in period),
               "recommended": len(realtime["recommendations"]),
-              "pending": sum(row["finished"] is None for row in rows),
+              "pending": (sum(row["finished"] is None for row in rows)
+                          + sum(app.busy(project["id"]) for project in app.list_projects())
+                          + pending_live),
               "scheduled": publishing["scheduled"], "confirmed": publishing["manual"] + publishing["api"],
               "manual": publishing["manual"], "api": publishing["api"],
               "errors": sum(row["state"] == "failed" for row in period)

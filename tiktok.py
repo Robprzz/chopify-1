@@ -16,6 +16,7 @@ import urllib.request
 from fractions import Fraction
 from pathlib import Path
 
+import asset_lifecycle
 import projects
 import live_clips
 from secure_vault import PROFILES, VaultError
@@ -556,7 +557,9 @@ class TikTokStudio:
                 raise TikTokError("TikTok no devolvió opciones de privacidad.")
             return {"options": [item for item in options if isinstance(item, str) and item in PRIVACY]}
 
-    def _clip(self, project, filename):
+    def _clip(self, project, filename, *, trash=None):
+        if isinstance(filename, str) and asset_lifecycle.hidden(self.root, project, filename, records=trash):
+            raise TikTokError("Esta exportación está en la papelera.")
         if isinstance(project, str) and project.startswith("live/"):
             try:
                 media = live_clips.live_clip_path(self.root, project[5:], filename)
@@ -579,22 +582,25 @@ class TikTokStudio:
 
     def exports(self):
         result = []
+        trash = asset_lifecycle.entries(self.root)
         for project in sorted(self.root.glob("*/project.json")):
             project_id = project.parent.name
             if not re.fullmatch(r"[a-f0-9]{12}", project_id) or self.busy(project_id):
                 continue
             try:
-                source = projects.read_json(project).get("source", "")
-                name = Path(urllib.parse.urlsplit(source).path).name or project_id
+                state = projects.read_json(project)
+                source = state.get("source", "")
+                name = state.get("name") or Path(urllib.parse.urlsplit(source).path).name or project_id
             except (AttributeError, TypeError, OSError, ValueError):
                 name = project_id
             for clip in sorted((project.parent / "clips").glob("*.mp4")):
                 try:
-                    self._clip(project_id, clip.name)
+                    self._clip(project_id, clip.name, trash=trash)
                 except TikTokError:
                     continue
                 result.append({"project": project_id, "project_name": name, "filename": clip.name})
-        return [*result, *live_clips.live_exports(self.root)]
+        return result + [item for item in live_clips.live_exports(self.root)
+                         if not asset_lifecycle.hidden(self.root, item["project"], item["filename"], records=trash)]
 
     @staticmethod
     def _description(path):

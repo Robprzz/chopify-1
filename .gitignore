@@ -26,3 +26,6 @@ _site/
 .mimosa/
 .zcode/
 .taste-skill/
+
+# Local recoverable asset index
+.anqora-trash.json

@@ -59,7 +59,7 @@ def test_publications_opens_with_incorrect_system_mime_types(server, monkeypatch
     assert live.value.json() == {"sessions": []}
     expect(page.locator("#live-view")).to_be_visible()
     expect(page.locator("#publications-view")).to_be_hidden()
-    page.locator("#show-clips-library").click()
+    page.locator("#show-projects").click()
     page.locator("#new-project").click()
     expect(page.locator("#new-view")).to_be_visible()
     assert not errors, errors

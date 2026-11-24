@@ -317,17 +317,20 @@ def test_operations_chromium_pause_and_semantic_result(server, chromium_page, tm
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.goto(base)
-    page.get_by_role("button", name="Automation", exact=True).click()
+    page.locator("#show-home").click()
     paused = page.get_by_role("button", name="Pausar cola")
     paused.click()
     expect(page.locator("#production-status")).to_contain_text("Pausada")
     with pytest.raises(HTTPError) as unauthorized:
         request(base, "/api/production/resume", {})
     assert unauthorized.value.code == 403
+    page.locator("#show-settings").click()
+    page.locator("#show-automation").click()
     page.locator("#production-limit").fill("1")
     page.get_by_role("button", name="Guardar límite").click()
     until(lambda: request(base, "/api/production/status"),
           lambda data: data["config"]["max_repairs"] == 1)
+    page.locator("#show-editorial").click()
     page.locator("#editorial-clip").select_option(f"{project}/{file.name}")
     page.get_by_role("button", name="Añadir a producción").click()
     expect(page.locator("#production-jobs")).to_contain_text("Generado")
@@ -341,7 +344,7 @@ def test_operations_chromium_pause_and_semantic_result(server, chromium_page, tm
     page.locator("#production-filter").select_option("all")
     page.get_by_role("button", name="Ver detalle", exact=True).click()
     expect(page.locator("#production-detail")).to_contain_text("Multimedia decodificado")
-    page.get_by_role("region", name="Centro de operaciones").screenshot(path=str(tmp_path / "operations-chromium.png"))
+    page.get_by_role("region", name="Cola de producción").screenshot(path=str(tmp_path / "operations-chromium.png"))
     page.get_by_role("button", name="Ver propuestas", exact=True).click()
     output = page.locator("#editorial-result")
     expect(output).to_contain_text("Mayor puntuación entre las propuestas")

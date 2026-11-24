@@ -134,7 +134,6 @@ async function refreshPublications() {
 }
 
 async function showPublications() {
-  state.id = null;
   switchView("publications-view");
   await refreshPublications();
 }

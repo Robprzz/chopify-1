@@ -34,7 +34,10 @@ const projectName = (source) =>
   /^https?:/.test(source)
     ? source.replace(/^https?:\/\//, "").slice(0, 65)
     : basename(source);
+let studioNavigation = 0;
+let projectRequest = 0;
 function switchView(id) {
+  studioNavigation += 1;
   if (id === "live-view") {
     history.replaceState(null, "", "#live");
   } else if (location.hash === "#live") {
@@ -388,17 +391,33 @@ function updateBrands(selected = "") {
       .join("");
   $("#brand-select").value = selected;
 }
+const projectLabels = {
+  new: "Nuevo", waiting: "En espera", queued: "En cola", running: "En proceso",
+  complete: "Completado", interrupted: "Interrumpido", failed: "Fallido",
+  error: "Error", ready: "Listo", prepare: "Preparación", render: "Exportación",
+  "render incomplete": "Exportación parcial", "rendered": "Exportado", review: "En revisión",
+};
+const projectLabel = value => projectLabels[value] || value;
 async function refreshProjects() {
   const result = await api("/api/projects");
-  $("#project-count").textContent = result.projects.length;
-  const markup = result.projects.length
-    ? result.projects
+  const filter = $("#projects-filter").value;
+  const visible = result.projects.filter(project => filter === "all" || Boolean(project.archived) === (filter === "archived"));
+  $("#project-count").textContent = `${visible.length} ${visible.length === 1 ? "proyecto" : "proyectos"}`;
+  const markup = visible.length
+    ? visible
         .map(
           (p) =>
-            `<button class="project-item ${p.id === state.id ? "active" : ""}" data-id="${p.id}"><strong>${escapeHTML(projectName(p.source))}</strong><small>${escapeHTML(p.status)} · ${escapeHTML(p.stage)}</small></button>`,
+            `<article class="workspace-card project-entry">
+              <div><strong>${escapeHTML(p.name || projectName(p.source))}</strong><p class="muted">${escapeHTML(projectLabel(p.status))} · ${escapeHTML(projectLabel(p.stage))}</p></div>
+              <div class="publication-actions">
+                <button class="${p.id === state.id ? "primary" : ""}" data-id="${p.id}">${p.id === state.id ? "Continuar edición" : "Abrir"}</button>
+                <button data-workspace="rename-project" data-key="${p.id}">Renombrar</button>
+                <button data-workspace="${p.archived ? "unarchive" : "archive"}" data-key="${p.id}">${p.archived ? "Desarchivar" : "Archivar"}</button>
+                <button data-workspace="trash-project" data-key="${p.id}">Enviar a la papelera</button>
+              </div></article>`,
         )
         .join("")
-    : '<p class="muted">Add a recording to begin.</p>';
+    : '<p class="muted">Todavía no hay proyectos en esta vista.</p>';
   // Preserve keyboard focus while polling unchanged projects.
   if (state.projectMarkup !== markup) {
     $("#projects").innerHTML = markup;
@@ -406,6 +425,14 @@ async function refreshProjects() {
   }
 }
 async function selectProject(id) {
+  if (state.id === id && state.detail?.project.id === id) {
+    switchView("project-view");
+    return;
+  }
+  const navigation = studioNavigation;
+  const serial = ++projectRequest;
+  const detail = await api(`/api/projects/${id}`);
+  if (serial !== projectRequest || navigation !== studioNavigation) return;
   state.id = id;
   state.page = 0;
   state.candidatePage = 0;
@@ -415,8 +442,6 @@ async function selectProject(id) {
   state.previewFile = null;
   state.pendingPreview = null;
   switchView("project-view");
-  const detail = await api(`/api/projects/${id}`);
-  if (state.id !== id) return;
   state.detail = detail;
   state.words = structuredClone(state.detail.transcript?.words || []);
   state.selected = new Set(state.detail.candidates.map((_, i) => i + 1));
@@ -432,7 +457,7 @@ function updateStatus(detail) {
       : "";
   const statusEl = $("#status");
   statusEl.textContent =
-    `${detail.project.status} · ${detail.project.stage}${progressText}`;
+    `${projectLabel(detail.project.status)} · ${projectLabel(detail.project.stage)}${progressText}`;
   statusEl.dataset.state = detail.project.status || "";
   const errors = detail.render_errors || [];
   const error =
@@ -440,7 +465,7 @@ function updateStatus(detail) {
     (errors.length ? `${errors.length} clip(s) failed to render.` : "");
   $("#job-error").hidden = !error;
   $("#job-error").textContent = error;
-  $("#log").textContent = detail.log || "No job has run yet.";
+  $("#log").textContent = detail.log || "Aún no se ha ejecutado ningún trabajo.";
   state.busy = detail.busy;
   for (const selector of [
     "#prepare",
@@ -608,14 +633,14 @@ function renderDetail() {
     options = p.options;
   renderDetection(detail);
   $("#project-id").textContent = `FAC ${String(p.id || "").slice(0, 6).toUpperCase()}`;
-  $("#project-title").textContent = projectName(p.source);
+  $("#project-title").textContent = p.name || projectName(p.source);
   $("#project-source").textContent = p.source;
   const player = $("#source-player");
   const hint = $("#player-hint");
   if (detail.playable_source) {
     player.hidden = !detail.transcript;
     hint.hidden = !!detail.transcript;
-    hint.textContent = "Prepare this project to preview the source.";
+    hint.textContent = "Prepara el proyecto para previsualizar la fuente.";
     const source = `/media/${p.id}/source`;
     if (detail.transcript && player.getAttribute("src") !== source)
       player.src = source;
@@ -629,7 +654,7 @@ function renderDetail() {
     hint.hidden = false;
     hint.textContent = detail.transcript
       ? "Long source: press Watch on a clip to render a 480p preview from a downloaded section."
-      : "Prepare this project to preview the source.";
+      : "Prepara el proyecto para previsualizar la fuente.";
   }
   const form = $("#settings-form");
   for (const [key, value] of Object.entries(options)) {
@@ -738,7 +763,7 @@ function renderOutputs(detail) {
                   f.name,
                 ),
             );
-          return `<article class="output-card"><video controls preload="none" src="${encodeURI(file.url)}"></video><div class="output-info"><p>${escapeHTML(file.kind === "previews" ? "DRAFT · " : "EXPORT · ")}${escapeHTML(stem)}</p><div class="output-links"><a href="${encodeURI(file.url)}" download>MP4 ↓</a>${related.map((f) => `<a href="${encodeURI(f.url)}" download>${f.name.endsWith(".srt") ? "SRT" : f.name.endsWith(".png") ? "POSTER" : "METADATA"} ↓</a>`).join("")}${file.kind === "clips" ? `<button type="button" data-editorial-file="${escapeHTML(file.name)}">AI Engine</button>` : ""}</div></div></article>`;
+          return `<article class="output-card"><video controls preload="none" src="${encodeURI(file.url)}"></video><div class="output-info"><p>${escapeHTML(file.kind === "previews" ? "DRAFT · " : "EXPORT · ")}${escapeHTML(stem)}</p><div class="output-links"><a href="${encodeURI(file.url)}" download>MP4 ↓</a>${related.map((f) => `<a href="${encodeURI(f.url)}" download>${f.name.endsWith(".srt") ? "SRT" : f.name.endsWith(".png") ? "POSTER" : "METADATA"} ↓</a>`).join("")}${file.kind === "clips" ? `<button type="button" data-editorial-file="${escapeHTML(file.name)}">Revisión editorial</button>` : ""}</div></div></article>`;
         })
         .join("")
     : '<p class="muted">Choose candidates and make a preview or export.</p>';
@@ -751,14 +776,20 @@ async function saveCandidates(showNotice = true) {
   });
   if (showNotice) notice("Clip edits saved.");
 }
+function projectOutput() {
+  const form = $("#settings-form").elements;
+  const aspect = form.aspect.value;
+  return {aspect, layout: aspect === "9:16" ? form.layout.value : "single", camera_mode: form.camera_mode.value};
+}
 async function run(action, preview = false) {
   if (action === "render") {
-    if (!state.selected.size) throw new Error("Select at least one clip.");
+    if (!state.selected.size) throw new Error("Selecciona al menos un clip.");
     await saveCandidates(false);
   }
   await api(`/api/projects/${state.id}/run`, {
     action,
     preview,
+    ...(action === "render" ? {output: projectOutput()} : {}),
     pick:
       action === "render"
         ? [...state.selected].sort((a, b) => a - b).join(",")
@@ -771,12 +802,11 @@ async function run(action, preview = false) {
   notice(
     action === "prepare"
       ? "Queued. Saved stages will be reused when their inputs match."
-      : "Queued selected clips.",
+      : "Exportación en cola.",
   );
   await refreshProjects();
 }
 $("#new-project").addEventListener("click", () => {
-  state.id = null;
   switchView("new-view");
   $("#sources").focus();
   refreshProjects().catch((e) => notice(e.message, true));
@@ -921,6 +951,7 @@ async function watchCandidate(index) {
     await api(`/api/projects/${state.id}/run`, {
       action: "render",
       preview: true,
+      output: projectOutput(),
       pick: String(index + 1),
     });
   } catch (error) {
@@ -1014,7 +1045,6 @@ $("#show-transcript").addEventListener("click", () => setTab("transcript"));
 $("#show-captions").addEventListener("click", () => setTab("captions"));
 
 function showLive() {
-  state.id = null;
   switchView("live-view");
   refreshLive().catch((e) => notice(e.message, true));
 }
@@ -1058,7 +1088,7 @@ $("#live-form").addEventListener(
     if (start.disabled) return;
     start.disabled = true;
     const previousStatus = $("#live-status").textContent;
-    $("#live-status").textContent = "Resolving live stream…";
+    $("#live-status").textContent = "Resolviendo la transmisión…";
     $("#live-start-error").hidden = true;
     try {
       const options = { aspect: $("#live-aspect").value, live_max_height: Number($("#live-max-height").value),
@@ -1143,7 +1173,7 @@ async function refreshLive() {
   $("#live-errors ul").innerHTML = diagnostics.map((message) => `<li>${escapeHTML(message)}</li>`).join("");
   $("#live-status").textContent = detail
     ? `${detail.status} · ${Math.round(detail.stream_time || 0)}s · ${detail.export?.completed ?? detail.triggers.filter((clip) => clip.files?.mp4 && !clip.error).length} clips`
-    : "Not running.";
+    : "Sin captura activa.";
   const health = detail?.health;
   $("#live-health").textContent = health
     ? `${health.state} · segment ${health.last_segment_age}s · ${health.restarts} restarts · `
@@ -1203,11 +1233,15 @@ async function refreshLive() {
       link.rel = "noopener";
       link.textContent = " Reproducir";
       link.title = "Abrir clip en una pestaña nueva";
-      row.append(link);
+      const preview = document.createElement("button");
+      preview.type = "button";
+      preview.textContent = "Vista previa";
+      preview.addEventListener("click", () => showClipPreview(link.getAttribute("href")));
+      row.append(preview, link);
       const editor = document.createElement("button");
       editor.type = "button";
       editor.dataset.editorialFile = name;
-      editor.textContent = "AI Engine";
+      editor.textContent = "Revisión editorial";
       row.append(editor);
     }
     clips.append(row);
@@ -1342,7 +1376,7 @@ setInterval(async () => {
   try {
     await refreshProjects();
     if (!$("#live-view").hidden) await refreshLive().catch(() => {});
-    if (state.id && state.busy) {
+    if (!$("#project-view").hidden && state.id && state.busy) {
       const id = state.id,
         detail = await api(`/api/projects/${id}`);
       if (id !== state.id) return;

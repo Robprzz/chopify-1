@@ -52,7 +52,6 @@ function loadAutomationSettings() {
 }
 
 $("#show-automation").addEventListener("click", () => {
-  state.id = null;
   switchView("automation-view");
   loadAutomationSettings();
 });

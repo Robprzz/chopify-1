@@ -85,7 +85,6 @@ async function refreshCalendar() {
   return pending;
 }
 async function openCalendar() {
-  state.id = null;
   switchView("calendar-view");
   await Promise.all([refreshCalendar(), refreshWorkspace()]);
 }

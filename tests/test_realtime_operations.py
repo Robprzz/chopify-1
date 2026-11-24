@@ -208,8 +208,8 @@ def test_http_and_browser_updates_and_studio_decisions_without_telegram(server, 
     assert invalid.value.code == 400
     page, expect = chromium_page
     page.goto(base)
-    page.get_by_role("button", name="Automation", exact=True).click()
-    expect(page.get_by_role("heading", name="Real-Time Operations")).to_be_visible()
+    page.locator("#show-editorial").click()
+    expect(page.get_by_role("heading", name="Prioridades editoriales")).to_be_visible()
     expect(page.locator("#realtime-summary")).to_contain_text("1/5")
     first = page.locator(f'#realtime-ranking [data-realtime-id="{ident}"]')
     expect(first).to_contain_text("Sin verificar")

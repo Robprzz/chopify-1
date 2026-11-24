@@ -237,7 +237,7 @@ def test_chromium_repair_local_source_export_and_visual_timing(server, chromium_
     errors = []
     page.on("pageerror", lambda err: errors.append(str(err)))
     page.goto(base)
-    page.get_by_role("button", name="Automation", exact=True).click()
+    page.locator("#show-editorial").click()
     page.locator("#editorial-clip").select_option(f"{project}/{original.name}")
     page.get_by_role("button", name="Generar propuestas", exact=True).click()
     expect(page.locator("#editorial-result")).to_contain_text("Subtítulos bloqueados")
@@ -254,7 +254,7 @@ def test_chromium_repair_local_source_export_and_visual_timing(server, chromium_
     latest = request(base, "/api/subtitle-repair/latest?" + query)
     assert "Ahora habla Lucía." in latest["draft"]["text"]
     page.reload()
-    page.get_by_role("button", name="Automation", exact=True).click()
+    page.locator("#show-editorial").click()
     page.locator("#editorial-clip").select_option(f"{project}/{original.name}")
     expect(page.locator("#editorial-result")).to_contain_text("Subtítulos bloqueados")
     expect(page.locator("#subtitle-preview")).to_be_visible()

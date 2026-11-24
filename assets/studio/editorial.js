@@ -61,8 +61,10 @@ const editorialProvider = (provider) => provider === "rules" ? "Generado mediant
   : provider === "ollama" ? "Ollama" : "—";
 
 function editorialError(message = "") {
-  $("#editorial-error").textContent = message;
-  $("#editorial-error").hidden = !message;
+  for (const id of ["#editorial-error", "#editorial-review-error"]) {
+    $(id).textContent = message;
+    $(id).hidden = !message;
+  }
 }
 
 function editorialSafe(handler) {
@@ -374,10 +376,8 @@ async function refreshEditorialConnection() {
 
 async function openEditorial(clip) {
   await studioConfig;
+  switchView("editorial-view");
   if (clip) {
-    state.id = null;
-    switchView("automation-view");
-    loadAutomationSettings();
     editorialView.selected = editorialView.before = null;
     renderEditorialResult(null);
   }
@@ -385,7 +385,7 @@ async function openEditorial(clip) {
   resetSubtitlePanel();
   await refreshEditorialHistory();
   await refreshEditorialConnection();
-  if (clip) $("#editorial-heading").scrollIntoView({ block: "start" });
+  if (clip) $("#editorial-clip").scrollIntoView({ block: "start" });
 }
 
 async function generateEditorial(force, test = false, semantic = null) {
@@ -402,6 +402,7 @@ async function generateEditorial(force, test = false, semantic = null) {
     throw error;
   }
   if (test) {
+    switchView("editorial-view");
     $("#editorial-clip").value = "";
     resetSubtitlePanel();
   }
@@ -443,7 +444,11 @@ async function editEditorial(form, action) {
   }));
 }
 
-$("#show-automation").addEventListener("click", editorialSafe(() => openEditorial()));
+$("#show-editorial").addEventListener("click", editorialSafe(() => openEditorial()));
+$("#show-ai-settings").addEventListener("click", editorialSafe(async () => {
+  switchView("ai-settings-view");
+  await refreshEditorialConnection();
+}));
 $("#editorial-connect").addEventListener("click", editorialSafe(refreshEditorialConnection));
 $("#editorial-test").addEventListener("click", editorialSafe(() => generateEditorial(true, true)));
 $("#editorial-generate").addEventListener("click", editorialSafe(() => generateEditorial(false)));
@@ -540,7 +545,7 @@ $("#live-clips").addEventListener("click", editorialSafe(async (event) => {
   if (button) await openEditorial({ project: "live/" + state.liveId, filename: button.dataset.editorialFile });
 }));
 setInterval(() => {
-  if (!$("#automation-view").hidden && editorialView.config) {
+  if ((!$("#editorial-view").hidden || !$("#ai-settings-view").hidden) && editorialView.config) {
     refreshEditorialHistory().catch(error => editorialError(error.message));
   }
 }, 2000);

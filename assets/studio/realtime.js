@@ -97,7 +97,7 @@ function renderRealtimeDetail(clip) {
 }
 
 async function refreshRealtime() {
-  if (realtimeBusy || $("#automation-view").hidden) return;
+  if (realtimeBusy || ($("#editorial-view").hidden && $("#home-view").hidden)) return;
   realtimeBusy = true;
   const error = $("#realtime-error");
   try {
@@ -117,7 +117,9 @@ async function applyRealtimeDecision(job, action) {
   notice(result.changed ? "Decisión editorial registrada." : "La versión ya tiene una decisión registrada.");
   await refreshRealtime();
 }
-$("#show-automation").addEventListener("click", refreshRealtime);
+window.addEventListener("studio-view", event => {
+  if (["home-view", "editorial-view"].includes(event.detail)) refreshRealtime();
+});
 $("#realtime-filter").addEventListener("change", renderRealtime);
 $("#realtime-ranking").addEventListener("click", safe(async event => {
   const button = event.target.closest("button[data-realtime]");

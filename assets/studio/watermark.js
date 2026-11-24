@@ -96,7 +96,6 @@ function loadWatermark() {
 }
 
 $("#show-watermark").addEventListener("click", () => {
-  state.id = null;
   switchView("watermark-view");
   loadWatermark();
 });

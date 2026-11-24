@@ -245,7 +245,8 @@ def test_chromium_identity_is_saved_through_http_and_survives_restart(tmp_path, 
     page.on("pageerror", lambda error: errors.append(str(error)))
     with running_server(tmp_path) as (_, base):
         page.goto(base)
-        page.get_by_role("button", name="Automation", exact=True).click()
+        page.locator("#show-settings").click()
+        page.locator("#show-ai-settings").click()
         page.get_by_text("Identidad editorial", exact=True).click()
         expect(page.get_by_label("Nombre editorial")).to_have_value("Anqora Media Studio")
         page.get_by_label("Nombre editorial").fill("Estudio de pruebas")
@@ -256,7 +257,8 @@ def test_chromium_identity_is_saved_through_http_and_survives_restart(tmp_path, 
         assert status["config"]["settings"]["identity"]["perspective"] == "impersonal"
     with running_server(tmp_path) as (_, base):
         page.goto(base)
-        page.get_by_role("button", name="Automation", exact=True).click()
+        page.locator("#show-settings").click()
+        page.locator("#show-ai-settings").click()
         page.get_by_text("Identidad editorial", exact=True).click()
         expect(page.get_by_label("Nombre editorial")).to_have_value("Estudio de pruebas")
     assert not errors

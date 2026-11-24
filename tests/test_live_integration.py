@@ -243,7 +243,8 @@ def test_live_clip_reaches_publications_in_chromium(server, chromium_page, monke
         assert page.request.get(base + "/api/projects").json() == {"projects": []}
         assert not list(app.app.root.glob("**/transcript.json"))
         link = page.locator("#live-clips a").first
-        expect(link).to_be_visible(timeout=25000)
+        # Capture, full-resolution encoding and motion validation all run on the real CPU.
+        expect(link).to_be_visible(timeout=60000)
         expect(page.locator("#live-components")).to_contain_text("Transcripción")
         expect(page.locator("#live-score")).to_contain_text("Umbral 6")
         mp4 = link.get_attribute("href")

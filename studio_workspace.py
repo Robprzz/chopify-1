@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from urllib.parse import quote
 
 import projects
+from clip_workspace import media_info, media_stamp
 import realtime_operations
 from realtime_priority import distribution
 from publishing_calendar import zone_for
@@ -42,11 +43,14 @@ def snapshot(app, days):
                  ORDER BY e.id DESC LIMIT 8""")]
     production = {(row["project"], row["filename"]): dict(row) for row in rows}
     by_media = {}
+    with app.calendar.connect() as db:
+        covers = {(row["project"], row["file"]): row["cover"]
+                  for row in db.execute("SELECT project,file,cover FROM clip_art WHERE cover IS NOT NULL")}
     for entry in app.tiktok.exports():
         project, filename = entry["project"], entry["filename"]
         metrics = production.get((project, filename), {})
         ranking = enriched.get((project, filename), {})
-        actual = ranking.get("file") or metrics.get("active_filename") or filename
+        actual = filename
         try:
             media = app.tiktok._clip(project, actual)
             recent = media.stat().st_mtime
@@ -65,13 +69,20 @@ def snapshot(app, days):
         key = (project, actual)
         if key in by_media and not metrics:
             continue
+        cover = covers.get(key)
+        if cover:
+            thumbnail = app.clips.cover_url(project, actual, cover)
+        try:
+            facts = {key: value for key, value in media_info(media, media_stamp(media)).items() if key != "tracks"}
+        except ValueError:
+            facts = {"format": None, "width": None, "height": None}
         by_media[key] = {"project": project, "filename": actual, "job": metrics.get("id"),
                       "run": metrics.get("run"), "source": entry["project_name"], "title": title,
                       "status": metrics.get("state") or "exported", "created": recent, "duration": duration,
                       "score": metrics.get("detection"), "priority": ranking.get("temporal_score"),
                       "level": ranking.get("level"), "age": ranking.get("age_minutes"),
                       "review": (ranking.get("remote_review") or {}).get("decision"),
-                      "url": media_url(project, actual), "thumbnail": thumbnail}
+                      "url": media_url(project, actual), "thumbnail": thumbnail, **facts}
     clips = sorted(by_media.values(), key=lambda row: (-row["created"], row["filename"]))
     eligible = {row["job"]: row for row in clips if row["job"] is not None}
     prioritized = [eligible[row["id"]] for row in realtime["clips"] if row["id"] in eligible]

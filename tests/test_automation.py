@@ -149,7 +149,7 @@ def test_settings_in_chromium_survive_server_restart(tmp_path, chromium_page):
         expect(page.locator("#live-view")).to_be_visible()
         page.locator("#show-settings").click()
         open_automation.click()
-        page.get_by_role("button", name="Publicaciones", exact=True).click()
+        page.locator("#show-publications").click()
         expect(page.locator("#automation-view")).to_be_hidden()
         expect(page.locator("#calendar-view")).to_be_visible()
         page.locator("#show-settings").click()

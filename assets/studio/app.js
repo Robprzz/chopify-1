@@ -38,14 +38,11 @@ let studioNavigation = 0;
 let projectRequest = 0;
 function switchView(id) {
   studioNavigation += 1;
-  if (id === "live-view") {
-    history.replaceState(null, "", "#live");
-  } else if (location.hash === "#live") {
-    history.replaceState(null, "", location.pathname + location.search);
-  }
-  for (const view of document.querySelectorAll("main > section.view")) {
-    view.hidden = view.id !== id;
-  }
+  const alias = typeof settingsViews !== "undefined" ? settingsViews[id] : null;
+  const top = alias ? "settings-view" : id;
+  for (const view of document.querySelectorAll("main > section.view")) view.hidden = view.id !== top;
+  if (alias) settingsDisplay(alias,id);
+  if (typeof recordStudioRoute === "function") recordStudioRoute(id);
   window.dispatchEvent(new CustomEvent("studio-view", {detail: id}));
 }
 function notice(message, error = false) {
@@ -635,6 +632,10 @@ function renderDetail() {
   $("#project-id").textContent = `FAC ${String(p.id || "").slice(0, 6).toUpperCase()}`;
   $("#project-title").textContent = p.name || projectName(p.source);
   $("#project-source").textContent = p.source;
+  $("#project-created").textContent = p.created ? "Creado " + new Date(p.created * 1000).toLocaleDateString("es") : "";
+  const archive = $("[data-project-manage=archive],[data-project-manage=unarchive]");
+  archive.dataset.projectManage = p.archived ? "unarchive" : "archive";
+  archive.textContent = p.archived ? "Desarchivar" : "Archivar";
   const player = $("#source-player");
   const hint = $("#player-hint");
   if (detail.playable_source) {
@@ -749,7 +750,7 @@ function renderWords() {
     el.disabled = state.busy;
 }
 function renderOutputs(detail) {
-  const videos = detail.files.filter((f) => f.name.endsWith(".mp4"));
+  const videos = detail.files.filter((f) => f.kind === "previews" && f.name.endsWith(".mp4"));
   $("#output-count").textContent = `${videos.length} CLIPS`;
   $("#outputs").className = videos.length ? "output-grid" : "";
   $("#outputs").innerHTML = videos.length
@@ -763,7 +764,7 @@ function renderOutputs(detail) {
                   f.name,
                 ),
             );
-          return `<article class="output-card"><video controls preload="none" src="${encodeURI(file.url)}"></video><div class="output-info"><p>${escapeHTML(file.kind === "previews" ? "DRAFT · " : "EXPORT · ")}${escapeHTML(stem)}</p><div class="output-links"><a href="${encodeURI(file.url)}" download>MP4 ↓</a>${related.map((f) => `<a href="${encodeURI(f.url)}" download>${f.name.endsWith(".srt") ? "SRT" : f.name.endsWith(".png") ? "POSTER" : "METADATA"} ↓</a>`).join("")}${file.kind === "clips" ? `<button type="button" data-editorial-file="${escapeHTML(file.name)}">Revisión editorial</button>` : ""}</div></div></article>`;
+          return `<article class="output-card"><video controls preload="none" src="${encodeURI(file.url)}"></video><div class="output-info"><p>${escapeHTML(file.kind === "previews" ? "DRAFT · " : "EXPORT · ")}${escapeHTML(stem)}</p><div class="output-links"><a href="${encodeURI(file.url)}" download>MP4 ↓</a>${related.map((f) => `<a href="${encodeURI(f.url)}" download>${f.name.endsWith(".srt") ? "SRT" : f.name.endsWith(".png") ? "POSTER" : "METADATA"} ↓</a>`).join("")}${file.kind === "clips" ? `<button type="button" data-editorial-file="${escapeHTML(file.name)}">Editar clip</button>` : ""}</div></div></article>`;
         })
         .join("")
     : '<p class="muted">Choose candidates and make a preview or export.</p>';
@@ -1241,7 +1242,7 @@ async function refreshLive() {
       const editor = document.createElement("button");
       editor.type = "button";
       editor.dataset.editorialFile = name;
-      editor.textContent = "Revisión editorial";
+      editor.textContent = "Editar clip";
       row.append(editor);
     }
     clips.append(row);
@@ -1446,7 +1447,8 @@ safe(async () => {
   refreshProjects().catch(error => notice(error.message, true));
   window.dispatchEvent(new Event("studio-ready"));
 })();
-$("#show-tiktok").addEventListener("click", safe(async () => {
+$("#tiktok-manage-account").addEventListener("click", () => settingsRoute("integrations"));
+$("#calendar-tiktok").addEventListener("click", safe(async () => {
   if (typeof showPublications !== "function") {
     throw new Error("Publicaciones no pudo cargar. Cierra el servidor anterior e inicia dashboard.py desde la copia actualizada.");
   }

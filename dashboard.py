@@ -28,6 +28,7 @@ import live_production
 import projects
 import production
 import publishing_calendar
+import clip_workspace
 import realtime_operations
 from realtime_priority import valid_number
 import render_clips
@@ -92,6 +93,7 @@ STATIC_FILES = {
     "production.js": ("production.js", "text/javascript; charset=utf-8"),
     "realtime.js": ("realtime.js", "text/javascript; charset=utf-8"),
     "workspace.js": ("workspace.js", "text/javascript; charset=utf-8"),
+    "clip-workspace.js": ("clip-workspace.js", "text/javascript; charset=utf-8"),
     "calendar.js": ("calendar.js", "text/javascript; charset=utf-8"),
     "anqora.css": ("anqora.css", "text/css; charset=utf-8"),
     "anqora.svg": ("anqora.svg", "image/svg+xml"),
@@ -172,6 +174,7 @@ class Studio:
     def __init__(self, root, installation=None):
         self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
+        asset_lifecycle.recover(self.root)
         (self.root / "brands").mkdir(exist_ok=True)
         self.token = secrets.token_urlsafe(32)
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="chopify")
@@ -207,9 +210,55 @@ class Studio:
         self.live_production = live_production.Pipeline(self.root, self.resources, self._production_clip)
         self.live_production.start()
         self.calendar = publishing_calendar.Calendar(self.root, self.production, self.tiktok, self.automation_settings)
+        self.clips = clip_workspace.Clips(self.root, self.calendar, self.tiktok, self.editorial)
+        self.clip_jobs = {}
+        self.calendar.recover_dispatches()
+        self.schedule_stop = threading.Event()
+        self.schedule_thread = threading.Thread(target=self._deliver_scheduled, name="studio-calendar", daemon=True)
         self.system = studio_system.System(installation or studio_settings.Settings(HERE), self)
         self.telegram = telegram_gateway.Gateway(self, installation)
         self.telegram.start()
+        self.schedule_thread.start()
+
+    def _deliver_scheduled(self):
+        while not self.schedule_stop.wait(5):
+            if not self.closing:
+                try:
+                    self.calendar.deliver_due()
+                except (OSError, sqlite3.Error):
+                    continue
+
+    def render_clip_version(self, project, filename, aspect):
+        with self.lock:
+            if any(not item.done() for item in self.clip_jobs.values()):
+                raise ValueError("Espera a que termine la exportación anterior.")
+            self.tiktok._clip(project, filename)
+            while len(self.clip_jobs) >= 24:
+                self.clip_jobs.pop(next(iter(self.clip_jobs)))
+            ident = secrets.token_hex(12)
+
+            def render_version():
+                with self.resources:
+                    try:
+                        return {"state": "ready", "file": self.clips.reexport(project, filename, aspect)}
+                    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+                        return {"state": "error", "error": "No se pudo exportar. Comprueba el original, los subtítulos y FFmpeg."}
+            self.clip_jobs[ident] = self.executor.submit(render_version)
+            return ident
+
+    def purge_assets(self, ids, confirmation):
+        with self.lock, self.tiktok.lock:
+            active = self.activity()
+            active["active_requests"] = self.active_requests > 1
+            if any(active.values()):
+                raise ValueError("Espera a que terminen los trabajos y las capturas antes de eliminar archivos.")
+            selected = [row for row in asset_lifecycle.entries(self.root) if row["id"] in ids]
+            with self.calendar.connect(write=True) as db:
+                for row in selected:
+                    if db.execute("""SELECT 1 FROM plans WHERE project=? AND (? IS NULL OR file=?)
+                    AND status NOT IN ('cancelled','published') LIMIT 1""", (row["project"], row["file"], row["file"])).fetchone():
+                        raise ValueError("Cancela o resuelve las programaciones relacionadas antes de eliminar los archivos.")
+                return asset_lifecycle.purge(self.root, ids, confirmation)
 
     def _production_catalog(self):
         from live_clips import PRODUCTION_REPAIR, live_exports
@@ -449,7 +498,7 @@ class Studio:
     def activity(self):
         with self.lock:
             return {
-                "projects": sum(not future.done() for future in self.futures.values()),
+                "projects": sum(not future.done() for future in [*self.futures.values(), *self.clip_jobs.values()]),
                 "live": sum(getattr(session, "status", None) in {"starting", "running"}
                             or getattr(session, "exporting", lambda: False)()
                             for session in self.live_sessions.values()) + int(self.live_production.busy()),
@@ -482,6 +531,8 @@ class Studio:
             self.closed = self.closing = True
             sessions = list(self.live_sessions.values())
             children = list(self.processes)
+        self.schedule_stop.set()
+        self.schedule_thread.join()
         self.telegram.close()
         self.production.pause_dispatch(True)
         self.editorial.pause_dispatch(True)
@@ -549,6 +600,19 @@ class Handler(BaseHTTPRequestHandler):
             if location.path in {tiktok.AUTHORIZE_START, tiktok.CALLBACK}:
                 return self.oauth_navigation(location)
             parts = unquote(location.path).strip("/").split("/")
+            if parts in (["api", "clip"], ["api", "clip-cover"], ["api", "clip-mark"]):
+                query = parse_qs(location.query, max_num_fields=3)
+                project, filename = (query.get(key, [""])[0] for key in ("project", "file"))
+                if parts[-1] == "clip":
+                    return self.send_json(self.app.clips.read(project, filename, query.get("platform", ["tiktok"])[0]))
+                return self.send_file(self.app.clips.image(project, filename, query.get("id", [""])[0], parts[-1][5:]))
+            if parts == ["api", "clip-render"]:
+                ident = parse_qs(location.query, max_num_fields=1).get("id", [""])[0]
+                with self.app.lock:
+                    future = self.app.clip_jobs.get(ident)
+                if future is None:
+                    raise FileNotFoundError
+                return self.send_json(future.result() if future.done() else {"state": "running"})
             if parts == ["api", "calendar"]:
                 query = parse_qs(location.query, max_num_fields=2)
                 return self.send_json(self.app.calendar.snapshot(query.get("id", [None])[0],
@@ -600,7 +664,7 @@ class Handler(BaseHTTPRequestHandler):
                 payload.update(config_payload(self.app.root))
                 return self.send_json(payload)
             if parts == ["api", "trash"]:
-                return self.send_json({"items": asset_lifecycle.entries(self.app.root)})
+                return self.send_json({"items": asset_lifecycle.describe(self.app.root)})
             if parts == ["api", "projects"]:
                 return self.send_json({"projects": self.app.list_projects()})
             if parts == ["api", "automation", "settings"]:
@@ -709,6 +773,25 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(body, dict):
                 raise ValueError("Expected a JSON object.")
             parts = unquote(urlsplit(self.path).path).strip("/").split("/")
+            if len(parts) == 3 and parts[:2] == ["api", "clip"]:
+                project, filename, platform = (body.get(key) for key in ("project", "file", "platform"))
+                if parts[2] == "copy":
+                    return self.send_json(self.app.clips.save(project, filename, platform, body))
+                if parts[2] == "artwork":
+                    return self.send_json(self.app.clips.artwork(project, filename, platform, body))
+                if parts[2] == "render":
+                    return self.send_json({"job": self.app.render_clip_version(project, filename, body.get("aspect"))}, 202)
+                if parts[2] == "generate":
+                    if platform not in clip_workspace.LIMITS:
+                        raise ValueError("Elige una plataforma disponible.")
+                    return self.editorial_action("generate", {"project": project, "filename": filename,
+                        "platform": "facebook" if platform == "instagram" else platform, "force": True, "semantic": True})
+            if parts == ["api", "trash", "purge"]:
+                if not isinstance(body.get("ids"), list) or not all(isinstance(item, str) for item in body["ids"]):
+                    raise ValueError("Selecciona los elementos de la papelera.")
+                if len(body["ids"]) > 1000:
+                    raise ValueError("Selecciona hasta 1000 elementos por operación.")
+                return self.send_json(self.app.purge_assets(body["ids"], body.get("confirmation")))
             if len(parts) == 3 and parts[:2] == ["api", "calendar"]:
                 return self.send_json(self.app.calendar.action(parts[2], body))
             if len(parts) == 3 and parts[:2] == ["api", "system"]:

@@ -376,7 +376,9 @@ async function refreshEditorialConnection() {
 
 async function openEditorial(clip) {
   await studioConfig;
-  switchView("editorial-view");
+  if (clip && (clipEditor.clip?.project !== clip.project || clipEditor.clip?.filename !== clip.filename || !["clip-editor-view","project-view"].includes(workspaceView))) await showClipEditor(clip);
+  if (clip) $("#clip-subtitles").open = true;
+  $("#editorial-view").hidden = false;
   if (clip) {
     editorialView.selected = editorialView.before = null;
     renderEditorialResult(null);
@@ -402,7 +404,7 @@ async function generateEditorial(force, test = false, semantic = null) {
     throw error;
   }
   if (test) {
-    switchView("editorial-view");
+    switchView("ai-settings-view");
     $("#editorial-clip").value = "";
     resetSubtitlePanel();
   }
@@ -444,7 +446,9 @@ async function editEditorial(form, action) {
   }));
 }
 
-$("#show-editorial").addEventListener("click", editorialSafe(() => openEditorial()));
+$("#clip-subtitles").addEventListener("toggle",editorialSafe(async () => {
+  if ($("#clip-subtitles").open && clipEditor.clip) await openEditorial(clipEditor.clip);
+}));
 $("#show-ai-settings").addEventListener("click", editorialSafe(async () => {
   switchView("ai-settings-view");
   await refreshEditorialConnection();
@@ -534,18 +538,18 @@ $("#tiktok-editorial").addEventListener("click", editorialSafe(async () => {
     notice("Selecciona un clip en Publicaciones.", true);
     return;
   }
-  await openEditorial(publication.clips[Number(select.value)]);
+  await showClipEditor(publication.clips[Number(select.value)]);
 }));
 $("#outputs").addEventListener("click", editorialSafe(async (event) => {
   const button = event.target.closest("[data-editorial-file]");
-  if (button) await openEditorial({ project: state.id, filename: button.dataset.editorialFile });
+  if (button) await showClipEditor({ project: state.id, filename: button.dataset.editorialFile });
 }));
 $("#live-clips").addEventListener("click", editorialSafe(async (event) => {
   const button = event.target.closest("[data-editorial-file]");
-  if (button) await openEditorial({ project: "live/" + state.liveId, filename: button.dataset.editorialFile });
+  if (button) await showClipEditor({ project: "live/" + state.liveId, filename: button.dataset.editorialFile });
 }));
 setInterval(() => {
-  if ((!$("#editorial-view").hidden || !$("#ai-settings-view").hidden) && editorialView.config) {
+  if (((["clip-editor-view","project-view"].includes(workspaceView) && !$("#editorial-view").hidden) || workspaceView === "ai-settings-view") && editorialView.config) {
     refreshEditorialHistory().catch(error => editorialError(error.message));
   }
 }, 2000);

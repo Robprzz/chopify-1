@@ -99,7 +99,7 @@ function renderProduction(data) {
 }
 
 async function refreshProduction() {
-  if (($("#home-view").hidden && $("#automation-view").hidden) || productionView.busy) return;
+  if (workspaceView !== "system-view" || !$("#technical-jobs").open || productionView.busy) return;
   productionView.busy = true;
   try {
     const query = new URLSearchParams({ view: $("#production-filter").value });
@@ -153,7 +153,7 @@ function showProductionDetail(job) {
 }
 
 window.addEventListener("studio-view", event => {
-  if (["home-view", "automation-view"].includes(event.detail)) refreshProduction();
+  if (event.detail === "system-view") refreshProduction();
 });
 $("#production-limit").addEventListener("input", event => { event.target.dataset.dirty = "true"; });
 $("#production-pause").addEventListener("click", () => productionAction(async () => {
@@ -206,4 +206,5 @@ $("#production-enqueue").addEventListener("click", () => productionAction(async 
   await productionAPI("enqueue", { project: clip.project, filename: clip.filename });
   await workspaceAction("queue");
 }));
+$("#technical-jobs").addEventListener("toggle",refreshProduction);
 setInterval(refreshProduction, 1800);

@@ -7,7 +7,7 @@ import sqlite3
 import time
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from editorial_semantic import eligible
+from clip_workspace import combined, copy_fields, digest_for, media_stamp, verify_media
 from production_selection import stamp
 
 PLATFORMS = ("tiktok", "youtube", "facebook", "instagram")
@@ -81,6 +81,56 @@ class Calendar:
                 );
                 CREATE INDEX IF NOT EXISTS calendar_events_plan ON calendar_events(plan,id);
             """)
+            if "caption" not in {row[1] for row in db.execute("PRAGMA table_info(plans)")}:
+                db.execute("ALTER TABLE plans ADD COLUMN caption TEXT NOT NULL DEFAULT ''")
+            db.execute("""CREATE TABLE IF NOT EXISTS inbox_schedule(
+                plan TEXT PRIMARY KEY, owner TEXT NOT NULL, revision INTEGER NOT NULL, state TEXT NOT NULL)""")
+
+    def recover_dispatches(self):
+        with self.connect(write=True) as db:
+            rows = db.execute("""SELECT p.* FROM plans p JOIN inbox_schedule s ON p.id=s.plan
+                                 WHERE s.state='claimed'""").fetchall()
+            for row in rows:
+                db.execute("UPDATE inbox_schedule SET state='uncertain' WHERE plan=?", (row["id"],))
+                if not row["external_id"]:
+                    self._transition(db, row, "requires_action", "Entrega interrumpida. Comprueba el buzón antes de reintentar.")
+
+    def deliver_due(self):
+        with self.connect(write=True) as db:
+            row = db.execute("""SELECT p.*,s.owner FROM plans p JOIN inbox_schedule s ON p.id=s.plan
+                WHERE s.state='pending' AND s.revision=p.revision AND p.status='scheduled' AND p.scheduled<=?
+                ORDER BY p.scheduled LIMIT 1""", (time.time(),)).fetchone()
+            if not row:
+                return
+            if time.time() - row["scheduled"] > 600:
+                db.execute("UPDATE inbox_schedule SET state='expired' WHERE plan=?", (row["id"],))
+                self._transition(db, row, "requires_action", "La hora autorizada pasó. Confirma otra hora o prepara el envío manual.")
+                return
+            db.execute("UPDATE inbox_schedule SET state='claimed' WHERE plan=?", (row["id"],))
+        try:
+            with self.tiktok.lock:
+                if not self.tiktok.account or self.tiktok.account["key"] != row["owner"] or self.tiktok.sending:
+                    raise ValueError("La cuenta autorizada no está disponible. Revisa la entrega manualmente.")
+            review = self.tiktok.inspect(row["project"], row["file"])
+
+            def consent(item):
+                if item["owner"] != row["owner"]:
+                    raise Conflict("Cambió la cuenta con consentimiento.")
+                self.reserve_tiktok(row["id"], row["revision"], item)
+
+            self.tiktok.submit(review["review_id"], combined({**dict(row),
+                "hashtags": json.loads(row["hashtags"])}), True, on_consent=consent)
+            with self.connect(write=True) as db:
+                current = self._get(db, row["id"])
+                if not current["external_id"]:
+                    self._transition(db, current, "requires_action", "TikTok ya tiene un intento para este archivo. Revisa su historial.")
+                db.execute("UPDATE inbox_schedule SET state='done' WHERE plan=?", (row["id"],))
+        except (OSError, ValueError, KeyError, sqlite3.Error):
+            with self.connect(write=True) as db:
+                current = self._get(db, row["id"])
+                if current["status"] not in TERMINAL and not current["external_id"]:
+                    self._transition(db, current, "requires_action", "No se pudo completar la entrega autorizada. Comprueba la cuenta y el historial.")
+                db.execute("UPDATE inbox_schedule SET state='uncertain' WHERE plan=?", (row["id"],))
 
     @contextmanager
     def connect(self, write=False):
@@ -97,51 +147,27 @@ class Calendar:
         return {**DEFAULTS, "timezone": self.settings.read()["settings"]["timezone"]}
 
     def _clip(self, job, project=None, filename=None):
-        if job is None:
-            # Ordinary exports can be drafted while they await Automation gates.
-            path = self.tiktok._clip(project, filename)
-            return {"project": project, "file": filename, "run": None, "editorial_revision": None,
-                    "integrity": json.dumps(stamp(path)), "approval": None, "duration": None,
-                    "status": "draft", "title": path.stem, "description": "", "hashtags": []}
-        if type(job) is not int or job < 1:
-            raise ValueError("Identificador de producción inválido.")
-        store = self.production.store
-        with store.connect() as db:
-            row = db.execute("""SELECT p.*,e.file,e.evidence,e.detection,e.duplicate
-                FROM production_jobs p LEFT JOIN production_evidence e ON p.id=e.job_id AND p.run=e.run
-                WHERE p.id=?""", (job,)).fetchone()
-            if not row:
+        run = None
+        if job is not None:
+            if type(job) is not int or job < 1:
+                raise ValueError("Identificador de producción inválido.")
+            with self.production.store.connect() as db:
+                row = db.execute("""SELECT p.project,p.filename,p.run,e.file FROM production_jobs p
+                    LEFT JOIN production_evidence e ON e.job_id=p.id AND e.run=p.run WHERE p.id=?""", (job,)).fetchone()
+            if not row or (project and row["project"] != project):
                 raise ValueError("Clip desconocido.")
-            file = row["file"] or row["filename"]
-            media = self.tiktok._clip(row["project"], file)
-            revision = None
-            result = copy = {}
-            if row["editorial_id"] is not None:
-                editor = db.execute("SELECT revision,result,selected,edits FROM editorial_jobs WHERE id=? AND state='done'",
-                                    (row["editorial_id"],)).fetchone()
-                if editor and editor["result"]:
-                    revision = editor["revision"]
-                    result = json.loads(editor["result"])
-                    style = editor["selected"] or result.get("recommended_variant")
-                    copy = next((v for v in result.get("variants", []) if v.get("style") == style and
-                                 v.get("valid") is not False and (v.get("score") or 0) > 0), {})
-                    copy = {**copy, **json.loads(editor["edits"]).get(style, {})} if copy else {}
-            evidence = json.loads(row["evidence"]) if row["evidence"] else None
-            minimum = self.settings.read()["settings"]["minimum_clip_score"]
-            passed = (row["state"] == "ready" and row["technical"] == "passed" and not row["duplicate"]
-                      and evidence and row["detection"] is not None and row["detection"] >= max(6, minimum)
-                      and self.production.current_evidence(dict(row), evidence)
-                      and eligible(result) and result.get("standalone") is True and bool(copy))
-            review = store._review(db, job, row["run"], row["editorial_id"]) if passed else None
-            approval = review["created"] if review and review["decision"] == "approved" else None
-            blocked = row["state"] in {"failed", "rejected", "cancelled"} or (review and review["decision"] in {"rejected", "correction"})
-            return {"project": row["project"], "file": file, "run": row["run"], "editorial_revision": revision,
-                    "integrity": json.dumps(stamp(media)), "approval": approval,
-                    "hashes": sorted(evidence.get("sha", [])) if evidence else [],
-                    "duration": (evidence or {}).get("duration"),
-                    "status": "requires_action" if blocked else "editorial_approved" if approval else "pending_review",
-                    "title": copy.get("title") or media.stem, "description": copy.get("description", ""),
-                    "hashtags": copy.get("hashtags", [])}
+            project, filename = row["project"], filename or row["file"] or row["filename"]
+            run = row["run"]
+        path = self.tiktok._clip(project, filename)
+        digest = digest_for(path, media_stamp(path))
+        return {"project": project, "file": filename, "run": run, "editorial_revision": None,
+                "integrity": json.dumps(stamp(path)), "approval": None, "hashes": [digest],
+                "duration": None, "status": "draft", "title": path.stem[:100],
+                "caption": "", "description": "", "hashtags": []}
+
+    def _verify(self, clip, platform):
+        path = self.tiktok._clip(clip["project"], clip["file"])
+        return verify_media(path, media_stamp(path), platform)
 
     @staticmethod
     def _event(db, ident, action, detail=None):
@@ -178,15 +204,17 @@ class Calendar:
         return json.dumps({"stamp": json.loads(clip["integrity"]), "sha": clip.get("hashes", [])}, sort_keys=True)
 
     def _same_version(self, row, clip):
-        return (row["run"], row["editorial_revision"], row["project"], row["file"], row["integrity"]) == (
-            clip["run"], clip["editorial_revision"], clip["project"], clip["file"], self._fingerprint(clip))
+        previous = json.loads(row["integrity"])
+        current = json.loads(self._fingerprint(clip))
+        return (row["project"], row["file"]) == (clip["project"], clip["file"]) and (
+            previous["stamp"] == current["stamp"] and
+            (not previous["sha"] or bool(set(previous["sha"]) & set(current["sha"]))))
 
     def _validate_plan(self, db, row):
         clip = self._clip(row["job"], row["project"], row["file"])
         if not self._same_version(row, clip):
             raise Conflict("La versión del clip cambió. Actualiza el borrador y revísalo.")
-        if not clip["approval"]:
-            raise Conflict("Se requiere aprobación editorial vigente.")
+        self._verify(clip, row["platform"])
         return clip
 
     def _duplicate(self, db, ident, clip, platform):
@@ -199,17 +227,26 @@ class Calendar:
 
     def save(self, data):
         if data.keys() - {"id", "revision", "job", "project", "file", "platform", "local", "zone", "priority",
-                          "title", "description", "hashtags", "ready", "refresh_version"}:
+                          "title", "caption", "description", "hashtags", "ready", "refresh_version", "inbox_consent"}:
             raise ValueError("Hay campos de planificación desconocidos.")
         ident = data.get("id")
         if not isinstance(ident, str) or not re.fullmatch(r"[a-f0-9-]{36}", ident):
             raise ValueError("Identificador de programación inválido.")
+        owner = None
+        if data.get("inbox_consent") is True:
+            if data.get("platform") != "tiktok" or not data.get("local"):
+                raise ValueError("El consentimiento corresponde a una entrega fechada al buzón.")
+            with self.tiktok.lock:
+                if not self.tiktok.account or not self.tiktok.token or "video.upload" not in self.tiktok.token["scopes"]:
+                    raise ValueError("Conecta una cuenta de TikTok con permiso para enviar al buzón.")
+                owner = self.tiktok.account["key"]
         with self.connect(write=True) as db:
             old = db.execute("SELECT * FROM plans WHERE id=?", (ident,)).fetchone()
             if old and data.get("revision") is None:
                 return self._public(old)  # create replay
             if old:
                 self._expect(old, data.get("revision"))
+                self._unclaimed(db, ident)
                 if old["status"] in TERMINAL or old["external_id"]:
                     raise Conflict("La programación ya tiene un resultado o una operación enlazada.")
             platform, priority = data.get("platform"), data.get("priority", "normal")
@@ -229,28 +266,22 @@ class Calendar:
             prefs = self.preferences(db)
             zone = zone_for(data.get("zone", prefs["timezone"]))
             when = instant(data["local"], zone) if data.get("local") else None
-            status = clip["status"]
+            status = "draft"
             if when is not None:
-                if not clip["approval"]:
-                    raise Conflict("Aprueba editorialmente esta versión antes de programarla.")
+                clip["duration"] = self._verify(clip, platform)["duration"]
                 if when <= time.time():
                     raise ValueError("Elige una hora futura o abre la revisión inmediata.")
                 self._slot(db, prefs, when, platform, ident)
                 status = "scheduled"
-            elif clip["approval"] and data.get("ready") is True:
+            elif data.get("ready") is True:
+                clip["duration"] = self._verify(clip, platform)["duration"]
                 status = "ready"
-            title = data.get("title", clip["title"])
-            description = data.get("description", clip["description"])
-            hashtags = data.get("hashtags", clip["hashtags"])
-            if (not isinstance(title, str) or not title.strip() or len(title) > 160
-                    or not isinstance(description, str) or len(description) > 2200
-                    or not isinstance(hashtags, list) or len(hashtags) > 12
-                    or any(not isinstance(tag, str) or not re.fullmatch(r"#[\w]{1,40}", tag) for tag in hashtags)):
-                raise ValueError("Revisa el título, la descripción y los hashtags.")
+            text = copy_fields({**clip, **data}, platform)
+            title, description, hashtags = text["title"], text["description"], text["hashtags"]
             now = time.time()
             fields = (job, clip["run"], clip["editorial_revision"], clip["project"], clip["file"],
                       self._fingerprint(clip), platform, when, zone.key, priority, title.strip(), description,
-                      json.dumps(hashtags, ensure_ascii=False), clip["duration"], status, now, clip["approval"])
+                      json.dumps(hashtags, ensure_ascii=False), clip["duration"], status, now, old["approval"] if old else None)
             if old:
                 db.execute("""UPDATE plans SET job=?,run=?,editorial_revision=?,project=?,file=?,integrity=?,
                     platform=?,scheduled=?,zone=?,priority=?,title=?,description=?,hashtags=?,duration=?,status=?,
@@ -259,6 +290,15 @@ class Calendar:
                 db.execute("""INSERT INTO plans(job,run,editorial_revision,project,file,integrity,platform,scheduled,
                     zone,priority,title,description,hashtags,duration,status,updated,approval,id,created)
                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (*fields, ident, now))
+            db.execute("UPDATE plans SET caption=? WHERE id=?", (text["caption"], ident))
+            db.execute("DELETE FROM inbox_schedule WHERE plan=?", (ident,))
+            if owner:
+                db.execute("INSERT INTO inbox_schedule VALUES(?,?,?,'pending')",
+                           (ident, owner, self._get(db, ident)["revision"]))
+                db.execute("UPDATE plans SET consent=? WHERE id=?", (now, ident))
+                self._event(db, ident, "consent", "Entrega al buzón, cuenta y versión vinculadas.")
+            elif old:
+                db.execute("UPDATE plans SET consent=NULL WHERE id=?", (ident,))
             self._event(db, ident, "updated" if old else "created", status)
             return self._public(self._get(db, ident))
 
@@ -268,6 +308,11 @@ class Calendar:
         result.pop("integrity")
         result["hashtags"] = json.loads(row["hashtags"])
         return result
+
+    @staticmethod
+    def _unclaimed(db, ident):
+        if db.execute("SELECT 1 FROM inbox_schedule WHERE plan=? AND state='claimed'", (ident,)).fetchone():
+            raise Conflict("Hay un envío programado en curso. Consulta su resultado antes de cambiarlo.")
 
     def _transition(self, db, row, state, reason=None, **fields):
         values = {"status": state, "error": reason, "updated": time.time(), **fields}
@@ -286,7 +331,7 @@ class Calendar:
                     or review["digest"] not in clip.get("hashes", [])):
                 raise Conflict("Selecciona en TikTok el archivo exacto de la programación.")
             # This callback runs only after TikTok validates the account, consent,
-            # file review and duplicates. Never dispatch from the queue clock.
+            # file review and duplicates, for explicit browser or persisted consent.
             self._transition(db, row, "requires_action", "Consentimiento registrado. Esperando evidencia del envío.",
                              consent=time.time(), external_id=review["id"], attempts=row["attempts"] + 1)
 
@@ -313,11 +358,14 @@ class Calendar:
                 self._transition(db, row, state, reason, publish_id=publish_id)
             return
         if row["scheduled"] is not None and row["scheduled"] <= now and row["status"] == "scheduled":
+            if db.execute("SELECT 1 FROM inbox_schedule WHERE plan=? AND state IN ('pending','claimed')",
+                          (row["id"],)).fetchone():
+                return
             try:
                 self._validate_plan(db, row)
                 reason = "Horario vencido. Revisa manualmente el siguiente paso."
             except (OSError, ValueError):
-                reason = "Horario vencido y versión o aprobación pendiente de revisar."
+                reason = "Horario vencido y archivo pendiente de comprobar."
             self._transition(db, row, "requires_action", reason)
 
     def _receipts(self):
@@ -341,13 +389,15 @@ class Calendar:
             if ident:
                 row = self._get(db, ident)
                 item = self._public(row)
+                delivery = db.execute("SELECT state FROM inbox_schedule WHERE plan=?", (ident,)).fetchone()
+                item["inbox_state"] = delivery[0] if delivery else None
                 try:
                     current = self._clip(row["job"], row["project"], row["file"])
                     item["stale"] = not self._same_version(row, current)
-                    item["current_approval"] = bool(current["approval"]) and not item["stale"]
+                    item["media_available"] = not item["stale"]
                     item["can_link_production"] = row["job"] is None
                 except (OSError, ValueError):
-                    item.update(stale=True, current_approval=False)
+                    item.update(stale=True, media_available=False)
                 item["history"] = [dict(event) for event in db.execute(
                     "SELECT at,action,detail FROM calendar_events WHERE plan=? ORDER BY id DESC LIMIT 100", (ident,))]
                 return item
@@ -422,11 +472,13 @@ class Calendar:
         with self.connect(write=True) as db:
             row = self._get(db, data.get("id"))
             self._expect(row, data.get("revision"))
+            self._unclaimed(db, row["id"])
             if row["status"] in TERMINAL:
                 raise Conflict("La programación ya está cerrada.")
             if action == "cancel":
                 if row["external_id"]:
                     raise Conflict("Consulta primero el resultado de la operación externa.")
+                db.execute("DELETE FROM inbox_schedule WHERE plan=?", (row["id"],))
                 self._transition(db, row, "cancelled")
             elif action == "retry":
                 if row["status"] != "failed" or row["publish_id"]:

@@ -22,17 +22,18 @@ def agenda(tmp_path, monkeypatch):
         "timezone": "America/Santo_Domingo", "minimum_clip_score": 6}})
     receipts = []
     tiktok = SimpleNamespace(lock=threading.RLock(), sending=False, _account_history=lambda: receipts)
-    state = SimpleNamespace(run=1, editorial_revision=1, approved=True, identical=False)
+    state = SimpleNamespace(run=1, editorial_revision=1, identical=False, size=20)
 
     def clip(self, job, project=None, filename=None):
         return {"project": "c" * 12, "file": f"clip_{job}.mp4", "run": state.run,
-                "editorial_revision": state.editorial_revision, "integrity": json.dumps({"size": 20}),
+                "editorial_revision": state.editorial_revision, "integrity": json.dumps({"size": state.size}),
                 "hashes": ["a" * 64 if state.identical else f"{job:064x}"],
-                "approval": clock.now - 200 if state.approved else None,
-                "duration": 60, "status": "editorial_approved" if state.approved else "pending_review",
+                "approval": None,
+                "duration": 60, "status": "draft",
                 "title": "Entrevista 📹", "description": "Conversación sobre música", "hashtags": ["#música"]}
 
     monkeypatch.setattr(calendar.Calendar, "_clip", clip)
+    monkeypatch.setattr(calendar.Calendar, "_verify", lambda *args: {"duration": 60})
 
     def open_store():
         return calendar.Calendar(tmp_path, None, tiktok, settings)
@@ -55,16 +56,11 @@ def action(store, verb, item, **fields):
 
 def test_plan_lifecycle_transaction_and_restart(agenda):
     store = agenda.store
-    agenda.source.approved = False
-    payload = plan(local="2026-11-23T09:00")
-    with pytest.raises(calendar.Conflict, match="Aprueba editorialmente"):
-        store.save(payload)
     original = plan()
     row = store.save(original)
-    assert row["status"] == "pending_review"
+    assert row["status"] == "draft"
     assert store.save({**original, "title": "Retried text"}) == row
     assert len(store.snapshot(row["id"])["history"]) == 1
-    agenda.source.approved = True
     row = change(store, row, ready=True)
     assert row["status"] == "ready"
     scheduled = change(store, row, title="La música de hoy", local="2026-11-23T09:00")
@@ -111,21 +107,19 @@ def test_timezones_dst_conflicts_and_exact_duplicates(agenda):
     assert store.action("suggest", {"platform": "tiktok", "priority": "urgent"})["basis"] == "heuristic"
 
 
-def test_obsolete_approval_and_manual_confirmation(agenda):
+def test_source_version_and_manual_confirmation(agenda):
     store = agenda.store
     row = store.save(plan(platform="youtube", local="2026-11-23T09:30"))
     agenda.source.editorial_revision += 1
+    assert not store.snapshot(row["id"])["stale"]
+    agenda.source.size += 1
     assert store.snapshot(row["id"])["stale"]
     with pytest.raises(calendar.Conflict, match="versión"):
         action(store, "prepare", row)
     with pytest.raises(calendar.Conflict, match="Actualiza"):
         change(store, row, title="Texto editado")
-    agenda.source.approved = False
     row = change(store, row, refresh_version=True)
-    assert row["status"] == "pending_review"
-    with pytest.raises(calendar.Conflict, match="aprobación"):
-        action(store, "confirm", row, confirmed=True)
-    agenda.source.approved = True
+    assert row["status"] == "draft"
     row = action(store, "prepare", row)
     assert row["status"] == "requires_action"
     with pytest.raises(ValueError, match="confirmación manual"):
@@ -178,11 +172,13 @@ def test_calendar_ui_and_navigation_over_http(tmp_path, chromium_page):
     project = projects.create_project(tmp_path, "Multilingüe.mp4", {})
     output = tmp_path / project["id"] / "clips"
     output.mkdir(exist_ok=True)
-    (output / "Entrevista.mp4").write_bytes(b"local export fixture")
+    from test_subtitle_quality import media_file
+    media_file(output / "Entrevista.mp4", size="640x360")
     with running_server(tmp_path) as (_, base):
         page.goto(base)
         expect(page.locator("#home-greeting")).to_have_text("Centro de operaciones")
-        expect(page.locator(".main-navigation button")).to_have_count(8)
+        expect(page.locator(".main-navigation button")).to_have_count(7)
+        page.locator("#show-home").click()
         expect(page.locator("#home-kpis")).to_contain_text("0/5")
         assert page.evaluate("getComputedStyle(document.body).backgroundColor") == "rgb(247, 249, 253)"
         assert "rgb(16, 27, 53)" in page.locator(".home-intro .primary").evaluate("e => getComputedStyle(e).backgroundImage")
@@ -206,19 +202,22 @@ def test_calendar_ui_and_navigation_over_http(tmp_path, chromium_page):
         expect(page.locator("#calendar-grid .calendar-cell")).to_have_count(1)
         page.locator("#calendar-create").click()
         page.locator("#calendar-clip").select_option(project["id"] + "/Entrevista.mp4")
+        expect(page.locator("#calendar-title")).to_have_value("Entrevista")
         page.locator("#calendar-title").fill("Entrevista en español")
         page.locator("#show-clips-library").click()
         page.locator("#show-publications").click()
         expect(page.locator("#calendar-title")).to_have_value("Entrevista en español")
+        page.locator("#calendar-suggest").click()
+        expect(page.locator("#calendar-feedback")).to_contain_text("Horario sugerido")
         page.locator("#calendar-form button[type=submit]").click()
-        expect(page.locator("#calendar-detail-status")).to_have_text("Borrador")
+        expect(page.locator("#calendar-detail-status")).to_have_text("Programado")
         page.reload()
-        expect(page.get_by_role("heading", name="Calendario editorial")).to_be_visible()
-        expect(page.locator("#calendar-drafts")).to_contain_text("Entrevista en español")
+        expect(page.get_by_role("heading", name="Publicaciones", exact=True)).to_be_visible()
+        expect(page.locator("#calendar-upcoming")).to_contain_text("Entrevista en español")
     with running_server(tmp_path) as (_, base):
         page.goto(base)
         page.locator("#show-publications").click()
-        page.locator("#calendar-drafts button").click()
+        page.locator("#calendar-upcoming button").click()
         expect(page.locator("#calendar-title")).to_have_value("Entrevista en español")
     assert not errors, errors
 
@@ -274,11 +273,11 @@ def test_current_automation_evidence_and_explicit_tiktok_consent(server, monkeyp
     job = seed(app.production.store, now, "avance", project=project, evidence=evidence, with_editor=True)
     app.production.store.set_event(job, 1, "conventional", now - 60)
     token = app.token
-    assert request(base, "/api/calendar-clip?job=" + str(job))["status"] == "pending_review"
+    assert request(base, "/api/calendar-clip?job=" + str(job))["status"] == "draft"
     assert app.production.store.remote_review(job, 1, 5, "approved", "studio")
     assert request(base, "/api/workspace")["priority"][0]["job"] == job
     row = request(base, "/api/calendar/save", plan(job), token)
-    assert row["status"] == "editorial_approved"
+    assert row["status"] == "draft"
 
     monkeypatch.setattr(app.tiktok, "account", {"key": "simulation"})
     monkeypatch.setattr(app.tiktok, "_access", lambda: "simulated-access")

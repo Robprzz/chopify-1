@@ -45,11 +45,11 @@ def test_publications_opens_with_incorrect_system_mime_types(server, monkeypatch
         page.goto(base)
     assert script.value.status == 200
     assert script.value.headers["content-type"] == "text/javascript; charset=utf-8"
-    page.locator("#show-settings").click()
+    page.locator("#show-publications").click()
     with page.expect_response(base + "/api/tiktok/state") as tiktok:
-        page.locator("#show-tiktok").click()
+        page.locator("#calendar-tiktok").click()
     assert tiktok.value.status == 200
-    expect(page.get_by_role("heading", name="Publicaciones")).to_be_visible()
+    expect(page.get_by_role("heading", name="Buzón e historial de TikTok")).to_be_visible()
     expect(page.locator("#tiktok-account")).to_contain_text("TikTok requiere")
     expect(page.locator("#new-view")).to_be_hidden()
 
@@ -73,6 +73,6 @@ def test_publications_explains_missing_script(server, monkeypatch, chromium_page
     with page.expect_response(base + "/publications.js") as script:
         page.goto(base)
     assert script.value.status == 404
-    page.locator("#show-settings").click()
-    page.locator("#show-tiktok").click()
+    page.locator("#show-publications").click()
+    page.locator("#calendar-tiktok").click()
     expect(page.locator("#notice")).to_contain_text("inicia dashboard.py desde la copia actualizada")

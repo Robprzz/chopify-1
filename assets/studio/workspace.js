@@ -3,19 +3,19 @@
 const workspaceViews = {
   "home-view": "show-home", "live-view": "show-live", "clips-view": "show-clips-library",
   "new-view": "show-projects", "project-view": "show-projects", "projects-view": "show-projects",
-  "editorial-view": "show-editorial", "automation-view": "show-settings", "ai-settings-view": "show-settings",
+  "clip-editor-view": "show-clips-library", "automation-view": "show-settings", "ai-settings-view": "show-settings",
   "trash-view": "show-settings",
-  "calendar-view": "show-publications", "publications-view": "show-settings", "statistics-view": "show-statistics",
+  "calendar-view": "show-publications", "publications-view": "show-publications", "statistics-view": "show-statistics",
   "settings-view": "show-settings", "system-view": "show-settings", "watermark-view": "show-settings", "telegram-view": "show-settings",
 };
-const workspaceEntry = {...workspaceViews, "automation-view": "show-automation", "ai-settings-view": "show-ai-settings", "trash-view": "show-trash", "new-view": "new-project", "publications-view": "show-tiktok",
+const workspaceEntry = {...workspaceViews, "automation-view": "show-automation", "ai-settings-view": "show-ai-settings", "trash-view": "show-trash", "new-view": "new-project", "publications-view": "calendar-tiktok",
   "system-view": "show-system", "watermark-view": "show-watermark", "telegram-view": "show-telegram"};
 const workspaceStates = {generated:"Nuevo clip detectado", ready:"Lista para revisión", review:"Revisión pendiente",
   rejected:"Rechazado", failed:"Fallido", exported:"Exportado", cancelled:"Cancelado",
   analyzing:"En evaluación", validating:"Control técnico", repairing:"Corrigiendo"};
 let workspaceData = null;
 let workspaceLoading = null;
-let workspaceView = "home-view";
+let workspaceView = "clips-view";
 let workspaceLast = 0;
 const sessionPrefs = ["live-aspect","live-camera-mode","live-duration","live-max-height","live-threshold","live-per-hour","live-per-session","live-whisper-device"];
 
@@ -37,7 +37,7 @@ function mediaDuration(value) {
 }
 function clipThumb(clip) {
   return `<button type="button" class="thumb" data-workspace="preview-clip" data-key="${escapeHTML(clip.url)}" aria-label="Reproducir ${escapeHTML(clip.title)}">${clip.thumbnail ?
-    `<img src="${escapeHTML(clip.thumbnail)}" loading="lazy" alt="" />` : workspaceIcon("clip")}
+    `<img src="${escapeHTML(clip.thumbnail)}" loading="lazy" alt="" />` : `<video src="${escapeHTML(clip.url)}#t=0.1" muted playsinline preload="metadata" tabindex="-1" aria-hidden="true"></video>`}
     ${clip.duration == null ? "" : `<time>${mediaDuration(clip.duration)}</time>`}</button>`;
 }
 function patchWorkspace(selector, markup) {
@@ -65,7 +65,6 @@ function renderWorkspace(data) {
     ["live", data.active.length, "Capturas activas", data.active.length ? "En ejecución" : "Sin actividad", "live"],
     ["clip", today.clips, "Clips de hoy", "Exportaciones terminadas", "clips"],
     ["stack", today.review, "Por revisar", today.urgent + " urgentes", "pending"],
-    ["stack", data.statistics.pending, "Trabajos pendientes", data.statistics.errors + " incidencias del período", "queue"],
     ["star", today.recommended + "/" + today.limit, "Recomendados", "Selección diaria", "recommended"],
   ];
   patchWorkspace("#home-kpis", counts.map(([icon, value, label, desc, action]) =>
@@ -101,7 +100,7 @@ function renderWorkspace(data) {
     "<li>Sin actividad registrada.</li>");
   $("#notification-count").textContent = data.notifications.length;
   $("#notification-count").hidden = !data.notifications.length;
-  if (workspaceView === "clips-view") renderLibrary();
+  if (["clips-view","project-view"].includes(workspaceView)) renderLibrary();
   if (workspaceView === "statistics-view") renderStatistics(data);
   window.dispatchEvent(new Event("workspace-data"));
 }
@@ -127,8 +126,8 @@ async function refreshWorkspace(force = false) {
 }
 function clipActions(clip) {
   const id = escapeHTML(clip.project + "/" + clip.filename);
-  return `<button data-workspace="edit-clip" data-key="${id}">Revisión editorial</button>
-    ${clip.level && !clip.review ? `<button data-workspace="correction" data-job="${clip.job}">Solicitar corrección</button>` : ""}
+  return `<button data-workspace="edit-clip" data-key="${id}">Editar clip</button>
+    <button data-workspace="publish-clip" data-key="${id}">Publicar ahora</button>
     <button data-workspace="plan-clip" data-key="${id}">Programar</button>
     ${!clip.project.startsWith("live/") ? `<button data-workspace="open-project" data-key="${escapeHTML(clip.project)}">Abrir proyecto</button>` : ""}
     <button data-workspace="trash-clip" data-key="${id}">Enviar a la papelera</button>`;
@@ -145,14 +144,40 @@ $("#clip-preview-dialog").addEventListener("close", () => {
   video.load();
 });
 
+let trashItems = [];
 async function refreshTrash() {
   const {items} = await api("/api/trash");
+  trashItems = items;
+  $("#trash-empty").disabled = !items.length || items.some(item => item.blocked);
+  $("#trash-summary").textContent = `${items.length} elementos · ${bytesLabel(items.reduce((n, item) => n + (item.bytes || 0),0))}`;
   $("#asset-trash-list").innerHTML = items.length ? [...items].reverse().map(item =>
-    `<article class="workspace-card project-entry"><div><strong>${escapeHTML(item.title)}</strong>
-    <p class="muted">${item.file ? "Clip" : "Proyecto"} · ${escapeHTML(item.project)}</p></div>
-    <button data-workspace="restore-asset" data-key="${escapeHTML(item.id)}">Restaurar</button></article>`
+    `<article class="workspace-card"><strong>${escapeHTML(item.title)}</strong>
+    <p>${item.file ? "Clip" : "Proyecto"} · ${escapeHTML(item.project)} · ${bytesLabel(item.bytes)}</p>
+    ${item.blocked ? `<p>${escapeHTML(item.blocked)}</p>` :
+      `<details><summary>Archivos locales</summary><ul>${item.files.map(file => `<li>${escapeHTML(file)}</li>`).join("")}</ul></details>`}
+    <div class="publication-actions"><button data-workspace="restore-asset" data-key="${escapeHTML(item.id)}">Restaurar</button>
+    <button data-workspace="purge-asset" data-key="${escapeHTML(item.id)}" ${item.blocked ? "disabled" : ""}>Eliminar definitivamente</button></div></article>`
   ).join("") : '<p class="empty-card">La papelera está vacía.</p>';
 }
+function bytesLabel(value) {
+  return value == null ? "Tamaño sin verificar" : new Intl.NumberFormat("es",{maximumFractionDigits:2}).format(value/1048576) + " MiB";
+}
+async function purgeTrash(items) {
+  if (!items.length) return;
+  const expected = items.length === 1 && !items[0].file ? items[0].title :
+    ["ELIMINAR", ...items.filter(item => !item.file).map(item => item.title).sort()].join(" / ");
+  const size = bytesLabel(items.reduce((total,item) => total + item.bytes,0));
+  const files = items.flatMap(item => item.files);
+  const summary = files.length > 12 ? `${files.slice(0,12).join("\n")}\n… y ${files.length - 12} más (consulta el listado en la papelera).` : files.join("\n");
+  const confirmation = prompt(`Eliminación irreversible · ${size}\n${items.map(item => item.title).join(", ")}\n${summary}
+Escribe ${expected} para continuar.`);
+  if (confirmation === null) return;
+  const result = await api("/api/trash/purge",{ids:items.map(item => item.id),confirmation});
+  await refreshTrash();
+  await refreshWorkspace(true);
+  notice(result.message || "Archivos eliminados definitivamente.");
+}
+$("#trash-empty").addEventListener("click",safe(() => purgeTrash(trashItems)));
 async function manageProject(id, action) {
   const request = {action: action.replace("-project", "")};
   if (request.action === "rename") {
@@ -166,6 +191,7 @@ async function manageProject(id, action) {
     if (request.action === "trash") {
       state.id = state.detail = null;
       setPreference("project", "");
+      showWorkspace("projects-view");
     } else if (state.detail) {
       Object.assign(state.detail.project, result);
       $("#project-title").textContent = result.name || projectName(result.source);
@@ -174,27 +200,51 @@ async function manageProject(id, action) {
   await refreshProjects();
   notice(request.action === "trash" ? "Proyecto enviado a la papelera." : "Proyecto actualizado.");
 }
-function renderLibrary() {
-  const query = $("#clip-library-query").value.toLocaleLowerCase();
-  const filter = $("#clip-library-filter").value;
-  const sort = $("#clip-library-sort").value;
-  const clips = (workspaceData?.clips || []).filter(clip =>
-    (!filter || filter === clip.status || filter === clip.level) &&
-    (clip.title + clip.source + clip.filename).toLocaleLowerCase().includes(query));
-  if (sort === "priority") clips.sort((a,b) => (b.priority ?? -1) - (a.priority ?? -1));
-  if (sort === "title") clips.sort((a,b) => a.title.localeCompare(b.title));
-  $("#clip-library").className = $("#clip-library-mode").value === "list" ? "library-list" : "library-grid";
-  patchWorkspace("#clip-library", clips.map(clip => {
-    const key = escapeHTML(clip.project + "/" + clip.filename);
-    const platform = workspaceData.plans.find(row => row.project === clip.project && row.file === clip.filename)?.platform;
-    return `<article class="workspace-card library-item">${clipThumb(clip)}
+const libraryFilters = ["query","filter","sort","mode","project","origin","format","date"];
+function libraryCard(clip) {
+  const plans = workspaceData.plans.filter(row => row.project === clip.project && row.file === clip.filename);
+  const providers = plans.map(row => `${calendarPlatforms[row.platform]}: ${planLabel(row)}`).join(" · ");
+  return `<article class="workspace-card library-item">${clipThumb(clip)}
     <div class="library-info"><strong>${escapeHTML(clip.title)}</strong><p>${escapeHTML(clip.source)}
-    · ${escapeHTML(new Date(clip.created * 1000).toLocaleDateString())} · ${workspaceStates[clip.status] || "En producción"}</p>
-    <p>Detección ${clip.score ?? "—"} · Prioridad ${clip.priority?.toFixed(1) ?? "—"} · ${escapeHTML(platform || "Sin plataforma")}</p></div>
+    · ${clip.project.startsWith("live/") ? "Live" : "Proyecto"} · ${escapeHTML(new Date(clip.created*1000).toLocaleDateString())}
+    · ${escapeHTML(clip.format || "Formato sin verificar")} · ${mediaDuration(clip.duration)}</p>
+    <p>Detección ${clip.score ?? "—"} · Prioridad ${clip.priority?.toFixed(1) ?? "—"} · ${workspaceStates[clip.status] || "En producción"}</p>
+    <p>${escapeHTML(providers || "Sin programación registrada")}</p></div>
     <div class="publication-actions">${clipActions(clip)}
-    ${clip.job ? `<button data-workspace="job-detail" data-job="${clip.job}">Historial técnico</button>` : ""}
-    <a href="${escapeHTML(clip.url)}" download>Exportar MP4</a></div></article>`;
-  }).join("") || '<p class="empty-card">No hay exportaciones que coincidan con la búsqueda.</p>');
+    <a href="${escapeHTML(clip.url)}" download>Descargar MP4</a></div></article>`;
+}
+$("#project-continue").addEventListener("click", () => $("#prepare").click());
+$("#project-new-clip").addEventListener("click", () => {
+  $("#show-clips").click();
+  $("#clip-panel").scrollIntoView({block:"start"});
+});
+$(".project-heading").addEventListener("click",safe(event => {
+  const action = event.target.closest("[data-project-manage]")?.dataset.projectManage;
+  if (action && state.id) return manageProject(state.id,action);
+}));
+function renderLibrary() {
+  const all = workspaceData?.clips || [];
+  const projectSelect = $("#clip-library-project");
+  const projects = new Map(all.filter(clip => !clip.project.startsWith("live/")).map(clip => [clip.project,clip.source]));
+  const selected = projectSelect.value || getPreference(projectSelect.id);
+  const options = JSON.stringify([...projects]);
+  if (projectSelect.dataset.options !== options) {
+    projectSelect.replaceChildren(new Option("Todos los proyectos",""), ...[...projects].map(([key,title]) => new Option(title,key)));
+    projectSelect.value = projects.has(selected) ? selected : "";
+    projectSelect.dataset.options = options;
+  }
+  const fields = Object.fromEntries(libraryFilters.map(key => [key,$("#clip-library-" + key).value]));
+  const clips = all.filter(clip => (!fields.filter || fields.filter === clip.status || fields.filter === clip.level) &&
+    (!fields.project || clip.project === fields.project) && (!fields.format || clip.format === fields.format) &&
+    (!fields.origin || (clip.project.startsWith("live/") ? "live" : "project") === fields.origin) &&
+    (!fields.date || calendarLocal(clip.created,workspaceData.timezone,false) >= fields.date) &&
+    (clip.title + clip.source + clip.filename).toLocaleLowerCase().includes(fields.query.toLocaleLowerCase()));
+  if (fields.sort === "priority") clips.sort((a,b) => (b.priority ?? -1) - (a.priority ?? -1));
+  if (fields.sort === "title") clips.sort((a,b) => a.title.localeCompare(b.title));
+  $("#clip-library").className = fields.mode === "list" ? "library-list" : "library-grid";
+  patchWorkspace("#clip-library", clips.map(libraryCard).join("") || '<p class="empty-card">No hay exportaciones que coincidan con la búsqueda.</p>');
+  if (workspaceView === "project-view") patchWorkspace("#project-exported-clips",
+    all.filter(clip => clip.project === state.id).map(libraryCard).join("") || '<p class="empty-card">Este proyecto aún no tiene exportaciones.</p>');
 }
 function renderStatistics(data) {
   const labels = {detected:"Detectados en Live",finished:"Exportaciones terminadas",rejected:"Rechazados",
@@ -213,17 +263,13 @@ function showWorkspace(view) {
   if (view === "clips-view") renderLibrary();
   if (view === "projects-view") refreshProjects().catch(error => notice(error.message, true));
   if (view === "trash-view") refreshTrash().catch(error => notice(error.message, true));
-  if (view === "settings-view") {
-    api("/api/telegram/status").then(data => {
-      $("#workspace-telegram-state").textContent = data.connection === "online" ? "Telegram conectado" :
-        data.settings.enabled ? "Telegram no disponible" : "Telegram desactivado";
-    }).catch(() => { $("#workspace-telegram-state").textContent = "Telegram no disponible"; });
-  }
+  if (view === "settings-view") settingsRoute(getPreference("settings-category","general"));
 }
 async function workspaceAction(action, key, job) {
   if (action === "open-project") return selectProject(key);
   if (action === "preview-clip") return showClipPreview(key);
   if (["rename-project","archive","unarchive","trash-project"].includes(action)) return manageProject(key, action);
+  if (action === "purge-asset") return purgeTrash(trashItems.filter(item => item.id === key));
   if (action === "restore-asset") {
     await api("/api/trash/restore",{id:key});
     await refreshTrash();
@@ -251,14 +297,16 @@ async function workspaceAction(action, key, job) {
     return;
   }
   if (action === "system") return $("#show-system").click();
-  if (action === "edit-clip") {
+  if (["edit-clip","publish-clip","plan-clip"].includes(action)) {
     const clip = workspaceData?.clips.find(item => item.project + "/" + item.filename === key);
-    if (clip) await openEditorial({project: clip.project, filename: clip.filename});
+    if (!clip) return;
+    if (await showClipEditor(clip) === false) return;
+    if (action !== "edit-clip") await publishFromClip(action === "publish-clip");
     return;
   }
-  if (action === "plan-clip" || action === "open-plan") {
+  if (action === "open-plan") {
     await openCalendar();
-    return action === "plan-clip" ? openCalendarDetail(null, key) : openCalendarDetail(key);
+    return openCalendarDetail(key);
   }
   if (action === "correction" && job) {
     if (!confirm("¿Solicitar una corrección para esta versión?")) return;
@@ -270,7 +318,8 @@ async function workspaceAction(action, key, job) {
     return;
   }
   if (action === "queue" || action === "job-detail") {
-    showWorkspace("home-view");
+    await settingsRoute("diagnostics");
+    $("#technical-jobs").open = true;
     if (job) {
       const detail = await api("/api/production/job?id=" + encodeURIComponent(job));
       showProductionDetail(detail);
@@ -280,10 +329,10 @@ async function workspaceAction(action, key, job) {
   }
   if (["review", "pending", "recommended"].includes(action)) {
     const clip = workspaceData?.clips.find(item => item.job === Number(job));
-    await openEditorial(clip);
-    $("#realtime-filter").value = action === "recommended" ? "recommended" : "all";
-    renderRealtime();
-    if (!clip) $("#realtime-heading").scrollIntoView({block:"start"});
+    if (clip) return showClipEditor(clip);
+    $("#clip-library-filter").value = action === "pending" ? "review" : "";
+    $("#clip-library-sort").value = "priority";
+    showWorkspace("clips-view");
   }
 }
 
@@ -298,13 +347,20 @@ for (const [button, view] of [["show-home","home-view"],["show-clips-library","c
   $("#" + button).addEventListener("click", () => showWorkspace(view));
 }
 $("#projects-filter").addEventListener("change", safe(refreshProjects));
-$("#brand-home").addEventListener("click", () => showWorkspace("home-view"));
+$("#brand-home").addEventListener("click", () => showWorkspace("clips-view"));
 $("#rail-toggle").addEventListener("click", () => {
   setPreference("collapsed", getPreference("collapsed") === "1" ? "0" : "1"); updateCollapsedRail();
 });
 $("#statistics-period").addEventListener("change", () => refreshWorkspace(true));
-for (const id of ["clip-library-query","clip-library-filter","clip-library-sort","clip-library-mode"]) {
-  $("#" + id).addEventListener(id.endsWith("query") ? "input" : "change", renderLibrary);
+for (const key of libraryFilters) {
+  const id = "clip-library-" + key;
+  const field = $("#" + id);
+  const saved = getPreference(id);
+  if (saved && key !== "project") field.value = saved;
+  field.addEventListener(key === "query" ? "input" : "change", () => {
+    setPreference(id,field.value);
+    renderLibrary();
+  });
 }
 $("#workspace-profile-form").addEventListener("submit", event => {
   event.preventDefault(); setPreference("profile", $("#workspace-profile-name").value.trim());
@@ -315,11 +371,67 @@ $("#workspace-reset-interface").addEventListener("click", () => {
   for (const key of ["profile", "collapsed", ...sessionPrefs]) setPreference(key, "");
   location.reload();
 });
-$("#settings-query").addEventListener("input", event => {
+const settingsViews = {"automation-view":"automation","ai-settings-view":"ai","watermark-view":"appearance",
+  "telegram-view":"integrations","trash-view":"storage","system-view":"diagnostics"};
+const settingsTriggers = {automation:"show-automation",ai:"show-ai-settings",appearance:"show-watermark",
+  integrations:"show-telegram",storage:"show-trash",diagnostics:"show-system"};
+const settingsNav = [...document.querySelectorAll("[data-setting]")];
+const settingsVideoKeys = {"new-aspect":"Formato de proyectos nuevos","live-aspect":"Formato Live","live-camera-mode":"Encuadre Live",
+  "live-max-height":"Resolución máxima Live","new-style":"Estilo de subtítulos","new-model":"Modelo de transcripción"};
+const settingsRows = [...$("#settings-categories").children];
+function settingsDisplay(category, view) {
+  setPreference("settings-category",category);
+  settingsNav.forEach(item => {
+    if (item.dataset.setting === category) item.setAttribute("aria-current","page");
+    else item.removeAttribute("aria-current");
+  });
+  $("#settings-breadcrumb").textContent = "Configuración / " + settingsNav.find(item => item.dataset.setting === category).textContent;
+  settingsRows.forEach(item => { item.hidden = item.dataset.settingPanel !== category; });
+  for (const item of settingsRows.filter(item => item.tagName === "DETAILS" && !item.hidden)) item.open = true;
+  for (const [id,key] of Object.entries({"settings-brand":"appearance","settings-tiktok":"integrations",
+    "settings-disk":"storage","settings-video":"video"})) $("#" + id).hidden = category !== key;
+  for (const section of $("#settings-embedded").children) section.hidden = section.id !== view;
+  if (category === "integrations") {
+    $("#settings-tiktok-controls").append($("#tiktok-account-controls"));
+    refreshPublications().catch(error => notice(error.message,true));
+  }
+  if (category === "storage") api("/api/system/status").then(data => {
+    $("#settings-disk-path").textContent = data.projects_dir || "Detalles de ocupación por elemento en la papelera.";
+  }).catch(() => {});
+}
+async function settingsRoute(category) {
+  if (settingsTriggers[category]) return $("#" + settingsTriggers[category]).click();
+  switchView("settings-view");
+  settingsDisplay(category);
+}
+function initSettings() {
+  for (const id of Object.keys(settingsViews)) $("#settings-embedded").append($("#" + id));
+  for (const item of settingsNav.filter(item => !settingsTriggers[item.dataset.setting])) item.addEventListener("click", () => settingsRoute(item.dataset.setting));
+  for (const [id,label] of Object.entries(settingsVideoKeys)) {
+    const input = $("#" + id);
+    const saved = getPreference(id);
+    if (saved && [...input.options].some(option => option.value === saved)) input.value = saved;
+    const copy = input.cloneNode(true);
+    copy.id = "config-" + id;
+    const node = document.createElement("label");
+    node.textContent = label;
+    node.append(copy);
+    $("#settings-video-fields").append(node);
+  }
+  $("#settings-video").addEventListener("submit",event => {
+    event.preventDefault();
+    for (const id of Object.keys(settingsVideoKeys)) {
+      const saved = $("#config-" + id).value;
+      $("#" + id).value = saved;
+      setPreference(id,saved);
+    }
+    notice("Preferencias de video guardadas.");
+  });
+}
+$("#settings-query").addEventListener("input",event => {
   const query = event.target.value.toLocaleLowerCase();
-  const rows = Array.from($("#settings-categories").children);
-  for (const row of rows) row.hidden = !row.textContent.toLocaleLowerCase().includes(query);
-  $("#settings-empty").hidden = rows.some(row => !row.hidden);
+  for (const item of settingsNav) item.hidden = !item.textContent.toLocaleLowerCase().includes(query);
+  $("#settings-empty").hidden = settingsNav.some(item => !item.hidden);
 });
 for (const id of sessionPrefs) {
   const field = $("#" + id);
@@ -360,30 +472,58 @@ document.addEventListener("keydown", event => {
     event.preventDefault(); workspaceDialog();
   }
 });
+const workspaceHashes = {"clips-view":"clips","projects-view":"proyectos","new-view":"proyecto-nuevo",
+  "live-view":"live","calendar-view":"calendario","publications-view":"publicaciones",
+  "home-view":"operaciones","statistics-view":"estadisticas","settings-view":"configuracion"};
+let restoringRoute = false;
+function recordStudioRoute(view) {
+  let hash = workspaceHashes[view];
+  if (settingsViews[view]) hash = "configuracion";
+  if (view === "project-view") hash = "proyecto/" + state.id;
+  if (view === "clip-editor-view" && clipEditor.clip) hash = "clip?" + new URLSearchParams({
+    project:clipEditor.clip.project, file:clipEditor.clip.filename, origin:clipEditor.origin
+  });
+  if (hash && location.hash !== "#" + hash && !restoringRoute) history.pushState(null,"","#" + hash);
+}
+async function restoreStudioRoute() {
+  const hash = location.hash.slice(1);
+  if (hash.startsWith("clip?")) {
+    const key = new URLSearchParams(hash.slice(5));
+    try {
+      if (key.get("origin") === "project-view" && /^[a-f0-9]{12}$/.test(key.get("project"))) await selectProject(key.get("project"));
+      await showClipEditor({project:key.get("project"),filename:key.get("file")},key.get("origin") || "clips-view");
+    } catch { showWorkspace("clips-view"); }
+  } else if (/^proyecto\/[a-f0-9]{12}$/.test(hash)) {
+    try { await selectProject(hash.slice(9)); } catch { showWorkspace("projects-view"); }
+  } else {
+    const view = Object.keys(workspaceHashes).find(id => workspaceHashes[id] === hash);
+    $("#" + (workspaceEntry[view] || "show-clips-library")).click();
+  }
+}
+window.addEventListener("popstate", safe(async () => {
+  restoringRoute = true;
+  try { await restoreStudioRoute(); } finally { restoringRoute = false; }
+}));
 window.addEventListener("studio-view", event => {
   workspaceView = event.detail;
+  if (workspaceView === "publications-view") $("#tiktok-local-account").append($("#tiktok-account-controls"));
   setPreference("view", workspaceView);
-  if (workspaceView === "project-view" && state.id) setPreference("project", state.id);
+  if (workspaceView === "project-view" && state.id) {setPreference("project", state.id); renderLibrary();}
   for (const button of document.querySelectorAll(".main-navigation button")) {
     if (button.id === workspaceViews[workspaceView]) button.setAttribute("aria-current","page");
     else button.removeAttribute("aria-current");
   }
-  if (["home-view","clips-view","calendar-view","statistics-view"].includes(workspaceView)) refreshWorkspace(true);
+  if (["home-view","clips-view","project-view","calendar-view","statistics-view"].includes(workspaceView)) refreshWorkspace(true);
 });
 document.addEventListener("DOMContentLoaded", () => {
+  initSettings();
   updateWorkspaceProfile(); updateCollapsedRail();
   $("#workspace-profile-name").value = getPreference("profile");
   if (studioNavigation || ["#live","#publicaciones"].includes(location.hash)) return;
-  const saved = getPreference("view","home-view");
   const project = getPreference("project");
-  if (saved === "project-view" && /^[a-f0-9]{12}$/.test(project)) {
-    studioConfig.then(() => {
-      if (!studioNavigation) return selectProject(project);
-    }).catch(() => { if (!studioNavigation) showWorkspace("projects-view"); });
-  } else {
-    if (project) state.id = project;
-    $("#" + (workspaceEntry[saved] || "show-home")).click();
-  }
+  if (/^[a-f0-9]{12}$/.test(project)) state.id = project;
+  if (!location.hash) showWorkspace("clips-view");
+  else studioConfig.then(restoreStudioRoute).catch(() => showWorkspace("clips-view"));
 });
 setInterval(() => {
   if (!document.hidden && ["home-view","clips-view","calendar-view","statistics-view"].includes(workspaceView)) refreshWorkspace();

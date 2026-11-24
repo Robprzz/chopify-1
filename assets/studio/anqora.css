@@ -267,3 +267,43 @@ summary.settings-heading:hover { background: #f7f9fd; border-radius: 14px; }
   #home-recent .home-clip { grid-template-columns: 65px minmax(0,1fr); }
   #home-recent .priority-actions { grid-column: 2; justify-content: flex-start; }
 }
+
+/* Clips and settings share the same work area. */
+.clip-editor-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 1rem;
+}
+.clip-editor-grid > * { min-width: 0; }
+.clip-editor-grid label, #calendar-form label { display: grid; gap: .35rem; margin-bottom: .65rem; }
+#calendar-form label.check:not([hidden]) { display: flex; align-items: baseline; }
+.clip-editor-grid input:not([type="file"]), .clip-editor-grid textarea, .clip-editor-grid select { width: 100%; }
+.clip-editor-grid details, #clip-subtitles, #technical-jobs { margin-block: .9rem; }
+#clip-preview-surface { position: relative; line-height: 0; background: #0d1730; border-radius: .65rem; overflow: hidden; width: fit-content; max-width: 100%; margin-inline: auto; }
+#clip-editor-video { width: auto; max-width: 100%; max-height: 58vh; }
+#clip-mark-preview { position: absolute; pointer-events: none; height: auto; }
+#clip-editor-feedback:empty { display: none; }
+#clip-editor-view h1 { display: inline-block; margin-inline-start: .75rem; vertical-align: middle; }
+#clip-copy-form { padding: 1.2rem; }
+.workspace-toolbar label { display: flex; gap: .45rem; align-items: center; }
+#project-exported-clips { margin-block-end: 1rem; }
+#settings-view:not([hidden]) { display: grid; grid-template-columns: minmax(11rem, 15rem) minmax(0, 1fr); gap: 1rem; align-items: start; }
+#settings-view > header { grid-column: 1 / -1; }
+.settings-subnav { display: grid; gap: .3rem; position: sticky; top: 1rem; }
+.settings-subnav button { text-align: start; padding: .65rem .8rem; }
+.settings-subnav button[aria-current] { background: #1a2a4b; color: #fff; }
+.settings-content, #settings-embedded { min-width: 0; }
+#settings-embedded .view { max-width: none; padding-inline: 0; }
+.settings-inline, #settings-categories { margin-block: .8rem; }
+#settings-brand img { width: min(100%, 18rem); }
+#asset-trash-list li { overflow-wrap: anywhere; }
+@media (max-width: 760px) {
+  .clip-editor-grid, #settings-view:not([hidden]) { grid-template-columns: minmax(0, 1fr); }
+  .settings-subnav { position: static; grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr)); }
+  #clip-editor-video { max-height: 44vh; }
+}
+.thumb video { display: block; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+.project-library { margin-block: 1rem 1.6rem; }
+#project-clip-detail:not(:empty) { margin-block: .75rem 1rem; }
+#project-view .pulse-frame { display: none; }

@@ -1,7 +1,7 @@
 "use strict";
 
 const calendarPlatforms = {tiktok:"TikTok", youtube:"YouTube Shorts", facebook:"Facebook Reels", instagram:"Instagram Reels"};
-const calendarStatuses = {draft:"Borrador", pending_review:"Pendiente de revisión", editorial_approved:"Aprobado editorialmente",
+const calendarStatuses = {draft:"Borrador", pending_review:"Borrador anterior", editorial_approved:"Borrador anterior",
   ready:"Listo para programar", scheduled:"Programado", requires_action:"Requiere acción", processing:"En proceso",
   published:"Publicado", failed:"Fallido", cancelled:"Cancelado"};
 const calendarPriorities = {urgent:"Urgente", high:"Alta", normal:"Normal", low:"Baja"};
@@ -13,6 +13,8 @@ let calendarBusy = false;
 let calendarDirty = false;
 let calendarPrefsInitialized = false;
 let calendarDetailRequest = 0;
+let calendarImmediate = false;
+let calendarAccount = "";
 
 const calendarApi = (action, body) => api("/api/calendar/" + action, body);
 function calendarLocal(seconds, zone, includeTime = true) {
@@ -26,7 +28,7 @@ function calendarDate(seconds) {
 }
 function planLabel(item) {
   return calendarStatuses[item.status] + (item.confirmation === "manual" ? " · confirmación manual" :
-    item.confirmation === "api" ? " · confirmado por TikTok" : "");
+    item.confirmation === "api" ? " · confirmado por TikTok" : item.platform === "tiktok" && item.publish_id ? " · buzón de TikTok" : "");
 }
 function calendarEntry(item, grid = false) {
   const preview = workspaceData?.clips.find(clip => clip.project === item.project && clip.filename === item.file);
@@ -65,12 +67,12 @@ function renderCalendar() {
     !["cancelled","published"].includes(row.status)).sort((a,b) => a.scheduled - b.scheduled).slice(0,8).map(item => calendarEntry(item)).join("") || "<p>Sin próximas programaciones.</p>");
   patchWorkspace("#calendar-drafts",filtered.filter(row => row.scheduled == null && row.status !== "cancelled").slice(0,12)
     .map(item => calendarEntry(item)).join("") || "<p>Sin tareas sin fecha.</p>");
-  const candidates = workspaceData?.priority || [];
-  const planned = new Set(plans.filter(item => item.status !== "cancelled").map(item => item.job));
+  const candidates = workspaceData?.clips || [];
+  const planned = new Set(plans.filter(item => item.status !== "cancelled").map(item => item.project + "/" + item.file));
   const shortcuts = items => items.slice(0,8).map(clip => `<button type="button" class="calendar-entry" data-workspace="plan-clip" data-key="${escapeHTML(clip.project + "/" + clip.filename)}">
-      <strong>${escapeHTML(clip.title)}</strong><small>${clip.level === "urgent" ? "Urgente · " : ""}${mediaDuration(clip.duration)} · ${clip.review === "approved" ? "Aprobado" : "Revisión editorial"}</small></button>`).join("");
-  patchWorkspace("#calendar-urgent",shortcuts(candidates.filter(clip => clip.level === "urgent" && !planned.has(clip.job))) || "<p>Sin clips urgentes por programar.</p>");
-  patchWorkspace("#calendar-unplanned",shortcuts(candidates.filter(clip => !planned.has(clip.job))) || "<p>Sin clips elegibles por programar.</p>");
+      <strong>${escapeHTML(clip.title)}</strong><small>${clip.level === "urgent" ? "Urgente · " : ""}${mediaDuration(clip.duration)} · </small></button>`).join("");
+  patchWorkspace("#calendar-urgent",shortcuts(candidates.filter(clip => clip.level === "urgent" && !planned.has(clip.project + "/" + clip.filename))) || "<p>Sin clips urgentes por programar.</p>");
+  patchWorkspace("#calendar-unplanned",shortcuts(candidates.filter(clip => !planned.has(clip.project + "/" + clip.filename))) || "<p>Sin clips elegibles por programar.</p>");
 }
 async function refreshCalendar() {
   const date = $("#calendar-date").value;
@@ -86,7 +88,9 @@ async function refreshCalendar() {
 }
 async function openCalendar() {
   switchView("calendar-view");
-  await Promise.all([refreshCalendar(), refreshWorkspace()]);
+  await Promise.all([refreshCalendar(), refreshWorkspace(), api("/api/tiktok/state", {}).then(response => {
+    calendarAccount = response.account || "";
+  }).catch(() => { calendarAccount = ""; })]);
 }
 function selectedCalendarClip(key) {
   return workspaceData?.clips.find(clip => clip.project + "/" + clip.filename === key);
@@ -103,23 +107,43 @@ async function fillCalendarClip(clip) {
   const serial = ++calendarDetailRequest;
   setCalendarPreview(clip?.url, clip?.thumbnail);
   if (!clip) return;
-  $("#calendar-title").value = String(clip.title).slice(0,160);
+  $("#calendar-title").value = String(clip.title).slice(0,100);
   $("#calendar-description").value = "";
   $("#calendar-tags").value = "";
   if (clip.level) $("#calendar-priority").value = clip.level;
-  if (clip.job) {
-    const copy = await api("/api/calendar-clip?job=" + clip.job);
-    if (serial !== calendarDetailRequest) return;
-    if (!$("#calendar-title").matches(":focus") && $("#calendar-title").value === String(clip.title).slice(0,160)) $("#calendar-title").value = copy.title;
-    if (!$("#calendar-description").matches(":focus") && !$("#calendar-description").value) $("#calendar-description").value = copy.description;
-    if (!$("#calendar-tags").matches(":focus") && !$("#calendar-tags").value) $("#calendar-tags").value = copy.hashtags.join(" ");
-  }
+  $("#calendar-caption").value = "";
+  const platform = $("#calendar-platform").value;
+  if (!platform) return;
+  const result = await api(clipQuery(clip.project,clip.filename,platform));
+  if (serial === calendarDetailRequest) fillPublishCopy(result.copy, calendarImmediate);
+}
+function fillPublishCopy(copy, now) {
+  $("#calendar-title").value = copy.title;
+  $("#calendar-description").value = copy.description;
+  $("#calendar-caption").value = copy.caption;
+  $("#calendar-tags").value = copy.hashtags.join(" ");
+  calendarMode(now);
+}
+function calendarMode(now) {
+  calendarImmediate = now;
+  const platform = $("#calendar-platform").value;
+  $("#calendar-platform-status").textContent = platform === "tiktok"
+    ? (calendarAccount ? "Cuenta: " + calendarAccount + ". " : "Sin cuenta conectada. ") + "TikTok permite enviar al buzón. La publicación directa no está habilitada."
+    : "Flujo manual: descarga el clip y copia el texto. Studio no puede publicar en esta plataforma.";
+  for (const id of ["calendar-local","calendar-local-zone"]) $("#" + id).closest("label").hidden = now;
+  $("#calendar-local").required = !now;
+  $("#calendar-suggest").hidden = now;
+  $("#calendar-inbox-consent-line").hidden = now || platform !== "tiktok" || !calendarAccount;
+  if (now || platform !== "tiktok" || !calendarAccount) $("#calendar-inbox-consent").checked = false;
+  $("#calendar-edit-tools button[type=submit]").textContent = now
+    ? platform === "tiktok" ? "Revisar envío al buzón" : "Preparar paquete manual" : "Guardar programación";
+  $("#calendar-detail-title").textContent = calendarDetail?.title || (now ? "Publicar ahora" : "Nueva programación");
 }
 function confirmCalendarEdits() {
   return !calendarDirty || confirm("¿Descartar los cambios sin guardar de esta programación?");
 }
-async function openCalendarDetail(id = null, key = null) {
-  if (!confirmCalendarEdits()) return;
+async function openCalendarDetail(id = null, key = null, immediate = false) {
+  if (!confirmCalendarEdits()) return false;
   calendarDirty = false;
   if (!calendarData) await refreshCalendar();
   const serial = ++calendarDetailRequest;
@@ -141,7 +165,7 @@ async function openCalendarDetail(id = null, key = null) {
   select.value = currentKey || "";
   $("#calendar-local-zone").value = zone;
   $("#calendar-local").value = detail?.scheduled == null ? "" : calendarLocal(detail.scheduled, zone);
-  $("#calendar-refresh-line").hidden = !(detail?.stale || detail?.can_link_production);
+  $("#calendar-refresh-line").hidden = !detail?.stale;
   $("#calendar-refresh-version").checked = false;
   $("#calendar-detail-title").textContent = detail ? detail.title : "Nueva programación";
   $("#calendar-detail-status").textContent = detail ? planLabel(detail) +
@@ -153,14 +177,12 @@ async function openCalendarDetail(id = null, key = null) {
   $("#calendar-edit-tools").hidden = readonly;
   for (const field of form.querySelectorAll("input, select, textarea")) field.disabled = readonly || (field === select && !!detail);
   const actions = [];
-  if (detail && !terminal) {
+  if (detail?.inbox_state === "claimed") $("#calendar-edit-tools").hidden = true;
+  if (detail && !terminal && detail.inbox_state !== "claimed") {
     if (!detail.external_id) {
       actions.push(["cancel", "Cancelar programación"]);
-      if (detail.job && !detail.current_approval) actions.push(["review", "Revisar en Automation"]);
-      if (detail.current_approval) {
-        if (detail.platform === "tiktok") actions.push(["prepare", "Abrir revisión de TikTok"]);
-        else actions.push(["prepare", "Preparar paquete manual"],["confirm", "Confirmar publicación manual"]);
-      }
+      if (detail.platform === "tiktok") actions.push(["prepare", "Revisar envío al buzón"]);
+      else actions.push(["prepare", "Preparar paquete manual"],["confirm", "Confirmar publicación manual"]);
     } else if (detail.status === "failed" && !detail.publish_id) actions.push(["retry", "Preparar un nuevo intento"]);
     if (detail.external_id) actions.push(["history", "Ver historial de TikTok"]);
   }
@@ -173,11 +195,14 @@ async function openCalendarDetail(id = null, key = null) {
     $("#calendar-priority").value = detail.priority;
     $("#calendar-title").value = detail.title;
     $("#calendar-description").value = detail.description;
+    $("#calendar-caption").value = detail.caption || "";
+    $("#calendar-inbox-consent").checked = detail.inbox_state === "pending";
     $("#calendar-tags").value = detail.hashtags.join(" ");
-    $("#calendar-ready").checked = detail.status === "ready";
     const fallback = clip?.url || "/media/" + detail.project + "/clips/" + encodeURIComponent(detail.file);
     setCalendarPreview(detail.stale ? null : fallback, clip?.thumbnail);
-  } else await fillCalendarClip(clip);
+  }
+  calendarMode(immediate || Boolean(detail && !detail.scheduled));
+  if (!detail) await fillCalendarClip(clip);
 }
 async function calendarMutation(operation) {
   if (calendarBusy) return;
@@ -204,7 +229,7 @@ function dateStep(step) {
 function copyPackage(item) {
   const clip = selectedCalendarClip(item.project + "/" + item.file);
   const name = item.file;
-  const payload = {platform:item.platform, title:item.title, description:item.description, hashtags:item.hashtags,
+  const payload = {platform:item.platform, title:item.title, caption:item.caption, description:item.description, hashtags:item.hashtags,
     scheduled_utc:item.scheduled == null ? null : new Date(item.scheduled*1000).toISOString(), clip:name};
   const metadata = document.createElement("a");
   metadata.href = URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}));
@@ -215,7 +240,15 @@ function copyPackage(item) {
   media.href = clip?.url || "/media/" + item.project + "/clips/" + encodeURIComponent(name);
   media.download = name;
   media.textContent = "Descargar MP4 original";
-  $("#calendar-actions").append(media);
+  const copy = document.createElement("button");
+  copy.type = "button";
+  copy.textContent = "Copiar texto";
+  copy.addEventListener("click",safe(async () => {
+    const text = [...new Set([item.title,item.caption,item.description,item.hashtags.join(" ")].filter(Boolean))].join("\n\n");
+    await navigator.clipboard.writeText(text);
+    notice("Texto copiado para la publicación manual.");
+  }));
+  $("#calendar-actions").append(media,copy);
 }
 for (const [key,label] of Object.entries(calendarPlatforms)) {
   $("#calendar-platform").add(new Option(label,key));
@@ -223,6 +256,8 @@ for (const [key,label] of Object.entries(calendarPlatforms)) {
 }
 for (const [key,label] of Object.entries(calendarStatuses)) $("#calendar-status-filter").add(new Option(label,key));
 $("#show-publications").addEventListener("click", safe(openCalendar));
+$("#tiktok-back").addEventListener("click",safe(openCalendar));
+$("#calendar-now").addEventListener("click", safe(() => openCalendarDetail(null,null,true)));
 $("#calendar-create").addEventListener("click", safe(() => openCalendarDetail()));
 $("#calendar-close-detail").addEventListener("click", () => {
   if (!confirmCalendarEdits()) return;
@@ -230,6 +265,10 @@ $("#calendar-close-detail").addEventListener("click", () => {
   ++calendarDetailRequest; $("#calendar-detail").hidden = true; setCalendarPreview(null);
 });
 $("#calendar-clip").addEventListener("change", safe(() => fillCalendarClip(selectedCalendarClip($("#calendar-clip").value))));
+$("#calendar-platform").addEventListener("change",safe(async () => {
+  calendarMode(calendarImmediate);
+  if (!calendarDirty) await fillCalendarClip(selectedCalendarClip($("#calendar-clip").value));
+}));
 $("#calendar-date").addEventListener("change",safe(refreshCalendar));
 for (const id of ["calendar-view-mode","calendar-platform-filter","calendar-status-filter"]) {
   $("#" + id).addEventListener("change",renderCalendar);
@@ -241,18 +280,22 @@ $("#calendar-form").addEventListener("submit", event => {
   event.preventDefault();
   calendarMutation(async () => {
     const clip = selectedCalendarClip($("#calendar-clip").value);
-    const when = $("#calendar-local").value;
+    const when = calendarImmediate ? "" : $("#calendar-local").value;
     if (calendarDetail?.scheduled && when !== calendarLocal(calendarDetail.scheduled, calendarDetail.zone)
         && !confirm("¿Cambiar la hora de esta programación?")) return;
     const saved = await calendarApi("save",{
       id:calendarDraftId, ...(calendarDetail ? {revision:calendarDetail.revision} :
-        {job:clip?.job || null, project:clip?.project, file:clip?.filename}),
+        {project:clip?.project, file:clip?.filename}),
       platform:$("#calendar-platform").value, priority:$("#calendar-priority").value,
-      title:$("#calendar-title").value, description:$("#calendar-description").value,
+      title:$("#calendar-title").value, caption:$("#calendar-caption").value, description:$("#calendar-description").value,
       hashtags:$("#calendar-tags").value.trim().split(/\s+/).filter(Boolean), local:when, zone:$("#calendar-local-zone").value,
-      ready:$("#calendar-ready").checked, refresh_version:$("#calendar-refresh-version").checked,
+      inbox_consent:!calendarImmediate && $("#calendar-inbox-consent").checked, refresh_version:$("#calendar-refresh-version").checked,
     });
     calendarDirty = false;
+    if (calendarImmediate) {
+      const result = await calendarApi("prepare",{id:saved.id,revision:saved.revision});
+      return prepareCalendarCopy(result);
+    }
     if (saved.scheduled != null) $("#calendar-date").value = calendarDate(saved.scheduled);
     $("#calendar-feedback").textContent = "Programación guardada.";
     await refreshCalendar();
@@ -272,21 +315,23 @@ $("#calendar-actions").addEventListener("click",event => {
   calendarMutation(async () => {
     const action = button.dataset.calendarAction;
     if (action === "history") return showPublications();
-    if (action === "review") return workspaceAction("review", null, calendarDetail.job);
     if (!confirmCalendarEdits()) return;
     calendarDirty = false;
     if (action === "cancel" && !confirm("¿Cancelar esta programación?")) return;
     if (action === "confirm" && !confirm("¿Confirmas que este clip ya está publicado en la plataforma indicada?")) return;
     const result = await calendarApi(action,{id:calendarDetail.id,revision:calendarDetail.revision,confirmed:action === "confirm"});
-    if (action === "prepare" && result.platform === "tiktok") {
-      return reviewPublicationClip(result.project + "/" + result.file,
-        [result.description,result.hashtags.join(" ")].filter(Boolean).join("\n\n"),result);
-    }
+    if (action === "prepare") return prepareCalendarCopy(result);
     await refreshCalendar();
     await openCalendarDetail(result.id);
-    if (action === "prepare") copyPackage(result);
   });
 });
+async function prepareCalendarCopy(result) {
+  if (result.platform === "tiktok") return reviewPublicationClip(result.project + "/" + result.file,
+    [...new Set([result.caption,result.description,result.hashtags.join(" ")].filter(Boolean))].join("\n\n"),result);
+  await refreshCalendar();
+  await openCalendarDetail(result.id);
+  copyPackage(result);
+}
 function fillCalendarPreferences(prefs) {
   calendarPrefsInitialized = true;
   $("#schedule-timezone").value = prefs.timezone;

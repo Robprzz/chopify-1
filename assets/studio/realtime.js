@@ -97,7 +97,7 @@ function renderRealtimeDetail(clip) {
 }
 
 async function refreshRealtime() {
-  if (realtimeBusy || ($("#editorial-view").hidden && $("#home-view").hidden)) return;
+  if (realtimeBusy || workspaceView !== "system-view" || !$("#technical-jobs").open) return;
   realtimeBusy = true;
   const error = $("#realtime-error");
   try {
@@ -118,8 +118,9 @@ async function applyRealtimeDecision(job, action) {
   await refreshRealtime();
 }
 window.addEventListener("studio-view", event => {
-  if (["home-view", "editorial-view"].includes(event.detail)) refreshRealtime();
+  if (event.detail === "system-view") refreshRealtime();
 });
+$("#technical-jobs").addEventListener("toggle",refreshRealtime);
 $("#realtime-filter").addEventListener("change", renderRealtime);
 $("#realtime-ranking").addEventListener("click", safe(async event => {
   const button = event.target.closest("button[data-realtime]");

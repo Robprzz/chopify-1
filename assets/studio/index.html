@@ -19,13 +19,14 @@
     <script src="/telegram.js" defer></script>
     <script src="/watermark.js" defer></script>
     <script src="/workspace.js" defer></script>
+    <script src="/clip-workspace.js" defer></script>
     <script src="/calendar.js" defer></script>
   </head>
   <body>
     <svg class="icon-defs" aria-hidden="true"><symbol id="icon-home" viewBox="0 0 24 24"><path d="m3 10 9-7 9 7v10H3z"/><path d="M9 20v-7h6v7"/></symbol><symbol id="icon-live" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2"/><path d="M7 8a7 7 0 0 0 0 8m10-8a7 7 0 0 1 0 8M4 5a11 11 0 0 0 0 14M20 5a11 11 0 0 1 0 14"/></symbol><symbol id="icon-clip" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="m10 8 6 4-6 4z"/></symbol><symbol id="icon-stack" viewBox="0 0 24 24"><path d="m3 7 9-4 9 4-9 4zm0 5 9 4 9-4M3 17l9 4 9-4"/></symbol><symbol id="icon-publish" viewBox="0 0 24 24"><path d="m22 3-7 18-4-8-8-3 19-7zM11 13 22 3"/></symbol><symbol id="icon-stats" viewBox="0 0 24 24"><path d="M3 21h18M5 17v-5h3v5zm6 0V8h3v9zm6 0V4h3v13z"/></symbol><symbol id="icon-config" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="m9 3-1 3-3 1-2 4 2 3v3l4 3 3-1 3 1 4-3v-3l2-3-2-4-3-1-1-3z"/></symbol><symbol id="icon-search" viewBox="0 0 24 24"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></symbol><symbol id="icon-bell" viewBox="0 0 24 24"><path d="M5 17h14l-2-3V9a5 5 0 0 0-10 0v5zm5 3a2 2 0 0 0 4 0"/></symbol><symbol id="icon-star" viewBox="0 0 24 24"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z"/></symbol><symbol id="icon-rail" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></symbol></svg>
     <aside class="rail">
-      <button id="brand-home" class="brand-home" aria-label="Inicio de Anqora Media Studio"><img class="brand-full" src="/anqora-logo" alt="Anqora Media Studio" /><img class="brand-mark" src="/anqora-symbol" alt="" /></button>
-      <nav class="main-navigation" aria-label="Menú principal"><button id="show-home" type="button" title="Centro de operaciones"><svg aria-hidden="true" class="ani-icon" viewBox="0 0 24 24"><use href="#icon-home"/></svg><span>Centro de operaciones</span></button><button id="show-live" type="button" title="Live Studio"><svg aria-hidden="true" class="ani-icon" viewBox="0 0 24 24"><use href="#icon-live"/></svg><span>Live Studio</span></button><button id="show-projects" type="button" title="Proyectos"><svg aria-hidden="true" class="ani-icon" viewBox="0 0 24 24"><use href="#icon-rail"/></svg><span>Proyectos</span></button><button id="show-clips-library" type="button" title="Clips"><svg aria-hidden="true" class="ani-icon" viewBox="0 0 24 24"><use href="#icon-clip"/></svg><span>Clips</span></button><button id="show-editorial" type="button" title="Revisión editorial"><svg aria-hidden="true" class="ani-icon" viewBox="0 0 24 24"><use href="#icon-stack"/></svg><span>Revisión editorial</span></button><button id="show-publications" type="button" title="Publicaciones"><svg aria-hidden="true" class="ani-icon" viewBox="0 0 24 24"><use href="#icon-publish"/></svg><span>Publicaciones</span></button><button id="show-statistics" type="button" title="Estadísticas"><svg aria-hidden="true" class="ani-icon" viewBox="0 0 24 24"><use href="#icon-stats"/></svg><span>Estadísticas</span></button><button id="show-settings" type="button" title="Configuración"><svg aria-hidden="true" class="ani-icon" viewBox="0 0 24 24"><use href="#icon-config"/></svg><span>Configuración</span></button></nav>
+      <button id="brand-home" class="brand-home" aria-label="Clips de Anqora Media Studio"><img class="brand-full" src="/anqora-logo" alt="Anqora Media Studio" /><img class="brand-mark" src="/anqora-symbol" alt="" /></button>
+      <nav class="main-navigation" aria-label="Menú principal"><button id="show-clips-library" type="button" title="Clips"><svg aria-hidden="true" class="ani-icon" viewBox="0 0 24 24"><use href="#icon-clip"/></svg><span>Clips</span></button><button id="show-projects" type="button" title="Proyectos"><svg aria-hidden="true" class="ani-icon" viewBox="0 0 24 24"><use href="#icon-rail"/></svg><span>Proyectos</span></button><button id="show-live" type="button" title="Live Studio"><svg aria-hidden="true" class="ani-icon" viewBox="0 0 24 24"><use href="#icon-live"/></svg><span>Live Studio</span></button><button id="show-publications" type="button" title="Publicaciones"><svg aria-hidden="true" class="ani-icon" viewBox="0 0 24 24"><use href="#icon-publish"/></svg><span>Publicaciones</span></button><button id="show-home" type="button" title="Centro de operaciones"><svg aria-hidden="true" class="ani-icon" viewBox="0 0 24 24"><use href="#icon-home"/></svg><span>Centro de operaciones</span></button><button id="show-statistics" type="button" title="Estadísticas"><svg aria-hidden="true" class="ani-icon" viewBox="0 0 24 24"><use href="#icon-stats"/></svg><span>Estadísticas</span></button><button id="show-settings" type="button" title="Configuración"><svg aria-hidden="true" class="ani-icon" viewBox="0 0 24 24"><use href="#icon-config"/></svg><span>Configuración</span></button></nav>
       <div class="system-indicator"><span class="system-light"></span><div><strong>Estado del sistema</strong><small id="rail-health">Estudio local</small></div></div>
     </aside>
     <main>
@@ -61,46 +62,11 @@
           </div>
           <aside class="home-side" aria-label="Resumen de operaciones">
             <section class="workspace-card"><h2>Progreso de hoy</h2><div class="daily-progress"><div class="progress-ring"><svg viewBox="0 0 112 112" aria-hidden="true"><circle cx="56" cy="56" r="47"/><circle id="progress-arc" cx="56" cy="56" r="47" pathLength="100" stroke-dasharray="0 100" /></svg><strong id="progress-percent">—</strong></div><div><strong id="progress-count">—</strong><p>Recomendaciones seleccionadas</p></div></div></section>
-            <section class="workspace-card quick-actions"><h2>Acciones rápidas</h2><button data-workspace="new-live">Iniciar captura <span>›</span></button><button data-workspace="queue">Ver cola de producción <span>›</span></button><button data-workspace="pending">Revisar pendientes <span>›</span></button></section>
+            <section class="workspace-card quick-actions"><h2>Acciones rápidas</h2><button data-workspace="new-live">Iniciar captura <span>›</span></button><button data-workspace="pending">Revisar pendientes <span>›</span></button></section>
             <section class="workspace-card"><h2>Actividad reciente</h2><ol class="activity-list" id="home-activity"></ol></section>
           </aside>
         </div>
         <section aria-labelledby="home-recent-heading"><h2 id="home-recent-heading">Clips recientes</h2><div id="home-recent" class="home-clips"></div></section>
-        <section class="panel input-panel production-panel" aria-labelledby="production-heading">
-          <div class="panel-title"><h2 id="production-heading">Cola de producción</h2></div>
-          <div class="publication-actions">
-            <button id="production-pause" type="button" disabled>Pausar cola</button>
-          </div>
-          <p id="production-status" role="status"></p>
-          <p id="production-error" role="alert" hidden></p>
-          <dl id="production-metrics" class="production-metrics"></dl>
-          <label>Filtrar clips <select id="production-filter">
-            <option value="all">Todos</option><option value="recommended">Recomendados</option>
-            <option value="review">Revisión requerida</option><option value="duplicate">Duplicados</option>
-            <option value="discarded">Descartados</option>
-          </select></label>
-          <div class="production-table-wrap">
-            <table>
-              <thead><tr><th scope="col">Clip</th><th scope="col">Estado</th><th scope="col">Detección</th><th scope="col">Editorial</th>
-                <th scope="col">Prioridad</th><th scope="col">Decisión y motivo</th><th scope="col">Acciones</th></tr></thead>
-              <tbody id="production-jobs"></tbody>
-            </table>
-          </div>
-          <details open><summary>Producción y espera estimada</summary><p id="realtime-queue"></p><ul id="realtime-pending"></ul></details>
-          <details><summary>Latencias medidas</summary><p id="realtime-bottlenecks"></p>
-            <div class="production-table-wrap"><table>
-              <thead><tr><th>Etapa</th><th>Muestras</th><th>Mediana</th><th>P95</th></tr></thead>
-              <tbody id="realtime-metrics"></tbody>
-            </table></div>
-          </details>
-          <p id="production-empty" hidden>Los clips terminados aparecerán aquí al entrar en la cola.</p>
-          <div class="publication-actions">
-            <button id="production-newest" type="button" hidden>Ver recientes</button>
-            <button id="production-older" type="button" hidden>Ver anteriores</button>
-          </div>
-          <div id="production-detail" hidden></div>
-          <details id="production-problems" hidden><summary>Errores recurrentes</summary><ul></ul></details>
-        </section>
       </section>
       <section id="projects-view" class="view workspace-view" hidden>
         <header class="section-heading"><div><h1>Proyectos</h1><p>Crea proyectos, vuelve a la edición o recupera un proyecto archivado.</p></div><button id="new-project" type="button" class="primary">Nuevo proyecto</button></header>
@@ -110,19 +76,25 @@
       </section>
       <section id="trash-view" class="view workspace-view" hidden>
         <header class="section-heading"><div><h1>Papelera</h1><p>Restaura proyectos y clips. Los originales se conservan en el almacenamiento local.</p></div></header>
-        <div id="asset-trash-list" class="project-list"></div>
+        <p id="trash-summary" role="status"></p><button id="trash-empty" type="button">Vaciar papelera</button><div id="asset-trash-list" class="project-list"></div>
       </section>
-      <section id="clips-view" class="view workspace-view" hidden>
+      <section id="clips-view" class="view workspace-view">
         <header class="section-heading"><div><h1>Clips</h1><p>Busca, reproduce y prepara tus exportaciones.</p></div></header>
         <div class="workspace-toolbar"><input id="clip-library-query" type="search" aria-label="Buscar clips" placeholder="Buscar clips…" />
         <select id="clip-library-filter" aria-label="Estado de clips"><option value="">Todos los estados</option><option value="ready">Listos para revisión</option><option value="review">Revisión pendiente</option><option value="urgent">Urgentes</option><option value="rejected">Rechazados</option></select>
         <select id="clip-library-sort" aria-label="Ordenar clips"><option value="recent">Más recientes</option><option value="priority">Prioridad</option><option value="title">Título</option></select>
         <select id="clip-library-mode" aria-label="Vista de clips"><option value="grid">Tarjetas</option><option value="list">Lista</option></select></div>
+        <div class="workspace-toolbar">
+          <label>Proyecto <select id="clip-library-project"><option value="">Todos</option></select></label>
+          <label>Origen <select id="clip-library-origin"><option value="">Todos</option><option value="project">Proyectos</option><option value="live">Live</option></select></label>
+          <label>Formato <select id="clip-library-format"><option value="">Todos</option><option>9:16</option><option>16:9</option><option>1:1</option></select></label>
+          <label>Desde <input id="clip-library-date" type="date" /></label>
+        </div>
         <div id="clip-library" class="library-grid"></div>
 
       </section>
       <section id="calendar-view" class="view workspace-view" hidden>
-        <header class="section-heading"><div><h1>Calendario editorial</h1><p>Organiza, revisa y gestiona tu contenido.</p></div><button id="calendar-create" type="button" class="primary">Nueva programación</button></header>
+        <header class="section-heading"><div><h1>Publicaciones</h1><p>Organiza, revisa y gestiona tu contenido.</p></div><div class="publication-actions"><button id="calendar-tiktok" type="button">Buzón e historial de TikTok</button><button id="calendar-now" type="button" class="primary">Publicar ahora</button><button id="calendar-create" type="button">Programar</button></div></header>
         <div class="workspace-toolbar">
           <button id="calendar-previous" type="button" aria-label="Período anterior">‹</button>
           <input type="date" id="calendar-date" aria-label="Fecha del calendario" />
@@ -149,13 +121,13 @@
             <form id="calendar-form">
               <label>Clip<select id="calendar-clip" required></select></label>
               <label>Título<input id="calendar-title" maxlength="160" required /></label>
-              <label>Descripción<textarea id="calendar-description" maxlength="2200" rows="3"></textarea></label>
+              <label>Caption de publicación<textarea id="calendar-caption" rows="3"></textarea></label><label>Descripción<textarea id="calendar-description" maxlength="2200" rows="3"></textarea></label>
               <label>Hashtags<input id="calendar-tags" placeholder="#tema #serie" /></label>
               <div class="form-grid"><label>Plataforma<select id="calendar-platform" required></select></label>
               <label>Prioridad<select id="calendar-priority"><option value="normal">Normal</option><option value="urgent">Urgente</option><option value="high">Alta</option><option value="low">Baja</option></select></label></div>
               <label>Fecha y hora<input type="datetime-local" id="calendar-local" /></label>
               <label>Zona horaria<input id="calendar-local-zone" required /></label>
-              <label class="check"><input type="checkbox" id="calendar-ready" /> Marcar lista para programar</label>
+              <label class="check" id="calendar-inbox-consent-line" hidden><input type="checkbox" id="calendar-inbox-consent" /> Programar entrega al buzón. Autorizo el envío de este clip a la cuenta indicada si Studio está abierto.</label><p id="calendar-platform-status" class="muted"></p>
               <label class="check" id="calendar-refresh-line" hidden><input type="checkbox" id="calendar-refresh-version" /> Actualizar a la versión vigente del clip</label>
               <div id="calendar-edit-tools" class="publication-actions">
                 <button type="submit" class="primary">Guardar programación</button><button id="calendar-suggest" type="button">Sugerir horario</button></div>
@@ -173,25 +145,35 @@
       </section>
       <section id="settings-view" class="view workspace-view" hidden>
         <header class="section-heading"><div><h1>Configuración</h1><p>Preferencias del espacio y herramientas de Studio.</p></div></header>
+        <nav class="settings-subnav" aria-label="Categorías de configuración">
+          <button type="button" data-setting="general">General</button>
+          <button type="button" id="show-automation" data-setting="automation">Automatización</button>
+          <button type="button" id="show-ai-settings" data-setting="ai">Inteligencia artificial</button>
+          <button type="button" data-setting="video">Video y exportación</button>
+          <button type="button" id="show-watermark" data-setting="appearance">Apariencia y marca</button>
+          <button type="button" data-setting="publishing">Publicaciones</button>
+          <button type="button" id="show-telegram" data-setting="integrations">Cuentas e integraciones</button>
+          <button type="button" id="show-trash" data-setting="storage">Almacenamiento y papelera</button>
+          <button type="button" id="show-system" data-setting="diagnostics">Diagnósticos</button>
+        </nav>
+        <div class="settings-content"><p id="settings-breadcrumb" class="muted"></p>
         <input type="search" id="settings-query" aria-label="Buscar ajustes" placeholder="Buscar ajustes…" />
         <div id="settings-categories" class="settings-categories">
-          <details class="settings-row"><summary class="settings-heading"><svg aria-hidden="true" class="ani-icon"><use href="#icon-home"/></svg><span class="settings-label"><strong>General</strong><span>Nombre de perfil y preferencias de interfaz.</span></span><span class="settings-chevron" aria-hidden="true">›</span></summary><div class="settings-body"><form id="workspace-profile-form"><label>Nombre de perfil (opcional)<input id="workspace-profile-name" maxlength="60" /></label><button>Guardar perfil</button><button type="button" id="workspace-reset-interface">Restaurar preferencias de interfaz</button></form></div></details>
-          <section class="settings-row settings-link-row" aria-label="Live Studio"><div class="settings-heading"><svg aria-hidden="true" class="ani-icon"><use href="#icon-live"/></svg><span class="settings-label"><strong>Live Studio</strong><span>Captura, encuadre y resolución.</span></span></div><div class="settings-actions"><button data-workspace="live-settings">Preferencias y resolución Live</button></div></section>
-          <section class="settings-row settings-link-row" aria-label="Inteligencia artificial"><div class="settings-heading"><svg aria-hidden="true" class="ani-icon"><use href="#icon-star"/></svg><span class="settings-label"><strong>Inteligencia artificial</strong><span>Motor editorial y modelos locales.</span></span></div><div class="settings-actions"><button id="show-ai-settings" type="button">Motor editorial y modelos</button></div></section>
-          <section class="settings-row settings-link-row" aria-label="Edición y subtítulos"><div class="settings-heading"><svg aria-hidden="true" class="ani-icon"><use href="#icon-clip"/></svg><span class="settings-label"><strong>Edición y subtítulos</strong><span>Marca de agua y correcciones de clips.</span></span></div><div class="settings-actions"><button id="show-watermark">Marca de agua</button><button data-workspace="editing">Clips y corrección de subtítulos</button></div></section>
-          <section class="settings-row settings-link-row" aria-label="Automation"><div class="settings-heading"><svg aria-hidden="true" class="ani-icon"><use href="#icon-stack"/></svg><span class="settings-label"><strong>Automation</strong><span>Umbral, ranking y recomendaciones.</span></span></div><div class="settings-actions"><button id="show-automation" type="button">Reglas de Automation</button></div></section>
-          <details class="settings-row"><summary class="settings-heading"><svg aria-hidden="true" class="ani-icon"><use href="#icon-publish"/></svg><span class="settings-label"><strong>Publicaciones</strong><span>Horario, frecuencia y separación entre publicaciones.</span></span><span class="settings-chevron" aria-hidden="true">›</span></summary><div class="settings-body"><form id="calendar-preferences">
+          <details class="settings-row" data-setting-panel="general"><summary class="settings-heading"><svg aria-hidden="true" class="ani-icon"><use href="#icon-home"/></svg><span class="settings-label"><strong>General</strong><span>Nombre de perfil y preferencias de interfaz.</span></span><span class="settings-chevron" aria-hidden="true">›</span></summary><div class="settings-body"><form id="workspace-profile-form"><label>Nombre de perfil (opcional)<input id="workspace-profile-name" maxlength="60" /></label><button>Guardar perfil</button><button type="button" id="workspace-reset-interface">Restaurar preferencias de interfaz</button></form></div></details>
+          <details class="settings-row" data-setting-panel="publishing"><summary class="settings-heading"><svg aria-hidden="true" class="ani-icon"><use href="#icon-publish"/></svg><span class="settings-label"><strong>Publicaciones</strong><span>Horario, frecuencia y separación entre publicaciones.</span></span><span class="settings-chevron" aria-hidden="true">›</span></summary><div class="settings-body"><form id="calendar-preferences">
             <label>Zona horaria IANA<input id="schedule-timezone" required /></label>
             <label>Programaciones por día y plataforma<input id="schedule-daily" type="number" min="1" max="24" required /></label>
             <label>Intervalo mínimo en minutos<input id="schedule-interval" type="number" min="1" max="1440" required /></label>
             <label>Horarios preferidos, separados por comas<input id="schedule-hours" required /></label>
             <button type="submit">Guardar preferencias</button><button id="schedule-reset" type="button">Restaurar horarios predeterminados</button>
           </form></div></details>
-          <section class="settings-row settings-link-row" aria-label="Integraciones"><div class="settings-heading"><svg aria-hidden="true" class="ani-icon"><use href="#icon-search"/></svg><span class="settings-label"><strong>Integraciones</strong><span>Cuentas de TikTok y Telegram.</span></span></div><div class="settings-actions"><button id="show-tiktok">TikTok</button><button id="show-telegram">Telegram</button><p id="workspace-telegram-state" class="muted"></p></div></section>
-          <section class="settings-row settings-link-row" aria-label="Almacenamiento"><div class="settings-heading"><svg aria-hidden="true" class="ani-icon"><use href="#icon-rail"/></svg><span class="settings-label"><strong>Almacenamiento</strong><span>Carpetas y archivos locales.</span></span></div><div class="settings-actions"><button data-workspace="system">Carpetas y archivos locales</button><button id="show-trash" type="button">Papelera y recuperación</button></div></section>
-          <section class="settings-row settings-link-row" aria-label="Diagnósticos"><div class="settings-heading"><svg aria-hidden="true" class="ani-icon"><use href="#icon-stats"/></svg><span class="settings-label"><strong>Diagnósticos</strong><span>Comprueba el estado de Studio y sus herramientas.</span></span></div><div class="settings-actions"><button id="show-system">System Settings</button></div></section>
         </div>
         <p id="settings-empty" role="status" hidden>No se encontraron ajustes.</p>
+        <div id="settings-brand" class="workspace-card settings-inline" hidden><h2>Identidad de Studio</h2><img src="/anqora-logo" alt="Anqora Media Studio" /><p>La marca de agua de los videos se configura por separado.</p></div>
+        <div id="settings-tiktok" class="workspace-card settings-inline" hidden><h2>TikTok</h2><div id="settings-tiktok-controls"></div></div>
+        <form id="settings-video" class="workspace-card settings-inline" hidden><h2>Video y exportación</h2><div class="form-grid" id="settings-video-fields"></div><button class="primary">Guardar valores predeterminados</button></form>
+        <section id="settings-disk" class="workspace-card settings-inline" hidden><h2>Almacenamiento local</h2><p id="settings-disk-path"></p></section>
+        <div id="settings-embedded"></div></div>
       </section>
       <section id="telegram-view" class="view" hidden>
         <div class="intro"><h1>Telegram Control Center</h1></div>
@@ -405,20 +387,22 @@
       </section>
       <section id="publications-view" class="view" lang="es" hidden>
         <div class="panel">
-          <div class="panel-title"><h1>Publicaciones</h1><span>TikTok</span></div>
-          <p id="tiktok-account" role="status">Sin cuenta conectada</p>
+          <div class="panel-title"><h1>Buzón e historial de TikTok</h1><button id="tiktok-back" type="button">Volver al calendario</button></div>
+          <p class="muted">Publicación directa no disponible. Studio puede entregar al buzón de TikTok.</p>
+          <div id="tiktok-local-account"></div><button id="tiktok-manage-account" type="button">Gestionar cuenta</button>
+          <div id="tiktok-account-controls"><p id="tiktok-account" role="status">Sin cuenta conectada</p>
           <div class="publication-actions">
             <button id="tiktok-connect" type="button" disabled>Conectar TikTok</button>
             <button id="tiktok-disconnect" type="button" hidden>Desconectar</button>
             <button id="tiktok-privacy-check" type="button" hidden>Consultar privacidad de la cuenta</button>
           </div>
-          <p id="tiktok-privacy" class="muted" aria-live="polite">Elige la privacidad al finalizar en TikTok.</p>
+          <p id="tiktok-privacy" class="muted" aria-live="polite">Elige la privacidad al finalizar en TikTok.</p></div>
         </div>
         <form id="tiktok-form" class="panel" autocomplete="off">
           <div class="panel-title"><h2>Revisar un clip</h2></div>
           <label for="tiktok-clip">Exportación MP4</label>
           <select id="tiktok-clip" required><option value="">Elige un clip</option></select>
-          <button id="tiktok-editorial" type="button">Abrir en AI Engine</button>
+          <button id="tiktok-editorial" type="button">Volver al editor del clip</button>
           <div id="tiktok-review" class="publication-review" hidden>
             <video id="tiktok-preview" controls preload="metadata" playsinline aria-label="Vista previa del clip"></video>
             <div>
@@ -609,38 +593,60 @@
           </form>
         </section>
       </section>
-      <section id="editorial-view" class="view" lang="es" hidden>
-        <div class="intro"><h1>Revisión editorial</h1></div>
-        <p id="editorial-review-error" role="alert" hidden></p>
-        <section class="panel input-panel production-panel" aria-labelledby="realtime-heading">
-          <div class="panel-title"><h2 id="realtime-heading">Prioridades editoriales</h2></div>
-          <p id="realtime-summary" role="status"></p>
-          <p id="realtime-error" role="alert" hidden></p>
-          <label>Mostrar <select id="realtime-filter">
-            <option value="all">Clips elegibles</option><option value="urgent">Urgentes</option>
-            <option value="recommended">Recomendaciones de hoy</option>
-          </select></label>
-          <div class="production-table-wrap">
-            <table>
-              <thead><tr><th>Clip y estado</th><th>Antigüedad</th><th>Detección</th><th>Editorial</th>
-                <th>Calidad original</th><th>Prioridad temporal</th><th>Acciones</th></tr></thead>
-              <tbody id="realtime-ranking"></tbody>
-            </table>
+      <section id="clip-editor-view" class="view workspace-view" hidden>
+        <header class="section-heading"><div><button id="clip-editor-back" type="button">Volver</button><h1>Editar clip</h1></div></header>
+        <p id="clip-editor-feedback" role="status"></p>
+        <div class="clip-editor-grid">
+          <div class="workspace-card clip-preview-card">
+            <div id="clip-preview-surface"><video id="clip-editor-video" controls playsinline preload="metadata" aria-label="Vista previa del clip"></video><img id="clip-mark-preview" alt="Marca de agua de la próxima exportación" hidden /></div>
+            <p id="clip-editor-media" class="muted"></p>
+            <details><summary>Portada y marca de agua</summary>
+              <p class="muted">La portada se usa en Studio. La marca se aplica a una nueva versión del video.</p>
+              <form id="clip-art-form">
+                <label>Cambiar portada PNG<input id="clip-cover-input" type="file" accept="image/png,.png" /></label>
+                <button id="clip-cover-remove" type="button">Restaurar miniatura automática</button>
+                <label>Marca de agua<select id="clip-mark-mode"><option value="global">Usar marca global</option><option value="custom">Personalizada</option><option value="none">Quitar marca de agua</option></select></label>
+                <div id="clip-mark-controls" hidden>
+                  <label>Imagen PNG<input id="clip-mark-input" type="file" accept="image/png,.png" /></label>
+                  <label>Posición<select name="position"><option value="top-left">Superior izquierda</option><option value="top-right">Superior derecha</option><option value="bottom-left">Inferior izquierda</option><option value="bottom-right">Inferior derecha</option><option value="center">Centro</option></select></label>
+                  <label>Tamaño (%)<input name="size" type="number" min="5" max="40" value="15" /></label>
+                  <label>Opacidad (%)<input name="opacity" type="number" min="1" max="100" value="100" /></label>
+                  <label>Margen (%)<input name="margin" type="number" min="0" max="20" value="3" /></label>
+                </div>
+                <button type="submit">Guardar portada y marca</button>
+              </form>
+            </details>
+            <details><summary>Formato y nueva exportación</summary>
+              <label>Formato<select id="clip-render-aspect"><option>9:16</option><option>16:9</option><option>1:1</option></select></label>
+              <button id="clip-reexport" type="button">Exportar nueva versión</button>
+            </details>
           </div>
-          <form id="realtime-event" hidden>
-            <h3 id="realtime-event-title">Hora del acontecimiento</h3>
-            <label><input id="realtime-evergreen" type="checkbox" /> Contenido atemporal</label>
-            <label>Fecha y hora verificadas (zona local del navegador)
-              <input id="realtime-event-at" type="datetime-local" />
-            </label>
-            <button type="submit">Guardar referencia</button>
-            <button id="realtime-event-close" type="button">Cerrar</button>
+          <form id="clip-copy-form" class="workspace-card">
+            <label>Plataforma<select id="clip-platform"><option value="tiktok">TikTok</option><option value="facebook">Facebook Reels</option><option value="instagram">Instagram Reels</option><option value="youtube">YouTube Shorts</option></select></label>
+            <label>Título<input name="title" required /></label>
+            <label>Caption de publicación<textarea name="caption" rows="4"></textarea></label>
+            <label>Descripción<textarea name="description" rows="2"></textarea></label>
+            <label>Hashtags<input name="hashtags" placeholder="#tema" /></label>
+            <div class="publication-actions">
+              <button id="clip-generate" type="button">Regenerar caption con IA</button>
+              <button type="submit" class="primary">Guardar</button>
+              <button id="clip-publish" type="button">Publicar ahora</button>
+              <button id="clip-schedule" type="button">Programar</button>
+            </div>
+            <details><summary>Historial de captions y archivos</summary>
+              <label>Versión anterior<select id="clip-copy-history"></select></label>
+              <button id="clip-copy-restore" type="button">Restaurar caption</button>
+              <a id="clip-download" download>Descargar MP4</a>
+              <button id="clip-trash" type="button">Enviar a la papelera</button>
+            </details>
           </form>
-          <div id="realtime-detail" hidden></div>
+        </div>
+        <details id="clip-subtitles"><summary>Subtítulos del video y herramientas anteriores</summary>
+      <div id="editorial-view" lang="es" hidden>
 
-        </section>
+        <p id="editorial-review-error" role="alert" hidden></p>
         <section class="panel input-panel editorial-panel">
-          <div class="panel-title"><h2>Propuestas editoriales</h2></div>
+          <div class="panel-title"><h2>Subtítulos y versiones editoriales anteriores</h2></div>
           <div class="form-grid">
             <label>Clip terminado<select id="editorial-clip"><option value="">Todos los clips</option></select></label>
             <label>Perfil de generación<select id="editorial-platform">
@@ -693,6 +699,8 @@
           <button id="editorial-older" type="button" hidden>Ver versiones anteriores</button>
           <div id="editorial-result" aria-live="polite"></div>
         </section>
+      </div>
+        </details>
       </section>
       <section id="project-view" class="view" hidden>
         <div class="project-heading">
@@ -702,12 +710,26 @@
             <p id="project-source" class="muted"></p>
             <div id="detection-banner" class="detection-banner" hidden></div>
           </div>
-          <span id="status" class="status"></span>
+          <div><span id="status" class="status"></span><p id="project-created" class="muted"></p></div>
+          <div class="publication-actions">
+            <button id="project-continue" type="button">Continuar procesamiento</button>
+            <button id="project-new-clip" type="button">Nuevo clip</button>
+            <details><summary>Administrar proyecto</summary><div class="publication-actions">
+              <button type="button" data-project-manage="rename-project">Renombrar</button>
+              <button type="button" data-project-manage="archive">Archivar</button>
+              <button type="button" data-project-manage="trash-project">Enviar proyecto a la papelera</button>
+            </div></details>
+          </div>
           <div class="pulse-frame" aria-hidden="true">
             <canvas id="job-pulse" width="1200" height="92"></canvas>
           </div>
         </div>
         <p id="job-error" role="alert" hidden></p>
+        <section class="project-library" aria-labelledby="project-library-heading">
+          <h2 id="project-library-heading">Clips exportados</h2>
+          <div id="project-clip-detail"></div>
+          <div id="project-exported-clips" class="library-grid"></div>
+        </section>
         <div class="workspace">
           <div class="review-column">
             <div class="player-wrap">
@@ -729,10 +751,10 @@
                 <button id="show-clips" aria-pressed="true">
                   Clips candidatos <span id="candidate-count">0</span></button
                 ><button id="show-transcript" aria-pressed="false">
-                  Transcript
+                  Transcripción
                 </button
                 ><button id="show-captions" aria-pressed="false">
-                  Captions
+                  Subtítulos
                 </button>
               </div>
               <button id="prepare">Buscar o actualizar clips</button>
@@ -790,7 +812,7 @@
             </div>
             <section class="outputs">
               <div class="panel-title">
-                <h2>Clips exportados</h2>
+                <h2>Previsualizaciones de candidatos</h2>
                 <span id="output-count">0 FILES</span>
               </div>
               <div id="outputs">
@@ -1241,7 +1263,8 @@
             <button id="wizard-next" type="button" class="primary">Siguiente</button>
             <button id="wizard-finish" type="button">Terminar configuración</button>
           </div>
-        </section>
+
+      </section>
         <form class="panel input-panel system-section" id="system-general" autocomplete="off">
           <h2>General</h2>
           <p id="system-projects-current"></p>
@@ -1331,6 +1354,70 @@
             <button type="button" data-system-shutdown="cancel">Cerrar y cancelar trabajos activos</button>
           </div>
         </section>
+          <details id="technical-jobs"><summary>Diagnósticos de procesamiento</summary>
+        <section class="panel input-panel production-panel" aria-labelledby="realtime-heading">
+          <div class="panel-title"><h2 id="realtime-heading">Prioridades editoriales</h2></div>
+          <p id="realtime-summary" role="status"></p>
+          <p id="realtime-error" role="alert" hidden></p>
+          <label>Mostrar <select id="realtime-filter">
+            <option value="all">Clips elegibles</option><option value="urgent">Urgentes</option>
+            <option value="recommended">Recomendaciones de hoy</option>
+          </select></label>
+          <div class="production-table-wrap">
+            <table>
+              <thead><tr><th>Clip y estado</th><th>Antigüedad</th><th>Detección</th><th>Editorial</th>
+                <th>Calidad original</th><th>Prioridad temporal</th><th>Acciones</th></tr></thead>
+              <tbody id="realtime-ranking"></tbody>
+            </table>
+          </div>
+          <form id="realtime-event" hidden>
+            <h3 id="realtime-event-title">Hora del acontecimiento</h3>
+            <label><input id="realtime-evergreen" type="checkbox" /> Contenido atemporal</label>
+            <label>Fecha y hora verificadas (zona local del navegador)
+              <input id="realtime-event-at" type="datetime-local" />
+            </label>
+            <button type="submit">Guardar referencia</button>
+            <button id="realtime-event-close" type="button">Cerrar</button>
+          </form>
+          <div id="realtime-detail" hidden></div>
+
+        </section>
+        <section class="panel input-panel production-panel" aria-labelledby="production-heading">
+          <div class="panel-title"><h2 id="production-heading">Cola de producción</h2></div>
+          <div class="publication-actions">
+            <button id="production-pause" type="button" disabled>Pausar cola</button>
+          </div>
+          <p id="production-status" role="status"></p>
+          <p id="production-error" role="alert" hidden></p>
+          <dl id="production-metrics" class="production-metrics"></dl>
+          <label>Filtrar clips <select id="production-filter">
+            <option value="all">Todos</option><option value="recommended">Recomendados</option>
+            <option value="review">Revisión requerida</option><option value="duplicate">Duplicados</option>
+            <option value="discarded">Descartados</option>
+          </select></label>
+          <div class="production-table-wrap">
+            <table>
+              <thead><tr><th scope="col">Clip</th><th scope="col">Estado</th><th scope="col">Detección</th><th scope="col">Editorial</th>
+                <th scope="col">Prioridad</th><th scope="col">Decisión y motivo</th><th scope="col">Acciones</th></tr></thead>
+              <tbody id="production-jobs"></tbody>
+            </table>
+          </div>
+          <details open><summary>Producción y espera estimada</summary><p id="realtime-queue"></p><ul id="realtime-pending"></ul></details>
+          <details><summary>Latencias medidas</summary><p id="realtime-bottlenecks"></p>
+            <div class="production-table-wrap"><table>
+              <thead><tr><th>Etapa</th><th>Muestras</th><th>Mediana</th><th>P95</th></tr></thead>
+              <tbody id="realtime-metrics"></tbody>
+            </table></div>
+          </details>
+          <p id="production-empty" hidden>Los clips terminados aparecerán aquí al entrar en la cola.</p>
+          <div class="publication-actions">
+            <button id="production-newest" type="button" hidden>Ver recientes</button>
+            <button id="production-older" type="button" hidden>Ver anteriores</button>
+          </div>
+          <div id="production-detail" hidden></div>
+          <details id="production-problems" hidden><summary>Errores recurrentes</summary><ul></ul></details>
+        </section>
+        </details>
       </section>
       <footer>
         Anqora Media Studio <span>Espacio de trabajo local</span>

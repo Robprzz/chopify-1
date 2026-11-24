@@ -273,7 +273,8 @@ def test_live_clip_reaches_publications_in_chromium(server, chromium_page, monke
             assert app.app.live_sessions == {session: active}
             assert active.stream_time >= time_before_navigation
             assert live_writes == []
-            page.get_by_role("button", name="Publicaciones", exact=True).click()
+            page.locator("#show-publications").click()
+            page.locator("#calendar-tiktok").click()
             page.get_by_role("button", name="Live Studio").click()
             expect(link).to_have_attribute("href", mp4)
             page.evaluate("() => localStorage.setItem('chopify.live.selected', 'expired')")
@@ -297,8 +298,8 @@ def test_live_clip_reaches_publications_in_chromium(server, chromium_page, monke
             expect(link).to_have_attribute("href", mp4)
         exports = app.app.root / "live" / session / "clips"
         (exports / "partial.mp4").write_bytes(b"unfinished")
-        page.locator("#show-settings").click()
-        page.locator("#show-tiktok").click()
+        page.locator("#show-publications").click()
+        page.locator("#calendar-tiktok").click()
         select = page.locator("#tiktok-clip")
         expect(select.locator("option")).to_have_count(2)
         select.select_option("0")

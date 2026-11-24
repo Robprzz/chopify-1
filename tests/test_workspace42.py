@@ -13,6 +13,7 @@ from uuid import uuid4
 import pytest
 
 import asset_lifecycle
+import dashboard
 import projects
 from test_dashboard import request, running_server, server  # noqa: F401
 from test_studio_navigation import chromium_page  # noqa: F401
@@ -90,7 +91,16 @@ def test_replacement_artwork_and_version_do_not_modify_original(tmp_path):
         assert float(video["duration"]) == pytest.approx(3, abs=.06)
 
 
-def test_recovery_and_permanent_delete_protect_shared_files(tmp_path):
+def test_recovery_and_permanent_delete_protect_shared_files(tmp_path, monkeypatch):
+    send_json = dashboard.Handler.send_json
+
+    def slow_cleanup(handler, payload, status=200):
+        response = send_json(handler, payload, status)
+        if status == 400 and handler.path == "/api/trash/purge":
+            time.sleep(.08)
+        return response
+
+    monkeypatch.setattr(dashboard.Handler, "send_json", slow_cleanup)
     project, media = fixture_media(tmp_path)
     other = projects.create_project(tmp_path, str(media), {})["id"]
     with running_server(tmp_path) as (httpd, base):

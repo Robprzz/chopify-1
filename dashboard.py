@@ -184,6 +184,7 @@ class Studio:
         self.installation = installation
         self.identity = installation.identity() if installation else None
         self.active_requests = 0
+        self.requests_idle = threading.Condition(self.lock)
         profile = installation.read()["tiktok_profile"] if installation else "production"
         self.tiktok = tiktok.TikTokStudio(self.root, self.busy, installation.vault if installation else None, profile)
         self.automation_settings = automation.SettingsStore(self.root)
@@ -247,18 +248,20 @@ class Studio:
             return ident
 
     def purge_assets(self, ids, confirmation):
-        with self.lock, self.tiktok.lock:
-            active = self.activity()
-            active["active_requests"] = self.active_requests > 1
-            if any(active.values()):
-                raise ValueError("Espera a que terminen los trabajos y las capturas antes de eliminar archivos.")
-            selected = [row for row in asset_lifecycle.entries(self.root) if row["id"] in ids]
-            with self.calendar.connect(write=True) as db:
-                for row in selected:
-                    if db.execute("""SELECT 1 FROM plans WHERE project=? AND (? IS NULL OR file=?)
-                    AND status NOT IN ('cancelled','published') LIMIT 1""", (row["project"], row["file"], row["file"])).fetchone():
-                        raise ValueError("Cancela o resuelve las programaciones relacionadas antes de eliminar los archivos.")
-                return asset_lifecycle.purge(self.root, ids, confirmation)
+        with self.requests_idle:
+            # A previous response may reach the browser just before its request is released.
+            if not self.requests_idle.wait_for(lambda: self.active_requests <= 1, timeout=0.5):
+                raise ValueError("Espera a que terminen las operaciones en curso antes de eliminar archivos.")
+            with self.tiktok.lock:
+                if any(self.activity().values()):
+                    raise ValueError("Espera a que terminen los trabajos y las capturas antes de eliminar archivos.")
+                selected = [row for row in asset_lifecycle.entries(self.root) if row["id"] in ids]
+                with self.calendar.connect(write=True) as db:
+                    for row in selected:
+                        if db.execute("""SELECT 1 FROM plans WHERE project=? AND (? IS NULL OR file=?)
+                        AND status NOT IN ('cancelled','published') LIMIT 1""", (row["project"], row["file"], row["file"])).fetchone():
+                            raise ValueError("Cancela o resuelve las programaciones relacionadas antes de eliminar los archivos.")
+                    return asset_lifecycle.purge(self.root, ids, confirmation)
 
     def _production_catalog(self):
         from live_clips import PRODUCTION_REPAIR, live_exports
@@ -744,8 +747,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
         finally:
-            with self.app.lock:
+            with self.app.requests_idle:
                 self.app.active_requests -= 1
+                self.app.requests_idle.notify_all()
 
     def do_POST(self):
         origin = self.headers.get("Origin")
@@ -761,8 +765,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             return self._dispatch_POST()
         finally:
-            with self.app.lock:
+            with self.app.requests_idle:
                 self.app.active_requests -= 1
+                self.app.requests_idle.notify_all()
 
     def _dispatch_POST(self):
         try:

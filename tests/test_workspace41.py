@@ -87,3 +87,19 @@ def test_context_and_real_portrait_export_follow_visible_settings(tmp_path, chro
         page.reload()
         page.locator("#show-projects").click()
         expect(page.get_by_role("button", name="Continuar edición")).to_be_visible()
+
+
+def test_saved_settings_destination_restores_while_project_catalog_is_delayed(tmp_path, chromium_page):
+    page, expect = chromium_page
+    with running_server(tmp_path) as (_, base):
+        page.goto(base)
+        page.locator("#show-settings").click()
+        page.locator("#show-watermark").click()
+        expect(page.locator("#watermark-fields")).to_be_enabled()
+        page.wait_for_load_state("networkidle")
+        pending = []
+        page.route("**/api/projects", lambda route: pending.append(route))
+        with page.expect_request("**/api/projects"):
+            page.reload(wait_until="domcontentloaded")
+        expect(page.locator("#watermark-view")).to_be_visible()
+        expect(page.locator("#watermark-fields")).to_be_enabled()

@@ -1443,7 +1443,7 @@ safe(async () => {
   await studioConfig;
   if (location.hash === "#live") showLive();
   else refreshLive().catch(() => {});
-  await refreshProjects();
+  refreshProjects().catch(error => notice(error.message, true));
   window.dispatchEvent(new Event("studio-ready"));
 })();
 $("#show-tiktok").addEventListener("click", safe(async () => {

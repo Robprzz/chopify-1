@@ -370,14 +370,16 @@ window.addEventListener("studio-view", event => {
   }
   if (["home-view","clips-view","calendar-view","statistics-view"].includes(workspaceView)) refreshWorkspace(true);
 });
-window.addEventListener("studio-ready", () => {
+document.addEventListener("DOMContentLoaded", () => {
   updateWorkspaceProfile(); updateCollapsedRail();
   $("#workspace-profile-name").value = getPreference("profile");
-  if (["#live","#publicaciones"].includes(location.hash)) return;
+  if (studioNavigation || ["#live","#publicaciones"].includes(location.hash)) return;
   const saved = getPreference("view","home-view");
   const project = getPreference("project");
   if (saved === "project-view" && /^[a-f0-9]{12}$/.test(project)) {
-    selectProject(project).catch(() => showWorkspace("projects-view"));
+    studioConfig.then(() => {
+      if (!studioNavigation) return selectProject(project);
+    }).catch(() => { if (!studioNavigation) showWorkspace("projects-view"); });
   } else {
     if (project) state.id = project;
     $("#" + (workspaceEntry[saved] || "show-home")).click();

@@ -88,7 +88,6 @@ function loadWatermark() {
   $("#watermark-retry").hidden = true;
   watermarkLoaded = false;
   return updateWatermark("Cargando los ajustes…", async () => {
-    await studioConfig;
     applyWatermarkSettings(await api(watermarkEndpoint));
     watermarkLoaded = true;
     return "";
@@ -167,6 +166,7 @@ watermarkForm.addEventListener("submit", (event) => {
     position: watermarkField("position").value };
   for (const name of ["size", "opacity", "margin"]) settings[name] = watermarkField(name).valueAsNumber;
   updateWatermark("Guardando cambios…", async () => {
+    await studioConfig;
     applyWatermarkSettings(await api(watermarkEndpoint, { settings, image_data: watermarkUpload }));
     return "Marca de agua guardada.";
   }, () => {

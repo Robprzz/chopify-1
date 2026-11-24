@@ -28,6 +28,8 @@ import live_production
 import projects
 import production
 import publishing_calendar
+import publishing_platforms
+from assisted_publishing import Preparation
 import clip_workspace
 import realtime_operations
 from realtime_priority import valid_number
@@ -211,9 +213,12 @@ class Studio:
         self.live_production = live_production.Pipeline(self.root, self.resources, self._production_clip)
         self.live_production.start()
         self.calendar = publishing_calendar.Calendar(self.root, self.production, self.tiktok, self.automation_settings)
+        self.growth = self.calendar.growth
+        self.preparation = Preparation(self.calendar)
         self.clips = clip_workspace.Clips(self.root, self.calendar, self.tiktok, self.editorial)
         self.clip_jobs = {}
         self.calendar.recover_dispatches()
+        self.preparing_publications = False
         self.schedule_stop = threading.Event()
         self.schedule_thread = threading.Thread(target=self._deliver_scheduled, name="studio-calendar", daemon=True)
         self.system = studio_system.System(installation or studio_settings.Settings(HERE), self)
@@ -226,6 +231,19 @@ class Studio:
             if not self.closing:
                 try:
                     self.calendar.deliver_due()
+                    settings = self.preparation.settings()
+                    if settings["mode"] == "manual" or not settings["platforms"]:
+                        continue
+                    with self.lock:
+                        if self.closing or not self.resources.acquire(blocking=False):
+                            continue
+                        self.preparing_publications = True
+                    try:
+                        self.preparation.prepare_one(self.tiktok.exports, self.clips)
+                    finally:
+                        self.resources.release()
+                        with self.lock:
+                            self.preparing_publications = False
                 except (OSError, sqlite3.Error):
                     continue
 
@@ -509,6 +527,7 @@ class Studio:
                 "editorial": self.editorial.busy(),
                 "subtitle_repair": bool(self.subtitle_repair.future and not self.subtitle_repair.future.done()),
                 "tiktok_transfer": self.tiktok.sending,
+                "publishing_preparation": self.preparing_publications,
                 "tiktok_verification": self.system.restoring(),
             }
 
@@ -616,6 +635,12 @@ class Handler(BaseHTTPRequestHandler):
                 if future is None:
                     raise FileNotFoundError
                 return self.send_json(future.result() if future.done() else {"state": "running"})
+            if parts == ["api", "publishing-assist"]:
+                return self.send_json({**self.app.preparation.settings(), "history": self.app.preparation.history()})
+            if parts == ["api", "publishing-capabilities"]:
+                return self.send_json(publishing_platforms.capabilities(self.app.tiktok))
+            if parts == ["api", "growth"]:
+                return self.send_json(self.app.growth.snapshot())
             if parts == ["api", "calendar"]:
                 query = parse_qs(location.query, max_num_fields=2)
                 return self.send_json(self.app.calendar.snapshot(query.get("id", [None])[0],
@@ -797,6 +822,12 @@ class Handler(BaseHTTPRequestHandler):
                 if len(body["ids"]) > 1000:
                     raise ValueError("Selecciona hasta 1000 elementos por operación.")
                 return self.send_json(self.app.purge_assets(body["ids"], body.get("confirmation")))
+            if parts == ["api", "publishing-assist"]:
+                return self.send_json(self.app.preparation.settings(body))
+            if parts == ["api", "growth", "import"]:
+                return self.send_json(self.app.growth.ingest(body))
+            if parts == ["api", "calendar", "drafts"]:
+                return self.send_json(self.app.calendar.drafts(body, self.app.clips))
             if len(parts) == 3 and parts[:2] == ["api", "calendar"]:
                 return self.send_json(self.app.calendar.action(parts[2], body))
             if len(parts) == 3 and parts[:2] == ["api", "system"]:

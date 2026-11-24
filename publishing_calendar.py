@@ -1,16 +1,17 @@
 """Local editorial plans, explicit submission linkage and restart recovery."""
-from contextlib import closing, contextmanager
+from contextlib import closing, contextmanager, nullcontext
 from datetime import date, datetime, timedelta, timezone
 import json
 import re
 import sqlite3
 import time
+import uuid
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from clip_workspace import combined, copy_fields, digest_for, media_stamp, verify_media
 from production_selection import stamp
 
-PLATFORMS = ("tiktok", "youtube", "facebook", "instagram")
+from publishing_platforms import PLATFORMS
 PRIORITIES = ("urgent", "high", "normal", "low")
 TERMINAL = {"cancelled", "published"}
 DEFAULTS = {"timezone": "America/Santo_Domingo", "daily": 3, "interval": 60,
@@ -85,6 +86,9 @@ class Calendar:
                 db.execute("ALTER TABLE plans ADD COLUMN caption TEXT NOT NULL DEFAULT ''")
             db.execute("""CREATE TABLE IF NOT EXISTS inbox_schedule(
                 plan TEXT PRIMARY KEY, owner TEXT NOT NULL, revision INTEGER NOT NULL, state TEXT NOT NULL)""")
+
+        from growth import Growth
+        self.growth = Growth(self)
 
     def recover_dispatches(self):
         with self.connect(write=True) as db:
@@ -225,7 +229,25 @@ class Calendar:
                     or set(clip.get("hashes", [])) & set(previous["sha"])):
                 raise Conflict("Ese clip ya tiene una programación en esta plataforma.")
 
-    def save(self, data):
+    def drafts(self, payload, copies):
+        selections, platforms = payload.get("clips"), payload.get("platforms")
+        if (not isinstance(selections, list) or not 1 <= len(selections) <= 10
+                or not isinstance(platforms, list) or not platforms
+                or any(platform not in PLATFORMS for platform in platforms)):
+            raise ValueError("Selecciona entre uno y diez clips y al menos una plataforma.")
+        prepared = []
+        for key in dict.fromkeys(selections) if all(isinstance(item, str) for item in selections) else ():
+            project, _, filename = key.rpartition("/")
+            for platform in dict.fromkeys(platforms):
+                copy = copies.read(project, filename, platform)["copy"]
+                prepared.append({**{name: copy[name] for name in ("title", "caption", "description", "hashtags")},
+                    "id": str(uuid.uuid4()), "project": project, "file": filename, "platform": platform})
+        if not prepared:
+            raise ValueError("Selección de clips inválida.")
+        with self.connect(write=True) as db:
+            return {"plans": [self.save(item, db=db) for item in prepared]}
+
+    def save(self, data, *, db=None):
         if data.keys() - {"id", "revision", "job", "project", "file", "platform", "local", "zone", "priority",
                           "title", "caption", "description", "hashtags", "ready", "refresh_version", "inbox_consent"}:
             raise ValueError("Hay campos de planificación desconocidos.")
@@ -240,7 +262,7 @@ class Calendar:
                 if not self.tiktok.account or not self.tiktok.token or "video.upload" not in self.tiktok.token["scopes"]:
                     raise ValueError("Conecta una cuenta de TikTok con permiso para enviar al buzón.")
                 owner = self.tiktok.account["key"]
-        with self.connect(write=True) as db:
+        with (self.connect(write=True) if db is None else nullcontext(db)) as db:
             old = db.execute("SELECT * FROM plans WHERE id=?", (ident,)).fetchone()
             if old and data.get("revision") is None:
                 return self._public(old)  # create replay
@@ -449,12 +471,13 @@ class Calendar:
                 prefs = self.preferences(db)
                 zone = zone_for(prefs["timezone"])
                 now = datetime.now(zone)
-                observed = [datetime.fromtimestamp(row[0], zone).strftime("%H:%M") for row in db.execute(
-                    "SELECT scheduled FROM plans WHERE platform=? AND status='published' AND scheduled IS NOT NULL", (platform,))]
+                from growth import Growth
+                account = data.get("account", "")
+                if not isinstance(account, str) or len(account) > 120:
+                    raise ValueError("Identificador de cuenta inválido.")
+                samples = Growth.historical_hours(db, platform, account.strip(), zone)
                 for offset in range(14):
-                    hours = prefs["hours"]
-                    if len(observed) >= 5 and priority not in {"urgent", "high"}:
-                        hours = sorted(hours, key=lambda hour: (-observed.count(hour), hour))
+                    hours = sorted(prefs["hours"], key=lambda hour: -samples.get(int(hour[:2]), (-1, 0))[0])
                     for hour in hours:
                         local = f"{now.date() + timedelta(days=offset)}T{hour}"
                         try:
@@ -462,8 +485,8 @@ class Calendar:
                             if when <= now.timestamp():
                                 continue
                             self._slot(db, prefs, when, platform, data.get("id") or "")
-                            return {"local": local, "zone": zone.key, "basis": "heuristic",
-                                    "history_samples": len(observed)}
+                            return {"local": local, "zone": zone.key, "basis": "imported_csv" if int(hour[:2]) in samples else "heuristic",
+                                    "history_samples": samples.get(int(hour[:2]), (0, 0))[1]}
                         except ValueError:
                             continue
             raise Conflict("No hay franjas disponibles en los próximos 14 días.")

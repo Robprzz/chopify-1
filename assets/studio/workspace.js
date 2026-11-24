@@ -529,3 +529,44 @@ document.addEventListener("DOMContentLoaded", () => {
 setInterval(() => {
   if (!document.hidden && ["home-view","clips-view","calendar-view","statistics-view"].includes(workspaceView)) refreshWorkspace();
 }, 9000);
+
+const growthForm = $("#growth-import");
+let growthPreview = null;
+async function refreshGrowth() {
+  const data = await api("/api/growth");
+  const platform = key => calendarPlatforms[key];
+  const totals = data.groups.map(item => `<li><strong>${escapeHTML(platform(item.platform))} · ${escapeHTML(item.account)}</strong>
+    · ${item.posts} clips · ${item.views} vistas · ${item.likes} me gusta · ${item.comments} comentarios · ${item.shares} compartidos</li>`).join("");
+  const top = data.top.map(item => `<li>${escapeHTML(item.post_id)} · ${escapeHTML(item.account)} · ${item.views} vistas</li>`).join("");
+  const frequency = data.frequency.slice(-14).map(([date,count]) => `<li>${escapeHTML(date)} · ${count}</li>`).join("");
+  $("#growth-results").innerHTML = totals ? `<p>Fuente: CSV importado por el usuario.</p><ul>${totals}</ul>
+    <h3>Más vistos</h3><ol>${top}</ol><h3>Frecuencia de publicación (UTC)</h3><ul>${frequency}</ul>` :
+    "<p>Todavía no hay métricas. Importa un CSV para comparar resultados por cuenta.</p>";
+}
+window.addEventListener("studio-view",event => {
+  if (event.detail === "statistics-view") refreshGrowth().catch(error => notice(error.message,true));
+});
+growthForm.addEventListener("input",() => {
+  growthPreview = null;
+  $("#growth-confirm").disabled = true;
+});
+growthForm.addEventListener("submit",safe(async event => {
+  event.preventDefault();
+  const fields = new FormData(growthForm);
+  const file = fields.get("file");
+  if (file.size > 1000000) throw new Error("Selecciona un CSV de hasta 1 MB.");
+  const payload = {platform:fields.get("platform"),account:fields.get("account"),csv:await file.text()};
+  const data = await api("/api/growth/import",payload);
+  growthPreview = payload;
+  $("#growth-preview").textContent = data.preview.map(item =>
+    `${item.post_id} · ${item.observed_at} · ${item.views} vistas`).join("\n");
+  $("#growth-confirm").disabled = false;
+}));
+$("#growth-confirm").addEventListener("click",safe(async () => {
+  if (!growthPreview) return;
+  const data = await api("/api/growth/import",{...growthPreview,confirm:true});
+  $("#growth-preview").textContent = `${data.imported} de ${data.rows} registros incorporados.`;
+  growthPreview = null;
+  $("#growth-confirm").disabled = true;
+  await refreshGrowth();
+}));

@@ -104,7 +104,18 @@
           <select id="calendar-status-filter" aria-label="Filtrar por estado"><option value="">Todos los estados</option></select>
           <span id="calendar-zone" class="muted"></span>
         </div>
+        <details class="workspace-card"><summary>Preparar varios clips</summary>
+          <form id="batch-drafts"><label>Clips<select id="batch-clips" multiple required size="5"></select></label>
+          <label>Plataformas<select id="batch-platforms" multiple required><option value="tiktok">TikTok</option><option value="youtube">YouTube Shorts</option><option value="facebook">Facebook Reels</option><option value="instagram">Instagram Reels</option></select></label>
+          <button>Crear borradores</button></form>
+        </details>
         <p id="calendar-feedback" role="status"></p>
+        <p id="platform-capabilities" class="muted"></p><p id="publishing-assist-mode" class="muted"></p>
+        <label>Vista de Publicaciones<select id="publishing-view-mode">
+          <option value="">Calendario</option><option value="draft">Borradores</option><option value="scheduled">Programadas</option>
+          <option value="sent">Enviadas</option><option value="attention">Requieren atención</option><option value="history">Historial</option>
+        </select></label>
+        <div id="publishing-list" hidden></div>
         <div class="calendar-layout">
           <div class="calendar-main">
             <div id="calendar-grid" aria-label="Programaciones"></div>
@@ -127,6 +138,7 @@
               <label>Prioridad<select id="calendar-priority"><option value="normal">Normal</option><option value="urgent">Urgente</option><option value="high">Alta</option><option value="low">Baja</option></select></label></div>
               <label>Fecha y hora<input type="datetime-local" id="calendar-local" /></label>
               <label>Zona horaria<input id="calendar-local-zone" required /></label>
+              <label>Cuenta de referencia para sugerir horarios (opcional)<input id="calendar-growth-account" maxlength="120" /></label>
               <label class="check" id="calendar-inbox-consent-line" hidden><input type="checkbox" id="calendar-inbox-consent" /> Programar entrega al buzón. Autorizo el envío de este clip a la cuenta indicada si Studio está abierto.</label><p id="calendar-platform-status" class="muted"></p>
               <label class="check" id="calendar-refresh-line" hidden><input type="checkbox" id="calendar-refresh-version" /> Actualizar a la versión vigente del clip</label>
               <div id="calendar-edit-tools" class="publication-actions">
@@ -140,6 +152,15 @@
       </section>
       <section id="statistics-view" class="view workspace-view" hidden>
         <header class="section-heading"><div><h1>Estadísticas</h1><p>Rendimiento operativo y publicaciones confirmadas.</p></div><label>Período<select id="statistics-period"><option value="1">Hoy</option><option value="7">Últimos 7 días</option><option value="30">Últimos 30 días</option></select></label></header>
+        <section class="workspace-card"><h2>Resultados por cuenta</h2>
+          <div id="growth-results" aria-live="polite"></div>
+          <details><summary>Importar métricas CSV</summary>
+            <form id="growth-import"><label>Plataforma<select name="platform"><option value="tiktok">TikTok</option><option value="youtube">YouTube Shorts</option><option value="facebook">Facebook Reels</option><option value="instagram">Instagram Reels</option></select></label>
+              <label>Identificador de cuenta<input name="account" required maxlength="120" /></label>
+              <label>Archivo CSV<input name="file" type="file" accept=".csv,text/csv" required /></label>
+              <button>Ver vista previa</button><button id="growth-confirm" type="button" disabled>Confirmar importación</button>
+            </form><pre id="growth-preview"></pre>
+          </details></section>
         <div id="statistics-cards" class="home-kpis"></div>
         <section class="workspace-card"><h2>Mediciones de procesamiento</h2><div id="statistics-latency"></div></section>
       </section>
@@ -160,7 +181,12 @@
         <input type="search" id="settings-query" aria-label="Buscar ajustes" placeholder="Buscar ajustes…" />
         <div id="settings-categories" class="settings-categories">
           <details class="settings-row" data-setting-panel="general"><summary class="settings-heading"><svg aria-hidden="true" class="ani-icon"><use href="#icon-home"/></svg><span class="settings-label"><strong>General</strong><span>Nombre de perfil y preferencias de interfaz.</span></span><span class="settings-chevron" aria-hidden="true">›</span></summary><div class="settings-body"><form id="workspace-profile-form"><label>Nombre de perfil (opcional)<input id="workspace-profile-name" maxlength="60" /></label><button>Guardar perfil</button><button type="button" id="workspace-reset-interface">Restaurar preferencias de interfaz</button></form></div></details>
-          <details class="settings-row" data-setting-panel="publishing"><summary class="settings-heading"><svg aria-hidden="true" class="ani-icon"><use href="#icon-publish"/></svg><span class="settings-label"><strong>Publicaciones</strong><span>Horario, frecuencia y separación entre publicaciones.</span></span><span class="settings-chevron" aria-hidden="true">›</span></summary><div class="settings-body"><form id="calendar-preferences">
+          <details class="settings-row" data-setting-panel="publishing"><summary class="settings-heading"><svg aria-hidden="true" class="ani-icon"><use href="#icon-publish"/></svg><span class="settings-label"><strong>Publicaciones</strong><span>Horario, frecuencia y separación entre publicaciones.</span></span><span class="settings-chevron" aria-hidden="true">›</span></summary><div class="settings-body"><form id="publishing-assist-form">
+            <label>Modo de preparación<select name="mode"><option value="assisted">Asistido</option><option value="manual">Manual</option><option value="authorized">Automatización autorizada</option></select></label>
+            <label>Preparar borradores automáticamente para<select name="platforms" multiple size="4"><option value="tiktok">TikTok</option><option value="youtube">YouTube Shorts</option><option value="facebook">Facebook Reels</option><option value="instagram">Instagram Reels</option></select></label>
+            <p>Los envíos requieren una autorización específica en el plan. Sin plataformas seleccionadas, la preparación automática está en pausa.</p>
+            <button>Guardar preparación</button><p id="publishing-assist-result" role="status"></p>
+          </form><form id="calendar-preferences">
             <label>Zona horaria IANA<input id="schedule-timezone" required /></label>
             <label>Programaciones por día y plataforma<input id="schedule-daily" type="number" min="1" max="24" required /></label>
             <label>Intervalo mínimo en minutos<input id="schedule-interval" type="number" min="1" max="1440" required /></label>

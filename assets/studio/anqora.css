@@ -307,3 +307,5 @@ summary.settings-heading:hover { background: #f7f9fd; border-radius: 14px; }
 .project-library { margin-block: 1rem 1.6rem; }
 #project-clip-detail:not(:empty) { margin-block: .75rem 1rem; }
 #project-view .pulse-frame { display: none; }
+#batch-drafts, #growth-import { display: flex; flex-wrap: wrap; align-items: end; gap: .75rem; }
+#growth-preview { white-space: pre-wrap; overflow-wrap: anywhere; }

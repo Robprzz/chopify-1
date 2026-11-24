@@ -40,7 +40,23 @@ function calendarEntry(item, grid = false) {
 }
 function renderCalendar() {
   if (!calendarData) return;
+  const batch = $("#batch-clips");
+  const selected = new Set([...batch.selectedOptions].map(item => item.value));
+  batch.replaceChildren(...(workspaceData?.clips || []).map(clip => {
+    const key = clip.project + "/" + clip.filename;
+    return new Option(clip.title,key,false,selected.has(key));
+  }));
   const {preferences, plans} = calendarData;
+  const modeFilter = $("#publishing-view-mode").value;
+  const statusGroups = {draft:["draft","pending_review","editorial_approved","ready"],scheduled:["scheduled"],
+    attention:["requires_action","failed"],history:["published","cancelled","failed"]};
+  $("#calendar-grid").hidden = Boolean(modeFilter);
+  $("#publishing-list").hidden = !modeFilter;
+  if (modeFilter) {
+    const visible = plans.filter(plan => modeFilter === "sent" ? Boolean(plan.publish_id || plan.confirmation) :
+      statusGroups[modeFilter].includes(plan.status));
+    patchWorkspace("#publishing-list", visible.map(plan => calendarEntry(plan)).join("") || "<p>Sin planes en esta vista.</p>");
+  }
   const mode = $("#calendar-view-mode").value;
   const chosen = $("#calendar-date").value || calendarDate(Date.now()/1000);
   const target = new Date(chosen + "T12:00:00Z");
@@ -88,6 +104,10 @@ async function refreshCalendar() {
 }
 async function openCalendar() {
   switchView("calendar-view");
+  api("/api/publishing-capabilities").then(data => {
+    $("#platform-capabilities").textContent = (data.tiktok.inbox ? "TikTok: buzón disponible. " : "TikTok: conecta una cuenta con permiso de subida. ")
+      + "Publicación directa no disponible. Shorts y Reels: paquete manual.";
+  }).catch(() => { $("#platform-capabilities").textContent = "No se pudo comprobar la disponibilidad de las plataformas."; });
   await Promise.all([refreshCalendar(), refreshWorkspace(), api("/api/tiktok/state", {}).then(response => {
     calendarAccount = response.account || "";
   }).catch(() => { calendarAccount = ""; })]);
@@ -181,6 +201,7 @@ async function openCalendarDetail(id = null, key = null, immediate = false) {
   if (detail && !terminal && detail.inbox_state !== "claimed") {
     if (!detail.external_id) {
       actions.push(["cancel", "Cancelar programación"]);
+      if (detail.scheduled == null) actions.push(["schedule", "Asignar fecha"]);
       if (detail.platform === "tiktok") actions.push(["prepare", "Revisar envío al buzón"]);
       else actions.push(["prepare", "Preparar paquete manual"],["confirm", "Confirmar publicación manual"]);
     } else if (detail.status === "failed" && !detail.publish_id) actions.push(["retry", "Preparar un nuevo intento"]);
@@ -303,11 +324,11 @@ $("#calendar-form").addEventListener("submit", event => {
   });
 });
 $("#calendar-suggest").addEventListener("click",() => calendarMutation(async () => {
-  const slot = await calendarApi("suggest",{id:calendarDraftId,platform:$("#calendar-platform").value,priority:$("#calendar-priority").value});
+  const slot = await calendarApi("suggest",{id:calendarDraftId,platform:$("#calendar-platform").value,account:$("#calendar-growth-account").value,priority:$("#calendar-priority").value});
   calendarDirty = true;
   $("#calendar-local").value = slot.local;
   $("#calendar-local-zone").value = slot.zone;
-  $("#calendar-feedback").textContent = "Horario sugerido según preferencias y huecos de la agenda.";
+  $("#calendar-feedback").textContent = slot.basis === "imported_csv" ? `Horario sugerido con ${slot.history_samples} publicaciones importadas de esa franja. Es una comparación histórica.` : "Horario sugerido según preferencias y huecos de la agenda.";
 }));
 $("#calendar-actions").addEventListener("click",event => {
   const button = event.target.closest("[data-calendar-action]");
@@ -315,6 +336,11 @@ $("#calendar-actions").addEventListener("click",event => {
   calendarMutation(async () => {
     const action = button.dataset.calendarAction;
     if (action === "history") return showPublications();
+    if (action === "schedule") {
+      calendarMode(false);
+      $("#calendar-local").focus();
+      return;
+    }
     if (!confirmCalendarEdits()) return;
     calendarDirty = false;
     if (action === "cancel" && !confirm("¿Cancelar esta programación?")) return;
@@ -365,3 +391,35 @@ window.addEventListener("calendar-evidence",() => refreshCalendar().catch(() => 
 setInterval(() => {
   if (!document.hidden && !$("#calendar-view").hidden && !calendarBusy) refreshCalendar().catch(() => {});
 }, 12000);
+
+
+$("#batch-drafts").addEventListener("submit",event => {
+  event.preventDefault();
+  calendarMutation(async () => {
+    const values = id => [...$(id).selectedOptions].map(option => option.value);
+    const data = await calendarApi("drafts",{clips:values("#batch-clips"),platforms:values("#batch-platforms")});
+    $("#calendar-feedback").textContent = `${data.plans.length} borradores guardados.`;
+    await refreshCalendar();
+  });
+});
+
+$("#publishing-view-mode").addEventListener("change",renderCalendar);
+
+const assistForm = $("#publishing-assist-form");
+function showAssist(settings) {
+  assistForm.elements.mode.value = settings.mode;
+  for (const option of assistForm.elements.platforms.options) option.selected = settings.platforms.includes(option.value);
+  const label = assistForm.elements.mode.selectedOptions[0].textContent;
+  $("#publishing-assist-mode").textContent = "Modo activo: " + label;
+  const attention = (settings.history || []).filter(item => item.result === "needs_attention");
+  $("#publishing-assist-result").textContent = attention.length ?
+    attention.map(item => item.file + " · " + calendarPlatforms[item.platform]).join(", ") : "";
+}
+for (const id of ["#show-settings","#show-publications"]) $(id).addEventListener("click",safe(async () =>
+  showAssist(await api("/api/publishing-assist"))));
+assistForm.addEventListener("submit",safe(async event => {
+  event.preventDefault();
+  showAssist(await api("/api/publishing-assist", {mode:assistForm.elements.mode.value,
+    platforms:[...assistForm.elements.platforms.selectedOptions].map(option => option.value)}));
+  notice("Preferencias de preparación guardadas.");
+}));

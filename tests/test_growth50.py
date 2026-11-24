@@ -10,7 +10,15 @@ from test_studio_navigation import chromium_page  # noqa: F401
 HEADER = "post_id,published_at,observed_at,views,likes,comments,shares\n"
 
 
-def test_csv_preview_idempotence_and_historical_slots(tmp_path):
+def test_csv_preview_idempotence_and_historical_slots(tmp_path, monkeypatch):
+    import publishing_calendar
+
+    class Morning(datetime):
+        @classmethod
+        def now(cls, zone=None):
+            return datetime(2026, 11, 24, 12, tzinfo=timezone.utc).astimezone(zone)
+
+    monkeypatch.setattr(publishing_calendar, "datetime", Morning)
     content = HEADER
     for i in range(10):
         start = datetime(2025, 4, i+1, 13 if i < 5 else 17, tzinfo=timezone.utc)

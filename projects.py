@@ -13,6 +13,7 @@ import score_clips
 import evidence
 import visual
 import ingest
+import instagram_import
 import sections
 import branding
 import video_types
@@ -236,17 +237,30 @@ def project_path(root, project_id):
     return Path(root) / project_id
 
 
-def create_project(root, source, options):
+def create_project(root, source, options, *, instagram=None):
     project_id = uuid.uuid4().hex[:12]
-    return init_project(project_path(root, project_id), source, options, project_id)
+    return init_project(project_path(root, project_id), source, options, project_id, instagram=instagram)
 
 
-def init_project(path, source, options, project_id=None):
+def validate_instagram(source, authorization):
+    if not instagram_import.candidate(source):
+        return None
+    url = instagram_import.canonical(source)
+    if not isinstance(authorization, dict) or authorization.get("authorized") is not True:
+        raise ValueError("Confirma que tienes autorización para utilizar este video de Instagram.")
+    limits = instagram_import.settings({key: value for key, value in authorization.items() if key != "authorized"})
+    return {"url":url,"authorized":True,"confirmed_at":time.time(),"limits":limits}
+
+
+def init_project(path, source, options, project_id=None, *, instagram=None):
     if not isinstance(source, str) or not source.strip() or len(source) > 8000:
         raise ValueError("Provide a video path or URL.")
     options = validate_options(options)
     source = source.strip()
-    if Path(source).expanduser().is_file():
+    authorization = validate_instagram(source, instagram)
+    if authorization:
+        source = authorization["url"]
+    elif Path(source).expanduser().is_file():
         source = str(Path(source).expanduser().resolve())
     project_id = project_id or uuid.uuid4().hex[:12]
     path = Path(path)
@@ -254,6 +268,8 @@ def init_project(path, source, options, project_id=None):
     state = {"id": project_id, "source": source.strip(), "options": options,
              "status": "new", "stage": "waiting", "created": time.time(),
              "updated": time.time(), "cache": {}, "renders": {}, "error": None}
+    if authorization:
+        state["instagram_import"] = authorization
     save_project(path, state)
     return state
 
@@ -300,6 +316,34 @@ def validate_segments(segments, duration):
     return result
 
 
+def instagram_source(path, state, stage):
+    source = state["source"]
+    auth = state.get("instagram_import") or {}
+    if auth.get("authorized") is not True or auth.get("url") != instagram_import.canonical(source):
+        raise ValueError("Confirma la autorización en un proyecto de importación de Instagram.")
+    media = path / "instagram.mp4"
+    if media.is_symlink() or (media.exists() and (not media.is_file() or media.resolve() != media)):
+        raise ValueError("El destino local del video de Instagram no es válido.")
+    if (path / instagram_import.CANCEL_FILE).exists():
+        raise instagram_import.Cancelled("Importación de Instagram cancelada.")
+    if (media.is_file() and isinstance(state.get("source_meta"), dict)
+            and state["cache"].get("instagram") == digest([source, file_identity(media)])):
+        return media, state["source_meta"]
+    stage("instagram download")
+
+    def report(meta, done, total):
+        state["source_meta"] = meta
+        state["progress"] = {"stage":"instagram download","done":done,"total":total,
+                             "detail":f"{done / 1024**2:.1f} MiB descargados"}
+        save_project(path, state)
+
+    file, meta = instagram_import.import_video(source, path, instagram_import.settings(auth["limits"]), report)
+    state["cache"]["instagram"] = digest([source, file_identity(file)])
+    state["source_meta"] = meta
+    save_project(path, state)
+    return file, meta
+
+
 def run_project(path, action="all", preview=False, pick=None, resume=True,
                 progress=None, on_detection=None, explicit_keys=None, automation_export=False, recovery=None):
     """Prepare candidates or render saved candidates; checkpoint every successful clip."""
@@ -331,7 +375,10 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
             stage("source")
             source_input = state["source"]
             local = Path(source_input).expanduser()
-            is_url = ingest.is_url(source_input)
+            instagram = instagram_import.candidate(source_input)
+            if instagram:
+                local, imported_meta = instagram_source(path, state, stage)
+            is_url = not instagram and ingest.is_url(source_input)
             if not is_url and not local.is_file():
                 raise ValueError(
                     f"Video file does not exist or URL is invalid: {source_input}")
@@ -343,7 +390,10 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
             cached_meta = (resume
                            and state["cache"].get("source_meta") == source_key
                            and isinstance(state.get("source_meta"), dict))
-            if cached_meta:
+            if instagram:
+                meta = imported_meta
+                state["cache"]["source_meta"] = source_key
+            elif cached_meta:
                 meta = state["source_meta"]
             else:
                 meta = ingest.probe_source(source_input)
@@ -370,7 +420,7 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
                     media_kind = "video"
                     render_from_sections = False
                 else:
-                    source = dt.resolve_source(source_input, path)
+                    source = local if instagram else dt.resolve_source(source_input, path)
                     media_kind = "video"
                     render_from_sections = False
                 if not media_kind:
@@ -399,6 +449,8 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
                     meta["discovery"] = str(source)
                 state["source_meta"] = meta
 
+            if instagram and (path / instagram_import.CANCEL_FILE).exists():
+                raise instagram_import.Cancelled("Importación de Instagram cancelada.")
             stage("transcribe")
             transcript_key = digest([
                 dt.TRANSCRIPT_VERSION, file_identity(source),
@@ -414,8 +466,7 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
                             str(source)).get("duration")
                     except (OSError, ValueError):
                         duration = None
-                media_only = (is_url and long and media_kind == "video"
-                              and meta.get("has_audio") is False)
+                media_only = (instagram or (is_url and long and media_kind == "video")) and meta.get("has_audio") is False
                 if media_only and not duration:
                     raise ValueError(
                         "Cannot determine the duration of the silent source.")
@@ -701,10 +752,11 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
         save_project(path, state)
         return state
     except (Exception, SystemExit) as exc:
+        cancelled = isinstance(exc, instagram_import.Cancelled)
         alternative = exc.alternative if isinstance(exc, render_clips.RenderFailure) else None
         if alternative and not state.get("render_recovery"):
             state["render_recovery"] = {"alternative": alternative, "pick": pick, "preview": preview}
-        state.update(status="review" if alternative else "failed", error=str(exc),
+        state.update(status="cancelled" if cancelled else "review" if alternative else "failed", error=str(exc),
                      stage="render recovery" if alternative else state.get("stage", "failed"))
         save_project(path, state)
         raise

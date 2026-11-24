@@ -391,6 +391,7 @@ function updateBrands(selected = "") {
 const projectLabels = {
   new: "Nuevo", waiting: "En espera", queued: "En cola", running: "En proceso",
   complete: "Completado", "render recovery": "Alternativa disponible", interrupted: "Interrumpido", failed: "Fallido",
+  "instagram download": "Descarga de Instagram", cancelled: "Cancelado",
   error: "Error", ready: "Listo", prepare: "Preparación", render: "Exportación",
   "render incomplete": "Exportación parcial", "rendered": "Exportado", review: "En revisión",
 };
@@ -454,7 +455,32 @@ $("#render-recovery").addEventListener("click",safe(async () => {
   const detail = await api(`/api/projects/${state.id}`);
   if (detail.project.id === state.id) { state.detail = detail; updateStatus(detail); }
 }));
+$("#cancel-instagram").addEventListener("click", safe(async () => {
+  await api(`/api/projects/${state.id}/cancel-import`, {});
+  $("#cancel-instagram").disabled = true;
+  notice("Cancelación solicitada.");
+}));
+function updateInstagram(detail) {
+  const imported = detail.project.instagram_import;
+  const active = Boolean(imported && detail.busy &&
+    ["prepare","all","source","instagram download"].includes(detail.project.stage));
+  const meta = detail.source_meta || {};
+  const text = $("#instagram-metadata");
+  text.hidden = !imported;
+  text.textContent = imported ? ["Instagram", meta.title, meta.author,
+    meta.duration ? mediaDuration(meta.duration) : "", detail.progress?.stage === "instagram download" ? detail.progress.detail : ""]
+    .filter(Boolean).join(" · ") : "";
+  const bar = $("#instagram-progress");
+  bar.hidden = !active;
+  if (active && detail.progress?.stage === "instagram download" && detail.progress.total > 0) {
+    bar.max = detail.progress.total;
+    bar.value = detail.progress.done;
+  } else bar.removeAttribute("value");
+  $("#cancel-instagram").hidden = !active;
+  $("#cancel-instagram").disabled = false;
+}
 function updateStatus(detail) {
+  updateInstagram(detail);
   const progress = detail.progress || {};
   const total = Number(progress.total);
   const progressText =
@@ -831,14 +857,31 @@ $("#projects").addEventListener(
     if (button) await selectProject(button.dataset.id);
   }),
 );
+function importSources() {
+  return $("#sources").value.split(/\r?\n/).map(source => source.trim().replace(/^"|"$/g,"")).filter(Boolean);
+}
+function importPlatform(source) {
+  try {
+    const host = new URL(source).hostname.toLowerCase();
+    if (["instagram.com","www.instagram.com","m.instagram.com"].includes(host)) return "Instagram";
+    if (host === "youtu.be" || host === "youtube.com" || host.endsWith(".youtube.com")) return "YouTube";
+  } catch {}
+  return /^(?:(?:www|m)\.)?instagram\.com(?:\/|$)/i.test(source) ? "Instagram" : "Archivo u otro origen";
+}
+function showImportOrigins() {
+  const labels = [...new Set(importSources().map(importPlatform))];
+  $("#import-origin").textContent = labels.length ? "Origen detectado · " + labels.join(", ") : "";
+  const instagram = labels.includes("Instagram");
+  $("#instagram-consent").hidden = !instagram;
+  $("#instagram-authorized").required = instagram;
+  $("#instagram-authorized").checked = false;
+}
+$("#sources").addEventListener("input",showImportOrigins);
 $("#create-form").addEventListener(
   "submit",
   safe(async (event) => {
     event.preventDefault();
-    const sources = $("#sources")
-      .value.split(/\r?\n/)
-      .map((s) => s.trim().replace(/^"|"$/g, ""))
-      .filter(Boolean);
+    const sources = importSources();
     if (!sources.length) throw new Error("Add a video path or URL.");
     const button = event.target.querySelector("button[type=submit]");
     button.disabled = true;
@@ -849,12 +892,17 @@ $("#create-form").addEventListener(
         style: $("#new-style").value,
       };
       const brief = ($("#brief-text")?.value || "").trim();
-      const result = await api("/api/batch", { sources, options, brief });
+      const instagram = sources.some(source => importPlatform(source) === "Instagram") ? {
+        authorized: $("#instagram-authorized").checked, max_mib: $("#instagram-size").valueAsNumber,
+        max_seconds: $("#instagram-duration").valueAsNumber
+      } : undefined;
+      const result = await api("/api/batch", {sources, options, brief, instagram});
       await selectProject(result.projects[0].id);
       notice(
-        `${sources.length} project${sources.length === 1 ? "" : "s"} queued for review.`,
+        result.projects.some(project => project.reused) ? "Se abrió la importación existente." : "Proyectos en cola para revisión.",
       );
       $("#sources").value = "";
+      showImportOrigins();
     } finally {
       button.disabled = false;
     }

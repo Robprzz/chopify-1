@@ -29,7 +29,10 @@ def run(cmd):
 
 
 def resolve_source(source, workdir):
-    """Keep local files in place; only network URLs go through yt-dlp."""
+    """Keep local files in place; authorized Instagram imports use projects."""
+    from instagram_import import candidate
+    if candidate(str(source)):
+        raise ValueError("Usa la importación autorizada de Instagram desde Studio.")
     path = Path(source).expanduser()
     if path.is_file():
         if path.suffix.lower() not in {".mp4", ".mkv", ".webm", ".mov", ".m4v", ".avi"}:

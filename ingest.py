@@ -204,6 +204,9 @@ def probe_source(source, runner=None):
     """Return local or yt-dlp metadata; URL failures become an unknown source."""
     source = str(source)
     run = runner or _run
+    from instagram_import import candidate
+    if candidate(source):
+        raise ValueError("Usa la importación autorizada de Instagram desde Studio.")
     if is_url(source):
         return _probe_url(source, run)
     path = Path(source).expanduser()

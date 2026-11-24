@@ -251,7 +251,7 @@
             <h2>Start with your footage</h2>
             <span>ONE VIDEO OR A WHOLE QUEUE</span>
           </div>
-          <label for="sources">Video URLs or local file paths</label>
+          <label for="sources">Enlaces de YouTube o Instagram, o archivos locales</label>
           <textarea
             id="sources"
             rows="4"
@@ -262,6 +262,16 @@
             One source per line. Local files stay in place. URLs download to
             their project folder.
           </p>
+          <p id="import-origin" role="status"></p>
+          <fieldset id="instagram-consent" hidden>
+            <legend>Importación de Instagram</legend>
+            <label class="check"><input id="instagram-authorized" type="checkbox" /> Tengo los derechos o autorización para utilizar los videos de Instagram de esta solicitud.</label>
+            <div class="form-grid">
+              <label>Tamaño máximo (MiB)<input id="instagram-size" type="number" min="1" max="1024" value="256" /></label>
+              <label>Duración máxima (segundos)<input id="instagram-duration" type="number" min="1" max="7200" value="1200" /></label>
+            </div>
+            <p>Admite únicamente videos que Instagram expone sin iniciar sesión. Si el enlace no admite descarga, importa el archivo original autorizado.</p>
+          </fieldset>
           <label for="brief-text">Campaign brief (optional)</label>
           <textarea
             id="brief-text"
@@ -733,7 +743,7 @@
           <div>
             <span id="project-id"></span>
             <h1 id="project-title">Proyecto</h1>
-            <p id="project-source" class="muted"></p>
+            <p id="project-source" class="muted"></p><p id="instagram-metadata" hidden></p><progress id="instagram-progress" aria-label="Descarga de Instagram" hidden></progress><button id="cancel-instagram" type="button" hidden>Cancelar descarga</button>
             <div id="detection-banner" class="detection-banner" hidden></div>
           </div>
           <div><span id="status" class="status"></span><p id="project-created" class="muted"></p></div>

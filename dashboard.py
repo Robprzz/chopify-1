@@ -28,6 +28,7 @@ import live_production
 import projects
 import production
 import publishing_calendar
+import instagram_import
 import publishing_platforms
 from assisted_publishing import Preparation
 import clip_workspace
@@ -326,6 +327,18 @@ class Studio:
                 continue
         return sorted(result, key=lambda p: p["created"], reverse=True)
 
+    def import_project(self, source, options, authorization):
+        if isinstance(source, str):
+            auth = projects.validate_instagram(source.strip(), authorization)
+            if auth:
+                shortcode = auth["url"].split("/")[-2]
+                for project in self.list_projects():
+                    old = project.get("instagram_import") or {}
+                    old_code = str(old.get("url", "")).rstrip("/").rsplit("/", 1)[-1]
+                    if old.get("authorized") and old_code == shortcode:
+                        return project, True
+        return projects.create_project(self.root, source, options, instagram=authorization), False
+
     def enqueue(self, project_id, action, preview=False, pick=None, *, output=None, recovery=None):
         if action not in {"prepare", "render", "all"}:
             raise ValueError("Unknown action.")
@@ -345,6 +358,8 @@ class Studio:
                 preview, pick = pending["preview"], pending["pick"]
             if output is not None:
                 state["options"] = projects.validate_options({**state["options"], **output})
+            if action in {"prepare", "all"} and state.get("instagram_import"):
+                (path / instagram_import.CANCEL_FILE).unlink(missing_ok=True)
             state.update(status="queued", stage=action, error=None)
             projects.save_project(path, state)
             future = self.executor.submit(self._run, path, action, preview, pick, recovery)
@@ -388,7 +403,8 @@ class Studio:
                     self.processes.discard(child)
             if code:
                 state = projects.read_project(path)
-                state.update(status="interrupted" if self.closing else ("review" if state.get("stage") == "render recovery" else "failed"),
+                state.update(status="interrupted" if self.closing else ("review" if state.get("stage") == "render recovery" else
+                                 "cancelled" if state["status"] == "cancelled" else "failed"),
                              error="Studio se cerró. Reanuda el proyecto para continuar." if self.closing else (
                                  state.get("error") or "Job failed. Open the job log for setup or input details."))
                 projects.save_project(path, state)
@@ -892,7 +908,8 @@ class Handler(BaseHTTPRequestHandler):
                 if parts == ["api", "formats"]:
                     return self.send_json(save_format(body, root=self.app.root), 201)
                 if parts == ["api", "projects"]:
-                    return self.send_json(projects.create_project(self.app.root, body["source"], body.get("options", {})), 201)
+                    project, reused = self.app.import_project(body["source"], body.get("options", {}),body.get("instagram"))
+                    return self.send_json({**project, "reused": True} if reused else project, 200 if reused else 201)
                 if parts == ["api", "batch"]:
                     sources = body["sources"]
                     if not isinstance(sources, list) or not 1 <= len(sources) <= 100 or any(not isinstance(s, str) or not s.strip() for s in sources):
@@ -901,9 +918,14 @@ class Handler(BaseHTTPRequestHandler):
                     brief_text = body.get("brief")
                     if brief_text is not None and not isinstance(brief_text, str):
                         raise ValueError("Brief must be text.")
+                    for source in sources:
+                        projects.validate_instagram(source.strip(), body.get("instagram"))
                     result = []
                     for source in sources:
-                        state = projects.create_project(self.app.root, source, options)
+                        state, reused = self.app.import_project(source, options, body.get("instagram"))
+                        if reused:
+                            result.append({**state, "reused": True})
+                            continue
                         if brief_text and brief_text.strip():
                             import campaign
                             campaign.save_rules(
@@ -936,6 +958,18 @@ class Handler(BaseHTTPRequestHandler):
                     if asset_lifecycle.hidden(self.app.root, project_id):
                         raise FileNotFoundError
                     state = projects.read_project(path)
+                    if action == "cancel-import":
+                        if (not state.get("instagram_import") or not self.app.busy(project_id)
+                                or state["stage"] not in {"prepare", "all", "source", "instagram download"}):
+                            raise ValueError("La descarga de Instagram ya no está activa.")
+                        if path.resolve() != path:
+                            raise ValueError("El proyecto de Instagram debe estar en el espacio local.")
+                        try:
+                            with (path / instagram_import.CANCEL_FILE).open("x"):
+                                pass
+                        except FileExistsError:
+                            pass
+                        return self.send_json({"ok": True})
                     if self.app.busy(project_id):
                         raise ValueError("Wait for this project's current job to finish before editing.")
                     if action == "manage":

@@ -570,6 +570,14 @@ class WatermarkRenderFailure(RenderFailure, watermark.WatermarkError):
     pass
 
 
+def sanitized_stderr(stderr, paths):
+    if isinstance(stderr, bytes):
+        stderr = stderr.decode("utf-8", "backslashreplace")
+    for path, label in paths.items():
+        stderr = (stderr or "").replace(path, label)
+    return stderr
+
+
 def ffmpeg_failure(stderr, returncode, *, layout, mark):
     code = returncode - 2**32 if 2**31 <= returncode < 2**32 else returncode
     details = stderr.lower()
@@ -682,7 +690,13 @@ def _render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAU
     requested_layout, requested_centers = layout, centers
     if vertical:
         rate, cadence = smart_camera.source_rate(render_src, local_start, timeout)
-        motion = {"version": 1, "requested": camera_mode, "source_cadence": cadence, "fps": str(rate)}
+        try:
+            color = smart_camera.source_color(render_src, timeout)
+        except (OSError, subprocess.SubprocessError, ValueError, KeyError, IndexError):
+            color = {"pix_fmt": "unknown", "color_range": "unknown"}
+        print("Color de entrada:", json.dumps(color), flush=True)
+        motion = {"version": 1, "requested": camera_mode, "source_cadence": cadence, "fps": str(rate),
+                  "source_color": color}
         if camera_mode != "auto":
             layout = "single"
         manual_split = camera_mode == "split" and (requested_layout == "split" or tuple(centers) != (.25, .75))
@@ -785,20 +799,21 @@ def _render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAU
 
         def encode(graph):
             cmd = command(graph, temporary)
-            print(">", " ".join(cmd), flush=True)
+            paths = {arg: "<entrada local>" for idx, arg in enumerate(cmd) if idx and cmd[idx-1] == "-i"}
+            paths[str(temporary)] = "<MP4 temporal>"
+            print(">", " ".join(paths.get(arg, arg) for arg in cmd), flush=True)
             try:
                 result = subprocess.run(cmd, check=True, cwd=scratch, stderr=subprocess.PIPE, encoding="utf-8",
                                         errors="backslashreplace", timeout=timeout or max(60, min(7200, dur * 12 + 60)))
                 if result.stderr:
-                    print(result.stderr, file=sys.stderr, flush=True)
+                    print(sanitized_stderr(result.stderr, paths), file=sys.stderr, flush=True)
             except subprocess.CalledProcessError as exc:
-                print(exc.stderr or "FFmpeg no devolvió stderr.", file=sys.stderr, flush=True)
+                print(sanitized_stderr(exc.stderr, paths) or "FFmpeg no devolvió stderr.", file=sys.stderr, flush=True)
                 raise ffmpeg_failure(exc.stderr or "", exc.returncode, layout=mode if mode == "smart" else layout,
                                      mark=mark) from exc
             except subprocess.TimeoutExpired as exc:
                 if exc.stderr:
-                    print(exc.stderr.decode("utf-8", "backslashreplace") if isinstance(exc.stderr, bytes)
-                          else exc.stderr, file=sys.stderr, flush=True)
+                    print(sanitized_stderr(exc.stderr, paths), file=sys.stderr, flush=True)
                 raise RenderFailure("FFmpeg superó el tiempo de render. Consulta el registro.") from exc
             except OSError as exc:
                 raise RenderFailure("No se pudo iniciar FFmpeg. Comprueba su instalación.") from exc
@@ -818,8 +833,25 @@ def _render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAU
 
             def verify():
                 nonlocal source_spans
-                evidence = smart_camera.delivery_check(temporary, rate, dur, timeout)
-                spans = smart_camera.freeze_spans(temporary, 0, dur, timeout)
+                try:
+                    evidence = smart_camera.delivery_check(temporary, rate, dur, timeout)
+                    try:
+                        spans = smart_camera.freeze_spans(temporary, 0, dur, timeout)
+                    except subprocess.SubprocessError as exc:
+                        print(sanitized_stderr(getattr(exc, "stderr", ""), {str(temporary): "<MP4 temporal>"}),
+                              file=sys.stderr, flush=True)
+                        raise smart_camera.DeliveryError("Control vertical: no se pudo decodificar el MP4 completo.") from exc
+                except smart_camera.DeliveryError as exc:
+                    diagnostic = out_dir / ".vertical-diagnostic"
+                    try:
+                        diagnostic.mkdir(exist_ok=True)
+                        if diagnostic.resolve() == diagnostic:
+                            temporary.replace(diagnostic / "last-rejected.mp4")
+                            print("MP4 rechazado conservado en .vertical-diagnostic/last-rejected.mp4.", flush=True)
+                    except OSError:
+                        print("No se pudo conservar el MP4 rechazado.", flush=True)
+                    alternative = "stable" if mode in {"smart", "split", "gaming facecam + gameplay (stacked)"} else None
+                    raise RenderFailure(str(exc), alternative) from exc
                 if spans and source_spans is None:
                     source_spans = smart_camera.freeze_spans(render_src, local_start, dur, timeout)
                 excess = smart_camera.excess_freezes(spans, source_spans or [])

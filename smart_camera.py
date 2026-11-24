@@ -7,6 +7,7 @@ import math
 import re
 from statistics import median
 import subprocess
+import sys
 
 
 MODES = ("auto", "smart", "split", "stable")
@@ -172,7 +173,7 @@ def source_rate(source, start, timeout):
 def freeze_spans(path, start, duration, timeout):
     """Read-only low-resolution analysis at native PTS, without frame synthesis."""
     result = subprocess.run([
-        "ffmpeg", "-nostdin", "-hide_banner", "-v", "info", "-threads", "2", "-ss", f"{start:.3f}",
+        "ffmpeg", "-nostdin", "-hide_banner", "-xerror", "-v", "info", "-threads", "2", "-ss", f"{start:.3f}",
         "-i", str(path), "-t", f"{duration:.3f}", "-an", "-sn", "-filter_threads", "1",
         "-vf", "scale=160:90:flags=area,freezedetect=n=-50dB:d=0.6",
         "-f", "null", "-",
@@ -200,41 +201,99 @@ def excess_freezes(output, source):
     return unexplained
 
 
-def delivery_check(path, rate, duration, timeout):
-    """Verify the encoded frame clock and the vertical delivery contract."""
+class DeliveryError(MotionError):
+    """The encoded file failed a technical contract independent of framing."""
+
+
+def source_color(path, timeout):
     result = subprocess.run([
-        "ffprobe", "-v", "error", "-show_packets", "-show_streams",
-        "-show_entries", "packet=stream_index,pts_time,dts_time:stream=index,codec_type,width,height,sample_aspect_ratio,"
-        "display_aspect_ratio,pix_fmt,codec_name,start_time,duration", "-of", "json", str(path),
-    ], check=True, capture_output=True, timeout=min(timeout or 45, 45))
-    data = json.loads(result.stdout)
-    stream = next(item for item in data["streams"] if item["codec_type"] == "video")
-    expected = (1080, 1920, "1:1", "9:16", "yuv420p", "h264")
-    actual = tuple(stream.get(key) for key in ("width", "height", "sample_aspect_ratio", "display_aspect_ratio",
-                                                "pix_fmt", "codec_name"))
-    if actual != expected:
-        raise MotionError(f"Control vertical: el MP4 tiene un formato inesperado: {actual}")
-    video = [packet for packet in data["packets"] if packet["stream_index"] == stream["index"]]
-    pts = sorted(float(packet["pts_time"]) for packet in video)
-    dts = [float(packet["dts_time"]) for packet in video]
+        "ffprobe", "-v", "error", "-select_streams", "v:0",
+        "-show_entries", "stream=pix_fmt,color_range", "-of", "json", str(path),
+    ], check=True, capture_output=True, timeout=min(timeout or 15, 15))
+    return json.loads(result.stdout)["streams"][0]
+
+
+def delivery_stream(stream):
+    for key, label, expected in (
+        ("width", "ancho", 1080), ("height", "alto", 1920),
+        ("sample_aspect_ratio", "SAR", "1:1"), ("display_aspect_ratio", "DAR", "9:16"),
+        ("codec_name", "códec de video", "h264"),
+    ):
+        if stream.get(key) != expected:
+            raise DeliveryError(f"Control vertical: {label} detectado {stream.get(key)!r}; se esperaba {expected}.")
+    pixels = stream.get("pix_fmt")
+    color = stream.get("color_range") or "unknown"
+    if pixels not in {"yuv420p", "yuvj420p"}:
+        raise DeliveryError(f"Control vertical: formato de píxeles {pixels!r}; se esperaba YUV 4:2:0 de 8 bits.")
+    if color not in {"pc", "tv", "unknown", "unspecified"} or (pixels == "yuvj420p" and color == "tv"):
+        raise DeliveryError(f"Control vertical: rango de color {color!r} incompatible con {pixels}.")
+    return color
+
+
+def delivery_number(item, key, label):
+    try:
+        value = float(item[key])
+        if math.isfinite(value):
+            return value
+    except (KeyError, ValueError, TypeError):
+        pass
+    raise DeliveryError(f"Control vertical: {label} ausente o inválido.")
+
+
+def delivery_check(path, rate, duration, timeout):
+    """Verify geometry, color, packet cadence and audiovisual alignment."""
+    try:
+        result = subprocess.run([
+            "ffprobe", "-v", "error", "-show_packets", "-show_streams",
+            "-show_entries", "packet=stream_index,pts_time,dts_time:stream=index,codec_type,width,height,sample_aspect_ratio,"
+            "display_aspect_ratio,pix_fmt,color_range,codec_name,avg_frame_rate,start_time,duration", "-of", "json", str(path),
+        ], check=True, capture_output=True, timeout=min(timeout or 45, 45))
+        if result.stderr:
+            print(result.stderr.decode("utf-8", "backslashreplace").replace(str(path), "<MP4 temporal>"), file=sys.stderr, flush=True)
+            raise ValueError
+        data = json.loads(result.stdout)
+        stream = next(item for item in data["streams"] if item["codec_type"] == "video")
+        video = [packet for packet in data["packets"] if packet["stream_index"] == stream["index"]]
+    except (OSError, subprocess.SubprocessError, StopIteration, ValueError, KeyError, TypeError) as exc:
+        raise DeliveryError("Control vertical: FFprobe no pudo leer un MP4 íntegro con pista de video.") from exc
+    print("FFprobe vertical:", json.dumps(stream, ensure_ascii=False), flush=True)
+    color = delivery_stream(stream)
+    video_duration = delivery_number(stream, "duration", "duración de video")
     step = float(1 / rate)
+    if abs(video_duration - duration) > max(.12, step * 2):
+        raise DeliveryError(f"Control vertical: duración {video_duration:.3f} s; se esperaban {duration:.3f} s.")
+    try:
+        fps = float(Fraction(stream["avg_frame_rate"]))
+    except (KeyError, ValueError, ZeroDivisionError, TypeError):
+        raise DeliveryError("Control vertical: frecuencia de fotogramas inválida.") from None
+    if fps <= 0 or abs(fps - float(rate)) > float(rate) * .005:
+        raise DeliveryError(f"Control vertical: frecuencia {fps:.3f} FPS; se esperaban {float(rate):.3f} FPS.")
+    pts = sorted(delivery_number(packet, "pts_time", "PTS de video") for packet in video)
+    dts = [delivery_number(packet, "dts_time", "DTS de video") for packet in video]
     deltas = [b - a for a, b in zip(pts, pts[1:])]
     if (not pts or abs(pts[0]) > step + .002
-            or abs(float(stream["duration"]) - duration) > max(.12, step * 2)
+            or abs(pts[-1] + step - video_duration) > max(.05, 2 * step)
             or any(abs(delta - step) > .001 for delta in deltas)
             or any(b <= a for a, b in zip(dts, dts[1:]))):
-        raise MotionError("Control vertical: discontinuidad en los timestamps o duración inesperada.")
-    metrics = {"frames": len(pts), "max_frame_interval": round(max(deltas, default=0), 6),
-               "max_frame_jitter": round(max((abs(delta - step) for delta in deltas), default=0), 6)}
+        raise DeliveryError("Control vertical: discontinuidad en los timestamps de video.")
+    metrics = {"width": stream["width"], "height": stream["height"], "sar": stream["sample_aspect_ratio"],
+               "dar": stream["display_aspect_ratio"], "codec": stream["codec_name"], "actual_fps": fps,
+               "frames": len(pts), "max_frame_interval": round(max(deltas, default=0), 6),
+               "max_frame_jitter": round(max((abs(delta - step) for delta in deltas), default=0), 6),
+               "pix_fmt": stream["pix_fmt"], "color_range": color}
     audio = next((item for item in data["streams"] if item["codec_type"] == "audio"), None)
     if audio:
-        v_start, a_start = float(stream["start_time"]), float(audio["start_time"])
-        v_end = v_start + float(stream["duration"])
-        a_end = a_start + float(audio["duration"])
+        if audio["codec_name"] != "aac":
+            raise DeliveryError(f"Control vertical: códec de audio {audio['codec_name']!r}; se esperaba AAC.")
+        v_start = delivery_number(stream, "start_time", "inicio de video")
+        a_start = delivery_number(audio, "start_time", "inicio de audio")
+        v_end = v_start + video_duration
+        a_end = a_start + delivery_number(audio, "duration", "duración de audio")
         start_skew, end_skew = abs(v_start - a_start), abs(v_end - a_end)
-        if audio["codec_name"] != "aac" or max(start_skew, end_skew) > .22:
-            raise MotionError("Control vertical: audio no compatible o fuera de sincronía.")
+        if max(start_skew, end_skew) > .22:
+            raise DeliveryError("Control vertical: audio fuera de sincronía con el video.")
         metrics.update(av_start_skew=round(start_skew, 4), av_end_skew=round(end_skew, 4))
+    print("Control vertical aprobado:", json.dumps(metrics), flush=True)
     return metrics
 
 

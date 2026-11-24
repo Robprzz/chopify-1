@@ -7,6 +7,7 @@ import pytest
 import render_clips as render
 from test_watermark import configure, gray_source, logo  # noqa: F401
 from watermark import Store
+from test_studio_navigation import chromium_page  # noqa: F401
 
 pytestmark = pytest.mark.skipif(not (shutil.which("ffmpeg") and shutil.which("ffprobe")), reason="FFmpeg required")
 
@@ -53,7 +54,8 @@ def test_ffmpeg_diagnostic_identifies_ass_without_blame(tmp_path, monkeypatch, c
     assert "Parsed_subtitles" in capsys.readouterr().err
     assert not list((tmp_path/"clips").glob("*.mp4"))
     output = render.render(*args,out_dir=tmp_path/"clips",camera_mode="stable",burn_subtitles=False)
-    assert output.is_file()
+    assert output.is_file() and output.with_suffix(".srt").is_file()
+    assert not output.with_suffix(".ass").exists()
     again = render.render(*args,out_dir=tmp_path/"clips",camera_mode="stable",burn_subtitles=False)
     assert output != again and output.is_file()
 
@@ -65,7 +67,7 @@ def test_windows_signed_exit_code_and_conservative_classification():
 
 
 
-def test_http_recovery_requires_confirmation_and_keeps_project_options(tmp_path, monkeypatch):
+def test_http_recovery_requires_confirmation_and_keeps_project_options(tmp_path, monkeypatch, chromium_page):
     import projects
     from urllib.error import HTTPError
     from test_dashboard import request, running_server
@@ -82,7 +84,19 @@ def test_http_recovery_requires_confirmation_and_keeps_project_options(tmp_path,
         for payload in ({"alternative":"stable"}, {"alternative":"watermark","confirmed":True}):
             with pytest.raises(HTTPError):
                 request(base, endpoint, payload, server.app.token)
-        request(base, endpoint, {"alternative":"stable","confirmed":True}, server.app.token)
+        page, expect = chromium_page
+        page.goto(base)
+        page.locator("#show-projects").click()
+        page.locator(f"#projects [data-id='{project['id']}']").click()
+        button = page.locator("#render-recovery")
+        expect(button).to_have_text("Exportar con encuadre vertical estable")
+        page.once("dialog", lambda dialog: dialog.dismiss())
+        button.click()
+        assert not calls
+        page.once("dialog", lambda dialog: dialog.accept())
+        with page.expect_response(lambda response: response.url.endswith(endpoint)) as response:
+            button.click()
+        assert response.value.ok
         server.app.futures[project["id"]].result(timeout=5)
         assert calls == [(path,"render",False,"3","stable")]
         assert projects.read_project(path)["options"]["layout"] == "stacked"

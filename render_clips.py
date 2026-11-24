@@ -652,6 +652,16 @@ def _render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAU
             raise
         caption_error = str(exc)
         groups = []
+    def write_caption(margin, override):
+        if not burn_subtitles:
+            return
+        try:
+            build_ass(cap_words, start, start + dur, scratch / "_caption.ass",
+                      tw, th, font_size, margin, style, brand, override, groups=groups)
+        except (OSError, UnicodeError) as exc:
+            print(f"ASS: {exc}", file=sys.stderr, flush=True)
+            raise RenderFailure("No se pudo crear el archivo ASS. Consulta el registro.", "subtitles") from exc
+
     if layout == "stacked" and aspect == "9:16" and camera_mode != "auto":
         layout = "single"
     if layout == "stacked":
@@ -662,11 +672,9 @@ def _render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAU
         vf, seam_margin = stacked_graph(W, H, tw, th, facecam_height, box)
         caption_override = dict(caption or {})
         caption_override["margin"] = None
-        build_ass(cap_words, start, start + dur, scratch / "_caption.ass",
-                  tw, th, font_size, seam_margin, style, brand, caption_override, groups=groups)
+        write_caption(seam_margin, caption_override)
     else:
-        build_ass(cap_words, start, start + dur, scratch / "_caption.ass",
-                  tw, th, font_size, margin_v, style, brand, caption, groups=groups)
+        write_caption(margin_v, caption)
 
     vertical = aspect == "9:16"
     needs_track = cw < W * .95 and fit == "cover"
@@ -842,12 +850,13 @@ def _render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAU
             caption_error = "Exportación autorizada sin subtítulos incrustados."
         from subtitle_quality import artifact_hash
         ass_output = out.with_suffix(".ass")
-        shutil.copyfile(ass, ass_output)
+        if burn_subtitles:
+            shutil.copyfile(ass, ass_output)
         track = {
             "version": captions.TIMELINE_VERSION, "duration": dur,
             "words": sum(len(captions.cue_text(group).split()) for group in groups),
             "timing": {k: resolved[k] for k in captions.TIMING_FIELDS},
-            "srt_hash": artifact_hash(srt), "ass_hash": artifact_hash(ass_output),
+            "srt_hash": artifact_hash(srt), "ass_hash": artifact_hash(ass_output) if burn_subtitles else None,
             "media_hash": artifact_hash(out), "tightened": bool(do_tighten), "burned_in": burn_subtitles,
             "render_options": {"style": style, "fit": fit, "layout": requested_layout, "centers": requested_centers,
                                "camera_mode": camera_mode,

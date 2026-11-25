@@ -1362,8 +1362,8 @@ def main():
         print("Studio: verificando FFmpeg y FFprobe.", flush=True)
         media = studio_settings.find_ffmpeg(HERE, prefs["ffmpeg_dir"])
         studio_settings.tool_path(media, os.environ)
-        if not media:
-            print("FFmpeg y FFprobe pendientes de configurar.", flush=True)
+        print("FFmpeg y FFprobe disponibles." if media else
+              "FFmpeg y FFprobe pendientes de configurar.", flush=True)
         print(f"Studio: preparando el servidor local en 127.0.0.1:{args.port}.", flush=True)
         server = make_server(args.projects_dir or installation.projects(prefs), args.port, installation)
     except ValueError as exc:

@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import socket
 import subprocess
 import sys
 import time
@@ -20,43 +21,50 @@ from unicode_io import configure_utf8, utf8_environment
 CHECKOUT = Path(__file__).resolve().parent
 PORT = 8765
 STARTUP_TIMEOUT = 60
-PROBE_ERRORS = {
-    "http": "El puerto {port} está ocupado. La comprobación de Studio recibió una respuesta HTTP no válida.",
-    "identity": "El puerto {port} está ocupado. La identidad de este servidor no coincide con esta instalación de Anqora.",
-    "connection": "No se pudo comprobar la conexión local al puerto {port}. Revisa launcher.log.",
-}
+REFUSED = {errno.ECONNREFUSED, 10061}  # POSIX and Winsock WSAECONNREFUSED.
+CONNECT_TIMEOUT = 3.0  # Allow Windows loopback to report refusal after TCP retries.
+HTTP_TIMEOUT = .65
 
 
 def probe(port, key):
     """Verify identity and distinguish a listener still awaiting an HTTP response."""
     nonce = secrets.token_hex(24)
-    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=.65)
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=HTTP_TIMEOUT)
     try:
         try:
-            conn.connect()
+            conn.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            conn.sock.settimeout(CONNECT_TIMEOUT)
+            code = conn.sock.connect_ex(("127.0.0.1", port))
+        except ConnectionRefusedError:
+            return "free"
         except OSError as exc:
-            if exc.errno == errno.ECONNREFUSED or getattr(exc, "winerror", None) == 10061:
+            if exc.errno in REFUSED or getattr(exc, "winerror", None) in REFUSED:
                 return "free"
-            if isinstance(exc, TimeoutError):
-                return "pending"
-            return "connection"
+            return "occupied"
+        if code:
+            return "free" if code in REFUSED else "occupied"
+        conn.sock.settimeout(HTTP_TIMEOUT)
         conn.request("GET", "/api/health?nonce=" + nonce)
         with conn.getresponse() as response:
             if response.status != 200:
-                return "http"
+                return "occupied"
             length = response.getheader("Content-Length", "")
             if not length.isascii() or not length.isdecimal() or len(length) > 3 or int(length) > 512:
-                return "http"
-            data = json.loads(response.read(int(length)))
+                return "occupied"
+            expected = int(length)
+            body = response.read(expected)
+            if len(body) != expected:
+                return "occupied"
+            data = json.loads(body)
             if not isinstance(data, dict) or not isinstance(proof := data.get("proof"), str):
-                return "http"
+                return "occupied"
             if not proof.isascii() or not hmac.compare_digest(proof, system.instance_proof(key, nonce)):
-                return "identity"
+                return "occupied"
             return "ours"
-    except (OSError, http.client.RemoteDisconnected):
+    except TimeoutError:
         return "pending"
-    except (ValueError, http.client.HTTPException):
-        return "http"
+    except (OSError, ValueError, http.client.HTTPException):
+        return "occupied"
     finally:
         conn.close()
 
@@ -66,7 +74,7 @@ def wait_for_studio(port, key, timeout, child=None):
     deadline = time.monotonic() + timeout
     while True:
         status = probe(port, key)
-        if status in PROBE_ERRORS or status == "ours" or (status == "free" and child is None):
+        if status in {"occupied", "ours"} or (status == "free" and child is None):
             return status
         if child is not None and (code := child.poll()) is not None:
             raise ValueError(f"El proceso de Studio terminó antes de iniciar (código {code}). Revisa studio.log.")
@@ -171,8 +179,10 @@ def launch(store, *, port=PORT, browser=None, timeout=STARTUP_TIMEOUT):
                             stop_starting_child(child)
                         except (OSError, subprocess.TimeoutExpired):
                             write_launcher_log(store, f"No se pudo detener el proceso de arranque (PID {child.pid}).")
-        if status in PROBE_ERRORS:
-            raise ValueError(PROBE_ERRORS[status].format(port=port))
+        if status == "occupied":
+            raise ValueError(f"El puerto {port} está ocupado o no se pudo verificar. "
+                             "Comprueba si otra aplicación lo usa. Studio necesita una respuesta HTTP válida "
+                             "con la identidad de esta instalación.")
         write_launcher_log(store, f"Identidad de Studio verificada en el puerto local {port}.")
     url = f"http://127.0.0.1:{port}/"
     should_open = prefs["open_browser"] if browser is None else browser

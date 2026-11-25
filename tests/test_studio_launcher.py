@@ -1,5 +1,6 @@
 """Real local server and Git tests, plus platform seams for the Windows launcher."""
 from contextlib import contextmanager
+import errno
 import hashlib
 import hmac
 from http.client import HTTPConnection
@@ -134,9 +135,9 @@ def test_health_rejects_other_services_and_confirms_only_this_instance(tmp_path)
     with serving(store) as (server, base, _):
         port = server.server_port
         assert studio_launcher.probe(port, store.identity()) == "ours"
-        assert studio_launcher.probe(port, b"not-this-key") == "identity"
+        assert studio_launcher.probe(port, b"not-this-key") == "occupied"
         foreign_installation = studio_settings.Settings(tmp_path / "otra", tmp_path / "user")
-        with pytest.raises(ValueError, match="identidad.*no coincide"):
+        with pytest.raises(ValueError, match="ocupado.*identidad"):
             studio_launcher.launch(foreign_installation, port=port, browser=False)
         assert studio_launcher.probe(port, store.identity()) == "ours"
         with pytest.raises(HTTPError) as bad:
@@ -156,9 +157,9 @@ def test_health_rejects_other_services_and_confirms_only_this_instance(tmp_path)
         thread = threading.Thread(target=other.serve_forever)
         thread.start()
         try:
-            with pytest.raises(ValueError, match="ocupado.*respuesta HTTP"):
+            with pytest.raises(ValueError, match="ocupado"):
                 studio_launcher.launch(store, port=other.server_port, browser=False)
-            assert studio_launcher.probe(other.server_port, store.identity()) == "http"
+            assert studio_launcher.probe(other.server_port, store.identity()) == "occupied"
         finally:
             other.shutdown()
             thread.join()
@@ -226,15 +227,63 @@ def test_unresponsive_listener_times_out_without_starting_another_process(tmp_pa
         assert not (store.logs / "studio.log").exists()
 
 
-def test_windows_refused_socket_is_free(monkeypatch):
-    error = OSError("Winsock connection refused")
-    error.winerror = 10061
+def test_native_loopback_without_listener_reports_free():
+    with socket.socket() as reserved:
+        reserved.bind(("127.0.0.1", 0))
+        assert studio_launcher.probe(reserved.getsockname()[1], b"0" * 32) == "free"
 
-    def refused(_conn):
-        raise error
 
-    monkeypatch.setattr(studio_launcher.http.client.HTTPConnection, "connect", refused)
-    assert studio_launcher.probe(8765, b"fixture") == "free"
+@pytest.mark.parametrize(("result", "expected"), [
+    (10061, "free"),
+    (errno.ECONNREFUSED, "free"),
+    (ConnectionRefusedError(), "free"),
+    (TimeoutError(), "occupied"),
+    (10060, "occupied"),
+])
+def test_tcp_connect_results_are_classified_before_http(monkeypatch, result, expected):
+    class Connection:
+        timeout = None
+        closed = False
+
+        def settimeout(self, timeout):
+            self.timeout = timeout
+
+        def connect_ex(self, address):
+            assert address == ("127.0.0.1", 8765)
+            assert self.timeout >= 2
+            if isinstance(result, OSError):
+                raise result
+            return result
+
+        def close(self):
+            self.closed = True
+
+    connection = Connection()
+    monkeypatch.setattr(studio_launcher.socket, "socket", lambda *_: connection)
+    assert studio_launcher.probe(8765, b"0" * 32) == expected
+    assert connection.closed
+
+
+@pytest.mark.parametrize("payload", [b"", b"not HTTP\r\n", b"HTTP/1.0 200 OK\r\nContent-Length: 15\r\n\r\n{}"])
+def test_foreign_listener_rejects_invalid_or_truncated_responses(payload):
+    def respond(listener):
+        client, _ = listener.accept()
+        with client:
+            client.settimeout(3)
+            client.recv(1024)
+            if payload:
+                client.sendall(payload)
+
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        listener.settimeout(4)
+        thread = threading.Thread(target=respond, args=(listener,))
+        thread.start()
+        try:
+            assert studio_launcher.probe(listener.getsockname()[1], b"0" * 32) == "occupied"
+        finally:
+            thread.join(timeout=5)
 
 
 def test_child_exit_reports_code_and_keeps_its_output(tmp_path, monkeypatch):

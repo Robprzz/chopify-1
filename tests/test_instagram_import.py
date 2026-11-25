@@ -324,3 +324,27 @@ def test_retry_in_chromium_reuses_failed_project_and_continues(tmp_path, monkeyp
         assert (folder/"instagram.mp4").read_bytes() == source.read_bytes()
         assert (folder/"segments.json").is_file()
         assert calls == [REEL, CDN]
+
+
+def test_retry_accepts_legacy_authorized_url_for_same_post(tmp_path, monkeypatch):
+    """Legacy query parameters and host aliases must not invalidate prior consent."""
+    post = "https://www.instagram.com/p/DglkhqQvpW4/"
+    state = projects.create_project(tmp_path, post, {}, instagram=AUTH)
+    folder = tmp_path / state["id"]
+    state["instagram_import"]["url"] = "https://m.instagram.com/p/DglkhqQvpW4/?igsh=legacy"
+    projects.save_project(folder, state)
+    monkeypatch.setattr(importer, "import_video", lambda *_args: (folder / "instagram.mp4", {"platform": "instagram"}))
+    file, meta = projects.instagram_source(folder, state, lambda *_args: None)
+    assert file.name == "instagram.mp4"
+    assert meta["platform"] == "instagram"
+
+
+def test_retry_rejects_authorization_for_different_post(tmp_path, monkeypatch):
+    post = "https://www.instagram.com/p/DglkhqQvpW4/"
+    state = projects.create_project(tmp_path, post, {}, instagram=AUTH)
+    folder = tmp_path / state["id"]
+    state["instagram_import"]["url"] = "https://m.instagram.com/p/AnotherPost/?igsh=legacy"
+    projects.save_project(folder, state)
+    monkeypatch.setattr(importer, "import_video", lambda *_args: pytest.fail("Unauthorized download attempted"))
+    with pytest.raises(ValueError, match="autorización"):
+        projects.instagram_source(folder, state, lambda *_args: None)

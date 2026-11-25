@@ -319,7 +319,13 @@ def validate_segments(segments, duration):
 def instagram_source(path, state, stage):
     source = state["source"]
     auth = state.get("instagram_import") or {}
-    if auth.get("authorized") is not True or auth.get("url") != instagram_import.canonical(source):
+    try:
+        authorized_url = instagram_import.canonical(auth.get("url", ""))
+        source_url = instagram_import.canonical(source)
+    except (TypeError, ValueError):
+        authorized_url = None
+        source_url = None
+    if auth.get("authorized") is not True or not source_url or authorized_url != source_url:
         raise ValueError("Confirma la autorización en un proyecto de importación de Instagram.")
     media = path / "instagram.mp4"
     if media.is_symlink() or (media.exists() and (not media.is_file() or media.resolve() != media)):

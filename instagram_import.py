@@ -1,4 +1,5 @@
 """Anonymous import of an MP4 explicitly advertised by a public Instagram post."""
+from contextlib import closing
 import http.client
 from html.parser import HTMLParser
 import ipaddress
@@ -8,6 +9,8 @@ from pathlib import Path
 import re
 import socket
 import ssl
+import subprocess
+import sys
 import tempfile
 import time
 from urllib.parse import urljoin, urlsplit
@@ -17,6 +20,8 @@ POST = re.compile(r"/(reel|p)/([a-zA-Z0-9_-]{1,64})/?")
 DEFAULTS = {"max_mib": 256, "max_seconds": 1200}
 IPV6_UNICAST = ipaddress.ip_network("2000::/3")
 CANCEL_FILE = ".instagram-cancel"
+DOWNLOAD_STAGES = {"prepare", "all", "source", "instagram download"}
+RETRY_STATUSES = {"failed", "cancelled", "interrupted"}
 HTTP_ERRORS = {
     401: "Instagram exige iniciar sesión para acceder a este video.",
     403: "Instagram restringe el acceso a este video.",
@@ -24,6 +29,10 @@ HTTP_ERRORS = {
     410: "La publicación de Instagram ya no está disponible.",
     429: "Instagram limitó temporalmente las solicitudes. Reintenta más tarde.",
 }
+
+
+class ImportTimeout(ValueError):
+    pass
 
 
 class Cancelled(ValueError):
@@ -85,9 +94,13 @@ def addresses(host):
 
 class PinnedHTTPS(http.client.HTTPSConnection):
     def connect(self):
+        timed_out = False
         for address in addresses(self.host)[:8]:
             try:
                 sock = socket.create_connection((address, 443), timeout=self.timeout)
+            except TimeoutError:
+                timed_out = True
+                continue
             except OSError:
                 continue
             try:
@@ -96,6 +109,8 @@ class PinnedHTTPS(http.client.HTTPSConnection):
                 sock.close()
                 raise
             return
+        if timed_out:
+            raise TimeoutError("Instagram HTTPS timeout")
         raise OSError("Instagram HTTPS unavailable")
 
 
@@ -106,27 +121,33 @@ def transfer(url, *, media, cancel):
         parts = target(url)
         if not permitted(parts.hostname, media):
             raise ValueError("Instagram devolvió un destino no permitido.")
+        if not media and parts.path.rstrip("/") == "/accounts/login":
+            raise ValueError("Instagram exige iniciar sesión para acceder a este video.")
         if not media and canonical(url).split("/")[-2] != original.split("/")[-2]:
             raise ValueError("La página redirigió a un contenido distinto.")
         conn = PinnedHTTPS(parts.hostname, timeout=8, context=ssl.create_default_context())
         try:
-            conn.request("GET", parts.path + (("?" + parts.query) if parts.query else ""),
-                         headers={"User-Agent": "AnqoraStudio/5.1", "Accept-Encoding": "identity"})
-            response = conn.getresponse()
-            if response.status in {301, 302, 303, 307, 308}:
+            try:
+                conn.request("GET", parts.path + (("?" + parts.query) if parts.query else ""),
+                             headers={"User-Agent": "AnqoraStudio/5.1.3", "Accept-Encoding": "identity"})
+                response = conn.getresponse()
+            except TimeoutError:
+                raise ImportTimeout("Se agotó el tiempo de conexión con Instagram. Puedes reintentar.") from None
+            except (OSError, http.client.HTTPException):
+                raise ValueError("La conexión con Instagram se interrumpió. Puedes reintentar.") from None
+            if response.status == 200:
+                return conn, response
+            with closing(response):
+                if response.status not in {301, 302, 303, 307, 308}:
+                    raise ValueError(HTTP_ERRORS.get(response.status, f"Instagram no pudo entregar el video (HTTP {response.status})."))
                 redirect = response.getheader("Location")
                 if not redirect:
                     raise ValueError("Instagram devolvió una redirección incompleta.")
                 url = urljoin(url, redirect)
-                response.close()
-                conn.close()
-                continue
-            if response.status != 200:
-                raise ValueError(HTTP_ERRORS.get(response.status, f"Instagram no pudo entregar el video (HTTP {response.status})."))
-            return conn, response
-        except (Exception, KeyboardInterrupt):
+        except BaseException:
             conn.close()
             raise
+        conn.close()
     raise ValueError("Instagram devolvió demasiadas redirecciones.")
 
 
@@ -162,18 +183,18 @@ def import_video(url, folder, limits, progress):
     url = canonical(url)
     max_bytes = limits["max_mib"] * 1024**2
     folder = Path(folder).resolve()
-    clean_interrupted(folder)
     deadline = time.monotonic() + 300
 
     def cancel():
         if (folder / CANCEL_FILE).exists():
             raise Cancelled("Importación de Instagram cancelada.")
         if time.monotonic() > deadline:
-            raise ValueError("La importación de Instagram superó los cinco minutos.")
+            raise ImportTimeout("Se agotó el tiempo de importación de Instagram (cinco minutos).")
 
     try:
+        clean_interrupted(folder)
         conn, response = transfer(url, media=False, cancel=cancel)
-        with conn, response:
+        with closing(conn), closing(response):
             page = bytearray()
             for chunk in chunks(response, cancel):
                 page.extend(chunk)
@@ -198,7 +219,7 @@ def import_video(url, folder, limits, progress):
             raise ValueError("Instagram devolvió un destino de video no permitido.")
         from ingest import _run, check_disk
         conn, response = transfer(link, media=True, cancel=cancel)
-        with conn, response, tempfile.TemporaryDirectory(prefix=".instagram-", dir=folder) as staging:
+        with closing(conn), closing(response), tempfile.TemporaryDirectory(prefix=".instagram-", dir=folder) as staging:
             if response.getheader("Content-Type", "").split(";")[0].strip().lower() != "video/mp4":
                 raise ValueError("Instagram no entregó un archivo MP4 compatible.")
             length = response.getheader("Content-Length")
@@ -229,14 +250,26 @@ def import_video(url, folder, limits, progress):
             os.replace(temp, ready)
             return ready, {**meta, **info, "source": url, "size": done, "estimated_size": done,
                            "long": False, "url": True, "media_kind": "video", "render_from_sections": False}
-    except (OSError, http.client.HTTPException):
-        raise ValueError("La conexión con Instagram se interrumpió. Puedes reintentar la importación.") from None
+    except ValueError:
+        raise
+    except OSError:
+        raise ValueError("Studio no pudo guardar el video de Instagram en el proyecto. Comprueba el espacio y los permisos.") from None
+    except Exception as exc:
+        print(f"Error interno de Python en el importador de Instagram ({type(exc).__name__}).",
+              file=sys.stderr, flush=True)
+        raise ValueError("Error interno de Python al importar desde Instagram. Consulta el Registro del trabajo y reintenta.") from None
 
 
 def chunks(response, cancel):
     while True:
         cancel()
-        data = response.read1(64 * 1024)
+        try:
+            data = response.read1(64 * 1024)
+        except TimeoutError:
+            cancel()
+            raise ImportTimeout("Se agotó el tiempo de espera al descargar desde Instagram. Puedes reintentar.") from None
+        except (OSError, http.client.HTTPException):
+            raise ValueError("La descarga de Instagram se interrumpió antes de terminar. Puedes reintentar.") from None
         if not data:
             return
         yield data
@@ -244,7 +277,6 @@ def chunks(response, cancel):
 
 def verify_mp4(path, max_seconds, run):
     import json
-    import subprocess
     try:
         result = run(["ffprobe", "-v", "error", "-protocol_whitelist", "file", "-enable_drefs", "0", "-use_absolute_path", "0", "-f", "mov",
                       "-show_entries", "format=duration,format_name:stream=codec_type,width,height",
@@ -255,6 +287,8 @@ def verify_mp4(path, max_seconds, run):
         if ("mp4" not in data["format"]["format_name"].split(",") or min(video["width"],video["height"]) < 2
                 or not math.isfinite(duration) or duration <= 0):
             raise ValueError
+    except subprocess.TimeoutExpired:
+        raise ImportTimeout("Se agotó el tiempo de verificación del MP4 de Instagram.") from None
     except (OSError, subprocess.SubprocessError, ValueError, StopIteration, TypeError, KeyError):
         raise ValueError("Instagram no entregó un MP4 de video válido.") from None
     if duration > max_seconds:

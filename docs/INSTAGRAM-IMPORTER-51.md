@@ -6,7 +6,7 @@
 2. Confirma que tienes los derechos o autorización para usar el video. Los límites iniciales son 256 MiB y 1 200 segundos. Puedes ajustarlos por solicitud.
 3. Crea el proyecto. Studio conserva la URL canónica y la fecha de confirmación. Muestra título, autor y duración cuando la página o el MP4 proporcionan esa información. Puedes cancelar durante la descarga.
 4. Selecciona y exporta los clips usando el flujo habitual, incluidos Smart Camera, subtítulos y marca de agua. Desde el clip exportado, usa **Programar** para abrir su revisión en el calendario. La importación no autoriza envíos.
-5. Cuando un enlace ya corresponde a un proyecto activo o histórico visible, Studio reutiliza ese proyecto. Para reintentar una descarga cancelada o interrumpida, abre el proyecto existente y pulsa **Continuar procesamiento**.
+5. Cuando un enlace ya corresponde a un proyecto activo o histórico visible, Studio reutiliza ese proyecto. Para recuperar una descarga fallida, cancelada o interrumpida en Anqora 5.1.3, abre ese proyecto y pulsa **Reintentar descarga**. Consulta el historial en **Errores de descargas anteriores**. [Notas de la corrección 5.1.3](INSTAGRAM-HOTFIX-513.md)
 
 ## Compatibilidad y límites
 

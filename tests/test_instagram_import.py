@@ -32,7 +32,14 @@ class Response(io.BytesIO):
         return self.headers.get(key, default)
 
 
-def transport(monkeypatch, content, *, url=REEL, length=None, available=True):
+class CloseOnly:
+    closed = False
+
+    def close(self):
+        self.closed = True
+
+
+def transport(monkeypatch, content, *, url=REEL, length=None, available=True, resources=None):
     calls = []
     html = (f'<meta property="og:url" content="{url}">'
             '<meta property="og:title" content="Grabación 🎬">'
@@ -44,7 +51,10 @@ def transport(monkeypatch, content, *, url=REEL, length=None, available=True):
         cancel()
         response = (Response(content, **{"Content-Type":"video/mp4",
                     "Content-Length":str(len(content) if length is None else length)}) if media else Response(html))
-        return io.BytesIO(), response
+        connection = CloseOnly()
+        if resources is not None:
+            resources.extend((connection, response))
+        return connection, response
 
     monkeypatch.setattr(importer,"transfer",send)
     return calls
@@ -53,7 +63,8 @@ def transport(monkeypatch, content, *, url=REEL, length=None, available=True):
 @pytest.mark.parametrize("url", [REEL, POST])
 def test_public_fixture_import_uses_same_project_pipeline(tmp_path, monkeypatch, url):
     original = gray_source(tmp_path)
-    calls = transport(monkeypatch, original.read_bytes(), url=url)
+    resources = []
+    calls = transport(monkeypatch, original.read_bytes(), url=url, resources=resources)
     project = projects.create_project(tmp_path, url + "?igsh=discard", {"aspect":"9:16","camera_mode":"stable",
         "min_score":6, "min_len":1}, instagram=AUTH)
     folder = tmp_path / project["id"]
@@ -69,6 +80,7 @@ def test_public_fixture_import_uses_same_project_pipeline(tmp_path, monkeypatch,
     assert projects.read_project(folder)["source_meta"]["duration"] == pytest.approx(3,abs=.04)
     projects.run_project(folder, action="prepare")
     assert calls == [url, CDN]
+    assert len(resources) == 4 and all(item.closed for item in resources)
     projects.atomic_json(folder/"segments.json", [{"start":0,"end":1.2,"hook":"fixture","overall":9}])
     result = projects.run_project(folder, action="render")
     output = Path(result["last_outputs"][0])
@@ -104,26 +116,33 @@ def test_inaccessible_response_does_not_request_media(tmp_path, monkeypatch):
 
 
 def test_http_private_or_removed_and_redirect_rejected(monkeypatch):
-    requested = []
-    class Conn(io.BytesIO):
+    requested, connections = [], []
+    class Conn(CloseOnly):
         def __init__(self, host, **_):
-            super().__init__()
+            connections.append(self)
             requested.append(host)
         def request(self,*_,**__):
             pass
         def getresponse(self):
             return response
     monkeypatch.setattr(importer,"PinnedHTTPS",Conn)
-    for code, error in ((403,"restringe"), (404,"eliminado"), (429,"temporalmente")):
+    for code, error in ((403,"restringe"), (404,"eliminado"), (429,"temporalmente"), (500,"HTTP 500")):
         response = Response(b"")
         response.status = code
         with pytest.raises(ValueError,match=error):
             importer.transfer(REEL,media=False,cancel=lambda:None)
+        assert response.closed and connections[-1].closed
+    response = Response(b"", Location="/accounts/login/?next=discard")
+    response.status = 302
+    with pytest.raises(ValueError, match="iniciar sesión"):
+        importer.transfer(REEL, media=False, cancel=lambda: None)
+    assert response.closed and connections[-1].closed
     response = Response(b"",Location="https://outside.invalid/file")
     response.status = 302
     with pytest.raises(ValueError,match="destino"):
         importer.transfer(CDN,media=True,cancel=lambda:None)
-    assert requested == ["www.instagram.com"]*3 + ["video.cdninstagram.com"]
+    assert requested == ["www.instagram.com"]*5 + ["video.cdninstagram.com"]
+    assert response.closed and all(conn.closed for conn in connections)
 
 
 @pytest.mark.parametrize("ip",["127.0.0.1","192.168.1.10","169.254.169.254","::1","::ffff:127.0.0.1","64:ff9b::7f00:1","224.1.1.1"])
@@ -135,7 +154,8 @@ def test_nonpublic_dns_answers_are_refused(monkeypatch, ip):
 
 @pytest.mark.parametrize("cancel", [False, True])
 def test_interrupted_or_cancelled_transfer_cleans_partial_files(tmp_path,monkeypatch,cancel):
-    transport(monkeypatch,b"partial",length=100)
+    resources = []
+    transport(monkeypatch,b"partial",length=100,resources=resources)
     def progress(*_):
         if cancel:
             (tmp_path/importer.CANCEL_FILE).touch()
@@ -145,6 +165,7 @@ def test_interrupted_or_cancelled_transfer_cleans_partial_files(tmp_path,monkeyp
     else:
         with pytest.raises(ValueError,match="incompleta"):
             importer.import_video(REEL,tmp_path,importer.DEFAULTS,progress)
+    assert all(item.closed for item in resources)
     assert not list(tmp_path.glob(".instagram-*/video.mp4"))
     assert not (tmp_path/"instagram.mp4").exists()
 
@@ -213,3 +234,93 @@ def test_removes_only_own_abandoned_partial(tmp_path):
     protected.touch()
     importer.clean_interrupted(tmp_path)
     assert not stage.exists() and protected.exists()
+
+
+def test_real_connection_contract():
+    connection = importer.PinnedHTTPS("www.instagram.com")
+    with pytest.raises(TypeError, match="context manager"):
+        with connection:
+            pass
+    connection.close()
+
+
+def test_allowed_redirect_closes_before_retry_and_connection_timeout(tmp_path, monkeypatch):
+    connections = []
+    redirect = Response(b"", Location=REEL.replace("www.instagram.com", "m.instagram.com"))
+    redirect.status = 302
+
+    class Conn(CloseOnly):
+        def __init__(self, host, **_):
+            self.host = host
+            connections.append(self)
+
+        def request(self, *_args, **_kwargs):
+            if self.host == "m.instagram.com":
+                assert redirect.closed and connections[0].closed
+                raise TimeoutError("socket")
+
+        def getresponse(self):
+            return redirect
+
+    monkeypatch.setattr(importer, "PinnedHTTPS", Conn)
+    with pytest.raises(importer.ImportTimeout, match="tiempo de conexión"):
+        importer.import_video(REEL, tmp_path, importer.DEFAULTS, lambda *_: None)
+    assert [conn.host for conn in connections] == ["www.instagram.com", "m.instagram.com"]
+    assert all(conn.closed for conn in connections)
+
+
+def test_media_timeout_closes_both_responses_and_connections(tmp_path, monkeypatch):
+    resources = []
+    transport(monkeypatch, b"partial", resources=resources)
+    read = Response.read1
+
+    def slow(response, size):
+        if response.getheader("Content-Type") == "video/mp4":
+            raise TimeoutError("timed out")
+        return read(response, size)
+
+    monkeypatch.setattr(Response, "read1", slow)
+    with pytest.raises(importer.ImportTimeout, match="tiempo de espera"):
+        importer.import_video(REEL, tmp_path, importer.DEFAULTS, lambda *_: None)
+    assert len(resources) == 4 and all(item.closed for item in resources)
+    assert not list(tmp_path.glob(".instagram-*"))
+
+
+def test_retry_in_chromium_reuses_failed_project_and_continues(tmp_path, monkeypatch, chromium_page):
+    page, expect = chromium_page
+    source = gray_source(tmp_path)
+    calls = transport(monkeypatch, source.read_bytes())
+    legacy_error = "'PinnedHTTPS' object does not support the context manager protocol"
+    root = tmp_path / "projects"
+    project = projects.create_project(root, REEL, {"min_score":6,"min_len":1}, instagram=AUTH)
+    project.update(status="failed", stage="instagram download", error=legacy_error)
+    folder = root / project["id"]
+    projects.save_project(folder, project)
+    old_stage = folder / ".instagram-abcdefgh"
+    old_stage.mkdir()
+    (old_stage / "video.mp4").write_bytes(b"old partial")
+    (folder / importer.CANCEL_FILE).touch()
+
+    def transcribe(media, workdir, *_args, **kw):
+        assert kw["source"] == REEL
+        projects.atomic_json(workdir/"transcript.json", {"video":str(media),"duration":3,
+            "words":[{"word":"Hola mundo.","start":.1,"end":.9}],"model":"fixture"})
+
+    monkeypatch.setattr(projects.dt, "transcribe", transcribe)
+    with running_server(root) as (server, base):
+        monkeypatch.setattr(server.app, "_run", lambda path, action, *_: projects.run_project(path, action=action))
+        page.goto(base)
+        page.locator("#show-projects").click()
+        page.locator(f'#projects [data-id="{project["id"]}"]').click()
+        expect(page.locator("#job-error")).to_contain_text("Error interno de Python")
+        page.get_by_role("button", name="Reintentar descarga").click()
+        expect(page.locator("#status")).to_contain_text("En revisión",timeout=30000)
+        page.locator("#instagram-history summary").click()
+        expect(page.locator("#instagram-errors")).to_contain_text("Error interno de Python")
+        data = request(base, "/api/projects")["projects"]
+        assert len(data) == 1 and data[0]["id"] == project["id"] and data[0]["source"] == REEL
+        assert data[0]["instagram_errors"][0]["error"] == legacy_error
+        assert not old_stage.exists()
+        assert (folder/"instagram.mp4").read_bytes() == source.read_bytes()
+        assert (folder/"segments.json").is_file()
+        assert calls == [REEL, CDN]

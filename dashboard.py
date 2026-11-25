@@ -360,6 +360,9 @@ class Studio:
                 state["options"] = projects.validate_options({**state["options"], **output})
             if action in {"prepare", "all"} and state.get("instagram_import"):
                 (path / instagram_import.CANCEL_FILE).unlink(missing_ok=True)
+                if (state["status"] in instagram_import.RETRY_STATUSES
+                        and state["stage"] in instagram_import.DOWNLOAD_STAGES and state.get("error")):
+                    state.setdefault("instagram_errors", []).append({"at": state["updated"], "error": state["error"]})
             state.update(status="queued", stage=action, error=None)
             projects.save_project(path, state)
             future = self.executor.submit(self._run, path, action, preview, pick, recovery)
@@ -958,9 +961,16 @@ class Handler(BaseHTTPRequestHandler):
                     if asset_lifecycle.hidden(self.app.root, project_id):
                         raise FileNotFoundError
                     state = projects.read_project(path)
+                    if action == "retry-import":
+                        if (not state.get("instagram_import") or path.resolve() != path
+                                or state["status"] not in instagram_import.RETRY_STATUSES
+                                or state["stage"] not in instagram_import.DOWNLOAD_STAGES):
+                            raise ValueError("Este proyecto no tiene una descarga de Instagram pendiente de reintento.")
+                        self.app.enqueue(project_id, "prepare")
+                        return self.send_json({"ok": True}, 202)
                     if action == "cancel-import":
                         if (not state.get("instagram_import") or not self.app.busy(project_id)
-                                or state["stage"] not in {"prepare", "all", "source", "instagram download"}):
+                                or state["stage"] not in instagram_import.DOWNLOAD_STAGES):
                             raise ValueError("La descarga de Instagram ya no está activa.")
                         if path.resolve() != path:
                             raise ValueError("El proyecto de Instagram debe estar en el espacio local.")

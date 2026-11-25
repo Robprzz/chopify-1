@@ -460,10 +460,40 @@ $("#cancel-instagram").addEventListener("click", safe(async () => {
   $("#cancel-instagram").disabled = true;
   notice("Cancelación solicitada.");
 }));
+$("#retry-instagram").addEventListener("click", safe(async () => {
+  const id = state.id;
+  const button = $("#retry-instagram");
+  button.disabled = true;
+  try {
+    await api(`/api/projects/${id}/retry-import`, {});
+    if (state.id !== id) return;
+    state.detail.busy = state.busy = true;
+    state.detail.project.status = "queued";
+    state.detail.project.stage = "prepare";
+    state.detail.project.error = null;
+    updateStatus(state.detail);
+  } finally {
+    button.disabled = false;
+  }
+}));
+function instagramError(error) {
+  return error.includes("'PinnedHTTPS' object does not support the context manager protocol")
+    ? "Error interno de Python al abrir la conexión con Instagram. Puedes reintentar en este proyecto."
+    : error;
+}
 function updateInstagram(detail) {
   const imported = detail.project.instagram_import;
-  const active = Boolean(imported && detail.busy &&
-    ["prepare","all","source","instagram download"].includes(detail.project.stage));
+  const downloadStage = ["prepare","all","source","instagram download"].includes(detail.project.stage);
+  const active = Boolean(imported && detail.busy && downloadStage);
+  $("#retry-instagram").hidden = !imported || detail.busy || !downloadStage ||
+    !["failed","cancelled","interrupted"].includes(detail.project.status);
+  const errors = detail.project.instagram_errors || [];
+  $("#instagram-history").hidden = !errors.length;
+  $("#instagram-errors").replaceChildren(...errors.map(entry => {
+    const item = document.createElement("li");
+    item.textContent = new Date(entry.at * 1000).toLocaleString() + " · " + instagramError(entry.error);
+    return item;
+  }));
   const meta = detail.source_meta || {};
   const text = $("#instagram-metadata");
   text.hidden = !imported;
@@ -496,7 +526,7 @@ function updateStatus(detail) {
     detail.project.error ||
     (errors.length ? `${errors.length} clip(s) failed to render.` : "");
   $("#job-error").hidden = !error;
-  $("#job-error").textContent = error;
+  $("#job-error").textContent = detail.project.instagram_import ? instagramError(error) : error;
   const recovery = recoveryLabels[detail.project.render_recovery?.alternative];
   $("#render-recovery").hidden = detail.busy || !recovery || detail.project.stage !== "render recovery";
   $("#render-recovery").textContent = recovery || "";

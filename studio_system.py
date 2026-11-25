@@ -1,4 +1,5 @@
 """System Settings and lifecycle operations for the authenticated loopback API."""
+from contextlib import contextmanager
 import os
 import sqlite3
 from pathlib import Path
@@ -38,12 +39,22 @@ class System:
         self._apply_media(report)
         return report
 
+    @contextmanager
+    def _media_operation(self):
+        if not self.media_lock.acquire(blocking=False):
+            raise ValueError("Ya hay una operación de FFmpeg en curso. Espera a que termine y vuelve a intentarlo.")
+        try:
+            yield
+        finally:
+            self.media_lock.release()
+
     def diagnose_media(self, folder):
-        if folder := settings.local_folder(folder):
-            return settings.ffmpeg_checks(folder)
-        if report := self._find_media():
-            return settings.ffmpeg_checks(report["directory"])
-        return None
+        with self._media_operation():
+            if folder := settings.local_folder(folder):
+                return settings.ffmpeg_checks(folder)
+            if report := self._find_media():
+                return settings.ffmpeg_checks(report["directory"])
+            return None
 
     def _model(self):
         try:
@@ -75,9 +86,9 @@ class System:
     def save(self, changes):
         if "ffmpeg_dir" not in changes:
             return self._save(changes)
-        with self.media_lock:
+        with self._media_operation():
             folder = settings.local_folder(changes["ffmpeg_dir"])
-            report = settings.ffmpeg_directory(folder) if folder else self._find_media()
+            report = settings.ffmpeg_directory(folder, report_timeout=True) if folder else self._find_media()
             if folder and not report:
                 raise ValueError("La carpeta debe contener FFmpeg y FFprobe ejecutables y compatibles.")
             result = self._save({**changes, "ffmpeg_dir": folder})

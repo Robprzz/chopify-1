@@ -31,7 +31,7 @@ Si un doble clic no genera una entrada nueva en `launcher.log`, abre **Propiedad
 
 En **Configuración → Diagnósticos → Dependencias**, pulsa **Elegir carpeta** o pega la ruta local de la carpeta `bin` que contiene ambos ejecutables. **Ejecutar diagnóstico** comprueba la ruta del campo y muestra el resultado y la versión de cada programa. **Guardar ubicación** valida los dos ejecutables y aplica la carpeta a los próximos trabajos sin reiniciar Studio. La ruta queda guardada para futuros inicios. Deja el campo vacío y guarda para volver a la detección automática.
 
-Si Windows no abre el selector, puedes pegar la ruta desde el Explorador. Prepara y exporta un video local corto para validar el flujo. Solo cambia el PATH del proceso de Studio y de sus procesos secundarios. La apariencia de los subtítulos incrustados también depende de las fuentes que FFmpeg encuentra en Windows.
+Si Windows no abre el selector, puedes pegar la ruta desde el Explorador. Durante el guardado o diagnóstico, los controles de FFmpeg se bloquean hasta recibir la respuesta. Si Studio no confirma un guardado a tiempo, recarga la página y revisa la carpeta antes de repetirlo. Prepara y exporta un video local corto y comprueba que su registro muestre `PREFLIGHT OK`. Luego cierra Studio, vuelve a abrirlo con el acceso directo y prueba otro proyecto. Solo cambia el PATH del proceso de Studio y de sus procesos secundarios. La apariencia de los subtítulos incrustados también depende de las fuentes que FFmpeg encuentra en Windows.
 
 ## Credenciales y autorización
 

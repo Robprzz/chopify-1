@@ -58,11 +58,11 @@ function notice(message, error = false) {
     error ? 15000 : 6000,
   );
 }
-async function api(path, data) {
+async function api(path, data, signal) {
   const response = await fetch(
     path,
     data === undefined
-      ? {}
+      ? { signal }
       : {
           method: "POST",
           headers: {
@@ -70,6 +70,7 @@ async function api(path, data) {
             "X-Chopify-Token": state.token,
           },
           body: JSON.stringify(data),
+          signal,
         },
   );
   const result = await response.json();

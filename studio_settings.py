@@ -171,7 +171,7 @@ def _version(executable):
                                 errors="backslashreplace",
                                 timeout=5, check=True, creationflags=HIDDEN)
         return result.stdout.splitlines()[0][:200]
-    except (OSError, subprocess.SubprocessError, IndexError):
+    except (OSError, subprocess.CalledProcessError, IndexError):
         return None
 
 
@@ -186,14 +186,21 @@ def ffmpeg_checks(path, *, require_pair=False):
         return None
     tools = {}
     for name, file in files.items():
-        version = _version(file) if exists[name] else None
+        try:
+            version = _version(file) if exists[name] else None
+        except subprocess.TimeoutExpired:
+            tools[name] = {"filename": file.name, "exists": True, "version": None, "timed_out": True}
+            continue
         valid = bool(version and version.lower().startswith(name + " version "))
         tools[name] = {"filename": file.name, "exists": exists[name], "version": version if valid else None}
     return {"directory": str(path), "tools": tools}
 
 
-def ffmpeg_directory(path):
+def ffmpeg_directory(path, *, report_timeout=False):
     if checks := ffmpeg_checks(path, require_pair=True):
+        for tool in checks["tools"].values():
+            if report_timeout and tool.get("timed_out"):
+                raise ValueError(f"Se agotó el tiempo de espera al verificar {tool['filename']}. La ubicación no se guardó.")
         versions = {name: tool["version"] for name, tool in checks["tools"].items()}
         if all(versions.values()):
             return {"directory": checks["directory"], "versions": versions}

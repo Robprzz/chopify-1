@@ -1,7 +1,10 @@
 "use strict";
 
-const systemAPI = (action, data) => api("/api/system/" + action, data);
+const systemAPI = (action, data, signal) => api("/api/system/" + action, data, signal);
 const systemStatus = { snapshot: null, diagnosis: null, update: null, step: null, busy: false };
+const systemMedia = { busy: false, dirty: false, revision: 0 };
+const mediaForm = $("#system-ffmpeg-form");
+const mediaField = mediaForm.elements.ffmpeg_dir;
 const systemSteps = [
   ["Dependencias", "Comprueba que Studio usa el entorno virtual y Python 3.11 o posterior.", "#system-dependencies"],
   ["FFmpeg y FFprobe", "Ejecuta el diagnóstico. Si no encuentra ambos programas, selecciona su carpeta.", "#system-dependencies"],
@@ -30,14 +33,16 @@ function systemGuide() {
   $("#wizard-next").hidden = index === systemSteps.length - 1;
 }
 
-function systemRender(snapshot, fill = true) {
+function systemRender(snapshot, fill, mediaRevision) {
   systemStatus.snapshot = snapshot;
   const settings = snapshot.settings;
   const integrations = snapshot.integrations;
   if (fill) {
     $("#system-general").elements.projects_dir.value = settings.projects_dir;
     $("#system-general").elements.open_browser.checked = settings.open_browser;
-    $("#system-ffmpeg-form").elements.ffmpeg_dir.value = settings.ffmpeg_dir;
+    if (!systemMedia.dirty && mediaRevision === systemMedia.revision) {
+      mediaField.value = settings.ffmpeg_dir;
+    }
     $("#system-ollama-auto").checked = settings.ollama_auto_start;
     $("#system-profile").value = settings.tiktok_profile;
     $("#system-credentials").elements.profile.value = settings.tiktok_profile;
@@ -78,9 +83,11 @@ function systemRender(snapshot, fill = true) {
 function systemRenderDiagnosis(report) {
   systemStatus.diagnosis = report;
   const media = report.ffmpeg;
-  $("#system-ffmpeg").textContent = media
-    ? [media.directory, media.versions.ffmpeg, media.versions.ffprobe].join(" · ")
-    : "FFmpeg y FFprobe no encontrados. Indica la carpeta que contiene ambos ejecutables.";
+  if (!systemMedia.busy && !systemMedia.dirty) {
+    $("#system-ffmpeg").textContent = media
+      ? [media.directory, media.versions.ffmpeg, media.versions.ffprobe].join(" · ")
+      : "FFmpeg y FFprobe no encontrados. Indica la carpeta que contiene ambos ejecutables.";
+  }
   const ai = report.ollama;
   const privacy = { local_cloud_disabled: "Proceso local iniciado con OLLAMA_NO_CLOUD", external_unverified: "Privacidad del proceso externo sin verificar", offline: "" };
   $("#system-ollama").textContent = [
@@ -97,7 +104,8 @@ function systemRenderDiagnosis(report) {
 function systemRenderMedia(media) {
   $("#system-ffmpeg").textContent = media
     ? [media.directory, ...Object.values(media.tools).map(tool => tool.version ??
-      (tool.exists ? `${tool.filename}: encontrado, pero no pudo ejecutarse o no devolvió una versión compatible`
+      (tool.timed_out ? `${tool.filename}: se agotó el tiempo de espera al comprobar la versión`
+        : tool.exists ? `${tool.filename}: encontrado, pero no pudo ejecutarse o no devolvió una versión compatible`
         : `${tool.filename}: archivo no encontrado`))].join(" · ")
     : "FFmpeg y FFprobe no encontrados. Indica la carpeta que contiene ambos ejecutables.";
 }
@@ -112,17 +120,15 @@ function systemShortcut(state) {
 }
 
 async function systemRefresh(fill = true) {
-  systemRender(await systemAPI("status"), fill);
+  const mediaRevision = systemMedia.revision;
+  systemRender(await systemAPI("status"), fill, mediaRevision);
 }
 
-async function systemRun(operation, success = "", feedback = null) {
-  if (systemStatus.busy) {
-    if (feedback) feedback.textContent = "Espera a que termine la operación en curso y vuelve a intentarlo.";
-    return;
-  }
+async function systemRun(operation, success = "") {
+  if (systemStatus.busy) return;
   systemStatus.busy = true;
   const error = $("#system-error");
-  const message = feedback || $("#system-message");
+  const message = $("#system-message");
   error.hidden = true;
   message.textContent = "Procesando…";
   try {
@@ -130,13 +136,49 @@ async function systemRun(operation, success = "", feedback = null) {
     await operation();
     message.textContent = success;
   } catch (err) {
-    message.textContent = feedback ? err.message : "";
-    if (!feedback) {
-      error.textContent = err.message;
-      error.hidden = false;
-    }
+    message.textContent = "";
+    error.textContent = err.message;
+    error.hidden = false;
   } finally {
     systemStatus.busy = false;
+  }
+}
+
+async function systemRunMedia(action, data, pending, apply) {
+  if (systemMedia.busy) return;
+  systemMedia.busy = true;
+  const feedback = $("#system-ffmpeg-feedback");
+  const controls = mediaForm.querySelectorAll("button, input");
+  controls.forEach(control => { control.disabled = true; });
+  mediaForm.setAttribute("aria-busy", "true");
+  feedback.textContent = pending;
+  const controller = new AbortController();
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new Error("Se agotó el tiempo de espera de Studio."));
+    }, action === "choose-folder" ? 185000 : 20000);
+  });
+  try {
+    const request = studioConfig.then(() => systemAPI(action, data, controller.signal));
+    feedback.textContent = apply(await Promise.race([request, timeout]));
+  } catch (error) {
+    let message = controller.signal.aborted
+      ? "Se agotó el tiempo de espera de Studio. Vuelve a intentarlo."
+      : error.message;
+    if (error instanceof SyntaxError) message = "Studio devolvió una respuesta inesperada. Vuelve a intentarlo.";
+    if (error instanceof TypeError) message = "No se pudo comunicar con Studio. Comprueba que siga abierto.";
+    if (action === "choose-folder") message += " Puedes pegar la ruta de la carpeta en el campo.";
+    if (action === "save" && controller.signal.aborted) {
+      message = "Studio no confirmó el guardado a tiempo. Recarga la página para comprobar la ruta guardada.";
+    }
+    feedback.textContent = message;
+  } finally {
+    clearTimeout(timer);
+    systemMedia.busy = false;
+    controls.forEach(control => { control.disabled = false; });
+    mediaForm.removeAttribute("aria-busy");
   }
 }
 
@@ -190,24 +232,30 @@ $("#system-general").addEventListener("submit", event => {
   return systemSave({ projects_dir: fields.projects_dir.value.trim(), open_browser: fields.open_browser.checked },
     "Preferencias guardadas para el próximo inicio.");
 });
-$("#system-ffmpeg-form").addEventListener("submit", event => {
+mediaField.addEventListener("input", () => {
+  systemMedia.dirty = true;
+  $("#system-ffmpeg").textContent = "";
+  $("#system-ffmpeg-feedback").textContent = "";
+});
+mediaForm.addEventListener("submit", event => {
   event.preventDefault();
-  const field = event.target.elements.ffmpeg_dir;
-  systemRun(async () => {
-    const saved = await systemAPI("save", { ffmpeg_dir: field.value.trim() });
-    field.value = saved.ffmpeg_dir;
-    $("#system-ffmpeg").textContent = "";
-  }, "Ubicación guardada y aplicada a los próximos trabajos.", $("#system-ffmpeg-feedback"));
+  systemRunMedia("save", { ffmpeg_dir: mediaField.value.trim() }, "Guardando ubicación…", saved => {
+    if (typeof saved?.ffmpeg_dir !== "string") throw new Error("Studio no confirmó la ubicación guardada.");
+    mediaField.value = saved.ffmpeg_dir;
+    systemMedia.dirty = false;
+    systemMedia.revision++;
+    return "Ubicación guardada y aplicada a los próximos trabajos.";
+  });
 });
 $("#system-save-ollama").addEventListener("click", () => systemSave(
   { ollama_auto_start: $("#system-ollama-auto").checked }, "Preferencia de Ollama guardada."));
 $("#system-save-profile").addEventListener("click", () => systemSave(
   { tiktok_profile: $("#system-profile").value }, "Perfil activo actualizado."));
-$("#system-diagnose").addEventListener("click", () => systemRun(async () => {
-  const ffmpeg_dir = $("#system-ffmpeg-form").elements.ffmpeg_dir.value.trim();
-  const report = await systemAPI("diagnose", { ffmpeg_dir });
-  systemRenderMedia(report.ffmpeg);
-}, "", $("#system-ffmpeg-feedback")));
+$("#system-diagnose").addEventListener("click", () =>
+  systemRunMedia("diagnose", { ffmpeg_dir: mediaField.value.trim() }, "Comprobando FFmpeg y FFprobe…", report => {
+    systemRenderMedia(report.ffmpeg);
+    return "Diagnóstico completado.";
+  }));
 $("#system-check-ollama").addEventListener("click", () => systemRun(async () => systemRenderDiagnosis(await systemAPI("ollama", {}))));
 $("#system-save-model").addEventListener("click", () => systemRun(async () => {
   const status = await editorialApi("status");
@@ -218,7 +266,15 @@ $("#system-save-model").addEventListener("click", () => systemRun(async () => {
 for (const control of document.querySelectorAll("[data-system-folder]")) {
   control.addEventListener("click", () => {
     const field = $(`input[name="${control.dataset.systemFolder}"]`);
-    const feedback = control.dataset.systemFolder === "ffmpeg_dir" ? $("#system-ffmpeg-feedback") : null;
+    if (field === mediaField) {
+      return systemRunMedia("choose-folder", {}, "Esperando al selector de carpetas…", ({ path }) => {
+        if (!path) return "Selección cancelada.";
+        field.value = path;
+        systemMedia.dirty = true;
+        $("#system-ffmpeg").textContent = "";
+        return "Carpeta seleccionada. Pulsa Guardar ubicación para aplicarla.";
+      });
+    }
     return systemRun(async () => {
       try {
         const { path } = await systemAPI("choose-folder", {});
@@ -226,7 +282,7 @@ for (const control of document.querySelectorAll("[data-system-folder]")) {
       } catch (err) {
         throw new Error(`${err.message} Puedes pegar la ruta de la carpeta en el campo.`);
       }
-    }, "", feedback);
+    });
   });
 }
 for (const control of document.querySelectorAll("[data-system-shortcut]")) {

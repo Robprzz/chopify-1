@@ -788,3 +788,101 @@ def test_ffmpeg_diagnosis_validates_both_windows_executable_names(tmp_path, monk
     assert report["tools"]["ffmpeg"]["version"] == "ffmpeg version 9.0.2"
     assert report["tools"]["ffprobe"] == {"filename": "ffprobe.exe", "exists": True, "version": None}
     assert studio_settings.ffmpeg_directory(tmp_path) is None
+
+
+def test_ffmpeg_first_click_while_system_status_is_pending(tmp_path, chromium_page, monkeypatch):
+    store = studio_settings.Settings(CHECKOUT, tmp_path / "user")
+    store.save({"projects_dir": str(tmp_path / "projects"), "setup_complete": True})
+    page, expect = chromium_page
+    release = threading.Event()
+    started = threading.Event()
+    with serving(store) as (server, base, _):
+        with page.expect_response(base + "/api/system/status"):
+            page.goto(base)
+        system = server.app.system
+        status = system.status
+
+        def slow_status():
+            started.set()
+            release.wait(10)
+            return status()
+
+        monkeypatch.setattr(system, "status", slow_status)
+        try:
+            page.locator("#show-settings").click()
+            page.locator("#show-system").click()
+            assert started.wait(4)
+            field = page.locator('input[name="ffmpeg_dir"]')
+            field.fill("relative/path")
+            page.locator("#system-diagnose").click()
+            expect(page.locator("#system-ffmpeg-feedback")).to_contain_text("ruta local absoluta", timeout=2500)
+        finally:
+            release.set()
+        expect(page.locator("#system-message")).to_be_empty()
+        expect(field).to_have_value("relative/path")
+
+
+def test_ffmpeg_shows_pending_and_waits_for_server_confirmation(tmp_path, chromium_page, monkeypatch):
+    monkeypatch.setenv("PATH", "")
+    store = studio_settings.Settings(CHECKOUT, tmp_path / "user")
+    store.save({"projects_dir": str(tmp_path / "projects"), "setup_complete": True})
+    directory = tmp_path / "media & tools"
+    directory.mkdir()
+    suffix = ".exe" if os.name == "nt" else ""
+    for tool in ("ffmpeg", "ffprobe"):
+        (directory / (tool + suffix)).touch()
+    page, expect = chromium_page
+    release = threading.Event()
+    started = threading.Event()
+    calls = []
+
+    def timed_version(path):
+        calls.append(path.name)
+        if path.stem == "ffmpeg":
+            started.set()
+            release.wait(8)
+        if path.stem == "ffprobe" and calls.count(path.name) == 1:
+            raise subprocess.TimeoutExpired([str(path), "-version"], 5)
+        return f"{path.stem} version 9.0.2"
+
+    monkeypatch.setattr(studio_settings, "_version", timed_version)
+    with serving(store) as (server, base, _):
+        page.goto(base)
+        page.locator("#show-settings").click()
+        page.locator("#show-system").click()
+        field = page.locator('input[name="ffmpeg_dir"]')
+        diagnose = page.locator("#system-diagnose")
+        save = page.get_by_role("button", name="Guardar ubicación")
+        feedback = page.locator("#system-ffmpeg-feedback")
+        field.fill(str(directory))
+        try:
+            diagnose.click()
+            assert started.wait(4)
+            expect(feedback).to_contain_text("Comprobando FFmpeg y FFprobe")
+            expect(diagnose).to_be_disabled()
+            expect(save).to_be_disabled()
+            diagnose.evaluate("(button) => button.dispatchEvent(new Event('click'))")
+            with pytest.raises(HTTPError) as rejected:
+                request(base, "/api/system/diagnose", {"ffmpeg_dir": str(directory)}, server.app.token)
+            assert rejected.value.code == 400
+            assert "operación de FFmpeg en curso" in json.load(rejected.value)["error"]
+        finally:
+            release.set()
+        expect(page.locator("#system-ffmpeg")).to_contain_text("se agotó el tiempo de espera")
+        expect(diagnose).to_be_enabled()
+        assert calls == [f"ffmpeg{suffix}", f"ffprobe{suffix}"]
+        release.clear()
+        started.clear()
+        try:
+            save.click()
+            assert started.wait(4)
+            expect(feedback).to_contain_text("Guardando ubicación")
+            expect(save).to_be_disabled()
+            assert store.read()["ffmpeg_dir"] == ""
+            save.evaluate("(button) => button.form.dispatchEvent(new Event('submit', {cancelable: true}))")
+        finally:
+            release.set()
+        expect(feedback).to_contain_text("guardada y aplicada")
+        expect(save).to_be_enabled()
+        assert store.read()["ffmpeg_dir"] == str(directory)
+        assert calls == [f"ffmpeg{suffix}", f"ffprobe{suffix}"] * 2

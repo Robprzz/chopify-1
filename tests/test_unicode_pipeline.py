@@ -172,6 +172,26 @@ def _load_model(*_args):
         track = next(item for item in detail["files"] if item["name"] == clip.with_suffix(".srt").name)
         with urlopen(base + quote(track["url"], safe="/"), timeout=5) as response:
             assert TEXT in response.read().decode("utf-8")
+
+        request(base, "/api/system/shutdown", {"confirmed": True, "mode": "cancel"}, token)
+        until(lambda: original_probe(port, store.identity()) == "free")
+        with socket.socket() as reserved:
+            reserved.bind(("127.0.0.1", 0))
+            port = reserved.getsockname()[1]
+
+        base = studio_launcher.launch(store, port=port).rstrip("/")
+        token = request(base, "/api/config")["token"]
+        assert request(base, "/api/system/status")["settings"]["ffmpeg_dir"] == str(tool_dir)
+        assert "FFmpeg y FFprobe disponibles." in (store.logs / "studio.log").read_text(encoding="utf-8")
+        second_source = tmp_path / "segunda fuente.mp4"
+        shutil.copyfile(media, second_source)
+        project = request(base, "/api/projects", {"source": str(second_source), "options": {}}, token)
+        route = f"/api/projects/{project['id']}"
+        request(base, route + "/run", {"action": "prepare"}, token)
+        detail = until(finished, timeout=30)
+        assert detail["project"]["status"] == "review", detail["log"]
+        assert "PREFLIGHT OK" in detail["log"]
+        assert detail["transcript"]["words"][0]["word"] == TEXT
     finally:
         if original_probe(port, store.identity()) == "ours":
             base = f"http://127.0.0.1:{port}"

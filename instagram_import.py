@@ -17,6 +17,9 @@ from urllib.parse import urljoin, urlsplit
 
 HOSTS = {"instagram.com", "www.instagram.com", "m.instagram.com"}
 POST = re.compile(r"/(reel|p)/([a-zA-Z0-9_-]{1,64})/?")
+PROFILE_REEL = re.compile(
+    r"/[a-zA-Z0-9_](?:[a-zA-Z0-9_.]{0,28}[a-zA-Z0-9_])?/(reel)/([a-zA-Z0-9_-]{1,64})/?"
+)
 DEFAULTS = {"max_mib": 256, "max_seconds": 1200}
 IPV6_UNICAST = ipaddress.ip_network("2000::/3")
 CANCEL_FILE = ".instagram-cancel"
@@ -66,10 +69,10 @@ def canonical(url):
 
 
 def post_parts(parts):
-    post = POST.fullmatch(parts.path) if parts.hostname in HOSTS else None
-    if not post:
-        raise ValueError("Usa el enlace directo de un Reel o publicación de Instagram.")
-    return post.groups()
+    if parts.hostname in HOSTS:
+        if post := POST.fullmatch(parts.path) or PROFILE_REEL.fullmatch(parts.path):
+            return post.groups()
+    raise ValueError("Usa el enlace directo de un Reel o publicación de Instagram.")
 
 
 def post_identity(url):
@@ -87,7 +90,7 @@ def login_page(parts):
     return parts.hostname in HOSTS and parts.path.rstrip("/") == "/accounts/login"
 
 
-def confirm_page(url, identity, values):
+def confirm_page(url, identity, values, canonical_links):
     reference = values.get("og:url")
     link = values.get("og:video:secure_url") or values.get("og:video:url") or values.get("og:video")
     if not reference:
@@ -106,6 +109,13 @@ def confirm_page(url, identity, values):
         raise ValueError("Instagram devolvió metadatos incompatibles para la publicación (og:url inválido).") from None
     if actual != identity:
         raise ValueError("Instagram devolvió metadatos de una publicación distinta.")
+    for reference in canonical_links:
+        try:
+            canonical_identity = post_identity(response_url(url, reference)) if reference else None
+        except ValueError:
+            canonical_identity = None
+        if canonical_identity != identity:
+            raise ValueError("Instagram devolvió un enlace canónico incompatible con la publicación solicitada.")
     if not link:
         raise ValueError("Instagram no expone un MP4 público descargable en esta publicación.")
     return link
@@ -212,13 +222,18 @@ class VideoMetadata(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.values = {}
+        self.canonical_links = []
         self.metadata_open = True
 
     def handle_starttag(self, tag, attrs):
         if tag == "body":
             self.metadata_open = False
-        if self.metadata_open and tag == "meta":
+        if self.metadata_open and tag in {"meta", "link"}:
             attr = dict(attrs)
+            if tag == "link":
+                if "canonical" in (attr.get("rel") or "").lower().split():
+                    self.canonical_links.append(attr.get("href") or "")
+                return
             key, value = attr.get("property") or attr.get("name"), attr.get("content")
             if key and (key.startswith("og:") or key in {"author","video:actor","video:duration"}) and value:
                 self.values.setdefault(key, value)
@@ -263,7 +278,7 @@ def import_video(url, folder, limits, progress):
         parser = VideoMetadata()
         parser.feed(page.decode("utf-8", "replace"))
         values = parser.values
-        link = confirm_page(url, post_identity(url), values)
+        link = confirm_page(url, post_identity(url), values, parser.canonical_links)
         meta = {"platform": "instagram", "title": values.get("og:title", "")[:300],
                 "author": (values.get("author") or values.get("video:actor") or values.get("og:video:actor", ""))[:200]}
         hint = values.get("video:duration") or values.get("og:video:duration") or ""

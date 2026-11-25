@@ -17,6 +17,7 @@ from test_watermark import gray_source
 REEL = "https://www.instagram.com/reel/Anqora_1/"
 POST = "https://www.instagram.com/p/Anqora_1/"
 REPORTED = "https://www.instagram.com/reel/DgLhkdCCrXb/"
+PROFILE_REEL = "https://www.instagram.com/example.creator/reel/DgLhkdCCrXb/"
 CDN = "https://video.cdninstagram.com/object.mp4?key=fixture"
 AUTH = {"authorized":True,"max_seconds":10,"max_mib":8}
 
@@ -138,6 +139,55 @@ def test_inaccessible_response_does_not_request_media(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="no expone"):
         importer.import_video(REEL,tmp_path,importer.DEFAULTS,lambda *_:None)
     assert calls == [REEL]
+
+
+def test_profile_reel_without_public_mp4_reports_availability(tmp_path, monkeypatch):
+    page = Response((f'<head><link rel="canonical" href="{REPORTED}">'
+                     f'<meta property="og:url" content="{PROFILE_REEL}"></head>').encode())
+    calls = reply_sequence(monkeypatch, page)
+
+    with pytest.raises(ValueError, match="MP4 público descargable"):
+        importer.import_video(REPORTED, tmp_path, importer.DEFAULTS, lambda *_: None)
+
+    assert calls == [("www.instagram.com", "GET", "/reel/DgLhkdCCrXb/")]
+    assert not (tmp_path / "instagram.mp4").exists()
+
+
+def test_profile_reel_with_matching_canonical_downloads_advertised_mp4(tmp_path, monkeypatch):
+    content = gray_source(tmp_path).read_bytes()
+    page = Response((f'<head><link rel="canonical" href="/reel/DgLhkdCCrXb/">'
+                     f'<meta property="og:url" content="{PROFILE_REEL}">'
+                     f'<meta property="og:video:secure_url" content="{CDN}"></head>').encode())
+    media = Response(content, **{"Content-Type": "video/mp4", "Content-Length": str(len(content))})
+    calls = reply_sequence(monkeypatch, page, media)
+
+    assert importer.canonical(PROFILE_REEL + "?igsh=fixture") == REPORTED
+    path, metadata = importer.import_video(PROFILE_REEL, tmp_path, importer.DEFAULTS, lambda *_: None)
+    assert calls == [("www.instagram.com", "GET", "/reel/DgLhkdCCrXb/"),
+                     ("video.cdninstagram.com", "GET", "/object.mp4?key=fixture")]
+    assert path.read_bytes() == content and metadata["source"] == REPORTED
+
+
+@pytest.mark.parametrize(("reference", "canonical_link", "error"), [
+    (PROFILE_REEL.replace("www.instagram.com", "www.instagram.com.evil.invalid"), REPORTED, "og:url inválido"),
+    (PROFILE_REEL.replace("DgLhkdCCrXb", "dglhkdccrxb"), REPORTED, "publicación distinta"),
+    (PROFILE_REEL, "https://external.invalid/reel/DgLhkdCCrXb/", "enlace canónico incompatible"),
+    (PROFILE_REEL, "http://www.instagram.com/reel/DgLhkdCCrXb/", "enlace canónico incompatible"),
+    (PROFILE_REEL, "/reel/AnotherPost/", "enlace canónico incompatible"),
+    (PROFILE_REEL, "", "enlace canónico incompatible"),
+])
+def test_profile_reel_rejects_conflicting_identity_with_advertised_mp4(tmp_path, monkeypatch, reference,
+                                                                     canonical_link, error):
+    page = Response((f'<head><link rel="canonical" href="{REPORTED}">'
+                     f'<link rel="Canonical" href="{canonical_link}">'
+                     f'<meta property="og:url" content="{reference}">'
+                     f'<meta property="og:video" content="{CDN}"></head>').encode())
+    calls = reply_sequence(monkeypatch, page)
+
+    with pytest.raises(ValueError, match=error):
+        importer.import_video(REPORTED, tmp_path, importer.DEFAULTS, lambda *_: None)
+    assert calls == [("www.instagram.com", "GET", "/reel/DgLhkdCCrXb/")]
+    assert not (tmp_path / "instagram.mp4").exists()
 
 
 @pytest.mark.parametrize("suffix", ["", "?igsh=ignored&utm_source=fixture#share"])

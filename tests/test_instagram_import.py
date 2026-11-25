@@ -333,6 +333,7 @@ def test_retry_accepts_legacy_authorized_url_for_same_post(tmp_path, monkeypatch
     folder = tmp_path / state["id"]
     state["instagram_import"]["url"] = "https://m.instagram.com/p/DglkhqQvpW4/?igsh=legacy"
     projects.save_project(folder, state)
+    (folder / "instagram.mp4").write_bytes(b"fixture")
     monkeypatch.setattr(importer, "import_video", lambda *_args: (folder / "instagram.mp4", {"platform": "instagram"}))
     file, meta = projects.instagram_source(folder, state, lambda *_args: None)
     assert file.name == "instagram.mp4"

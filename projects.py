@@ -320,12 +320,12 @@ def instagram_source(path, state, stage):
     source = state["source"]
     auth = state.get("instagram_import") or {}
     try:
-        authorized_url = instagram_import.canonical(auth.get("url", ""))
-        source_url = instagram_import.canonical(source)
+        authorized_post = instagram_import.post_identity(auth.get("url", ""))
+        source_post = instagram_import.post_identity(source)
     except (TypeError, ValueError):
-        authorized_url = None
-        source_url = None
-    if auth.get("authorized") is not True or not source_url or authorized_url != source_url:
+        authorized_post = None
+        source_post = None
+    if auth.get("authorized") is not True or not source_post or authorized_post != source_post:
         raise ValueError("Confirma la autorización en un proyecto de importación de Instagram.")
     media = path / "instagram.mp4"
     if media.is_symlink() or (media.exists() and (not media.is_file() or media.resolve() != media)):

@@ -336,11 +336,16 @@ class Studio:
         if isinstance(source, str):
             auth = projects.validate_instagram(source.strip(), authorization)
             if auth:
-                shortcode = auth["url"].split("/")[-2]
+                shortcode = instagram_import.post_identity(auth["url"])
                 for project in self.list_projects():
                     old = project.get("instagram_import") or {}
-                    old_code = str(old.get("url", "")).rstrip("/").rsplit("/", 1)[-1]
-                    if old.get("authorized") and old_code == shortcode:
+                    if old.get("authorized") is not True:
+                        continue
+                    try:
+                        old_code = instagram_import.post_identity(old.get("url", ""))
+                    except (TypeError, ValueError):
+                        continue
+                    if old_code == shortcode:
                         return project, True
         return projects.create_project(self.root, source, options, instagram=authorization), False
 

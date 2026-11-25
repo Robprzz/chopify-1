@@ -16,6 +16,7 @@ from test_watermark import gray_source
 
 REEL = "https://www.instagram.com/reel/Anqora_1/"
 POST = "https://www.instagram.com/p/Anqora_1/"
+REPORTED = "https://www.instagram.com/reel/DgLhkdCCrXb/"
 CDN = "https://video.cdninstagram.com/object.mp4?key=fixture"
 AUTH = {"authorized":True,"max_seconds":10,"max_mib":8}
 
@@ -37,6 +38,30 @@ class CloseOnly:
 
     def close(self):
         self.closed = True
+
+
+def reply_sequence(monkeypatch, *responses):
+    requests = []
+    pending = iter(responses)
+
+    class Connection(CloseOnly):
+        def __init__(self, host, **_):
+            self.host = host
+
+        def request(self, method, path, **_):
+            requests.append((self.host, method, path))
+
+        def getresponse(self):
+            return next(pending)
+
+    monkeypatch.setattr(importer, "PinnedHTTPS", Connection)
+    return requests
+
+
+def redirect_to(location):
+    response = Response(b"", Location=location)
+    response.status = 302
+    return response
 
 
 def transport(monkeypatch, content, *, url=REEL, length=None, available=True, resources=None):
@@ -113,6 +138,65 @@ def test_inaccessible_response_does_not_request_media(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="no expone"):
         importer.import_video(REEL,tmp_path,importer.DEFAULTS,lambda *_:None)
     assert calls == [REEL]
+
+
+@pytest.mark.parametrize("suffix", ["", "?igsh=ignored&utm_source=fixture#share"])
+def test_reported_reel_redirects_to_same_post_and_preserves_only_media_query(tmp_path, monkeypatch, suffix):
+    content = gray_source(tmp_path).read_bytes()
+    redirect = redirect_to("https://m.instagram.com/p/DgLhkdCCrXb/?igsh=redirected")
+    page = Response((f'<meta property="og:url" content="/reel/DgLhkdCCrXb/">'
+                     f'<meta property="og:video" content="{CDN}">').encode())
+    media = Response(content, **{"Content-Type": "video/mp4", "Content-Length": str(len(content))})
+    calls = reply_sequence(monkeypatch, redirect, page, media)
+    file, metadata = importer.import_video(REPORTED + suffix, tmp_path, importer.DEFAULTS, lambda *_: None)
+
+    assert calls == [("www.instagram.com", "GET", "/reel/DgLhkdCCrXb/"),
+                     ("m.instagram.com", "GET", "/p/DgLhkdCCrXb/"),
+                     ("video.cdninstagram.com", "GET", "/object.mp4?key=fixture")]
+    assert file.read_bytes() == content and metadata["source"] == REPORTED
+    assert all(response.closed for response in (redirect, page, media))
+
+
+@pytest.mark.parametrize(("destination", "error"), [
+    ("/p/AnotherPost/", "publicación distinta"),
+    ("/reel/dglhkdccrxb/", "publicación distinta"),
+    ("/challenge/", "redirección inesperada"),
+    ("/accounts/login/?next=fixture", "iniciar sesión"),
+    ("https://www.instagram.com.evil.invalid/reel/DgLhkdCCrXb/", "destino no permitido"),
+    ("https://127.0.0.1/reel/DgLhkdCCrXb/", "destino no permitido"),
+    ("http://www.instagram.com/reel/DgLhkdCCrXb/", "destino inválido"),
+    ("/reel/DgLhk\tdCCrXb/", "destino inválido"),
+])
+def test_page_redirect_errors_are_distinct_and_do_not_connect_to_destination(tmp_path, monkeypatch, capsys,
+                                                                           destination, error):
+    calls = reply_sequence(monkeypatch, redirect_to(destination))
+    with pytest.raises(ValueError, match=error):
+        importer.import_video(REPORTED, tmp_path, importer.DEFAULTS, lambda *_: None)
+    assert calls == [("www.instagram.com", "GET", "/reel/DgLhkdCCrXb/")]
+    trace = capsys.readouterr().err
+    assert "consulta de la página" in trace and destination not in trace
+
+
+@pytest.mark.parametrize(("reference", "with_media", "error"), [
+    (None, False, "MP4 público descargable"),
+    (None, True, "falta el identificador"),
+    ("https://www.instagram.com/", True, "metadatos incompatibles"),
+    ("https://www.instagram.com.evil.invalid/reel/DgLhkdCCrXb/", True, "metadatos incompatibles"),
+    ("/p/AnotherPost/", True, "metadatos de una publicación distinta"),
+    ("/accounts/login/?next=fixture", True, "iniciar sesión"),
+    ("//m.instagram.com/p/DgLhkdCCrXb/?igsh=fixture", False, "MP4 público descargable"),
+])
+def test_page_metadata_errors_do_not_attempt_cdn(tmp_path, monkeypatch, capsys, reference, with_media, error):
+    html = f'<meta property="og:url" content="{reference}">' if reference else ""
+    if with_media:
+        html += f'<meta property="og:video" content="{CDN}">'
+    calls = reply_sequence(monkeypatch, Response(html.encode()))
+    with pytest.raises(ValueError, match=error):
+        importer.import_video(REPORTED, tmp_path, importer.DEFAULTS, lambda *_: None)
+    assert calls == [("www.instagram.com", "GET", "/reel/DgLhkdCCrXb/")]
+    trace = capsys.readouterr().err
+    assert "validación de los metadatos" in trace and "fixture" not in trace
+    assert not (tmp_path / "instagram.mp4").exists()
 
 
 def test_http_private_or_removed_and_redirect_rejected(monkeypatch):
@@ -226,6 +310,16 @@ def test_limits_abort_before_commit(tmp_path,monkeypatch):
     assert not (tmp_path/"instagram.mp4").exists()
 
 
+def test_invalid_mp4_reports_verification_stage_without_cdn_query(tmp_path, monkeypatch, capsys):
+    transport(monkeypatch, b"not MP4")
+    with pytest.raises(ValueError, match="MP4 de video válido"):
+        importer.import_video(REEL, tmp_path, importer.DEFAULTS, lambda *_: None)
+    trace = capsys.readouterr().err
+    assert "verificación del MP4" in trace and "key=fixture" not in trace
+    assert not (tmp_path / "instagram.mp4").exists()
+    assert not list(tmp_path.glob(".instagram-*"))
+
+
 def test_removes_only_own_abandoned_partial(tmp_path):
     stage = tmp_path/".instagram-abcdefgh"
     stage.mkdir()
@@ -331,7 +425,7 @@ def test_retry_accepts_legacy_authorized_url_for_same_post(tmp_path, monkeypatch
     post = "https://www.instagram.com/p/DglkhqQvpW4/"
     state = projects.create_project(tmp_path, post, {}, instagram=AUTH)
     folder = tmp_path / state["id"]
-    state["instagram_import"]["url"] = "https://m.instagram.com/p/DglkhqQvpW4/?igsh=legacy"
+    state["instagram_import"]["url"] = "https://m.instagram.com/reel/DglkhqQvpW4/?igsh=legacy"
     projects.save_project(folder, state)
     (folder / "instagram.mp4").write_bytes(b"fixture")
     monkeypatch.setattr(importer, "import_video", lambda *_args: (folder / "instagram.mp4", {"platform": "instagram"}))

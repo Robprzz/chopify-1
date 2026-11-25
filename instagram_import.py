@@ -61,11 +61,54 @@ def target(url):
 
 
 def canonical(url):
-    parts = target(url)
-    post = POST.fullmatch(parts.path)
-    if parts.hostname not in HOSTS or not post:
+    kind, shortcode = post_parts(target(url))
+    return f"https://www.instagram.com/{kind}/{shortcode}/"
+
+
+def post_parts(parts):
+    post = POST.fullmatch(parts.path) if parts.hostname in HOSTS else None
+    if not post:
         raise ValueError("Usa el enlace directo de un Reel o publicación de Instagram.")
-    return f"https://www.instagram.com/{post[1]}/{post[2]}/"
+    return post.groups()
+
+
+def post_identity(url):
+    return post_parts(target(url))[1]
+
+
+def response_url(base, reference):
+    # urljoin can remove control characters before target() sees them.
+    if any(ord(char) < 33 or ord(char) >= 127 for char in reference):
+        raise ValueError
+    return urljoin(base, reference)
+
+
+def login_page(parts):
+    return parts.hostname in HOSTS and parts.path.rstrip("/") == "/accounts/login"
+
+
+def confirm_page(url, identity, values):
+    reference = values.get("og:url")
+    link = values.get("og:video:secure_url") or values.get("og:video:url") or values.get("og:video")
+    if not reference:
+        if not link:
+            raise ValueError("Instagram no expone un MP4 público descargable y la página no identifica la publicación.")
+        raise ValueError("Instagram devolvió metadatos incompatibles: falta el identificador de la publicación (og:url).")
+    try:
+        parts = target(response_url(url, reference))
+    except ValueError:
+        raise ValueError("Instagram devolvió metadatos incompatibles para la publicación (og:url inválido).") from None
+    if login_page(parts):
+        raise ValueError("Instagram exige iniciar sesión para acceder a este video.")
+    try:
+        actual = post_parts(parts)[1]
+    except ValueError:
+        raise ValueError("Instagram devolvió metadatos incompatibles para la publicación (og:url inválido).") from None
+    if actual != identity:
+        raise ValueError("Instagram devolvió metadatos de una publicación distinta.")
+    if not link:
+        raise ValueError("Instagram no expone un MP4 público descargable en esta publicación.")
+    return link
 
 
 def settings(values):
@@ -115,20 +158,31 @@ class PinnedHTTPS(http.client.HTTPSConnection):
 
 
 def transfer(url, *, media, cancel):
-    original = canonical(url) if not media else None
-    for _ in range(4):
+    original = post_identity(url) if not media else None
+    for hop in range(4):
         cancel()
-        parts = target(url)
+        try:
+            parts = target(url)
+        except ValueError:
+            if hop:
+                raise ValueError("Instagram devolvió una redirección inesperada a un destino inválido.") from None
+            raise
         if not permitted(parts.hostname, media):
-            raise ValueError("Instagram devolvió un destino no permitido.")
-        if not media and parts.path.rstrip("/") == "/accounts/login":
-            raise ValueError("Instagram exige iniciar sesión para acceder a este video.")
-        if not media and canonical(url).split("/")[-2] != original.split("/")[-2]:
-            raise ValueError("La página redirigió a un contenido distinto.")
+            raise ValueError("Instagram devolvió una redirección inesperada a un destino no permitido.")
+        if not media:
+            if login_page(parts):
+                raise ValueError("Instagram exige iniciar sesión para acceder a este video.")
+            try:
+                identity = post_parts(parts)[1]
+            except ValueError:
+                raise ValueError("Instagram devolvió una redirección inesperada fuera de la publicación solicitada.") from None
+            if identity != original:
+                raise ValueError("Instagram devolvió una redirección inesperada a una publicación distinta.")
         conn = PinnedHTTPS(parts.hostname, timeout=8, context=ssl.create_default_context())
         try:
             try:
-                conn.request("GET", parts.path + (("?" + parts.query) if parts.query else ""),
+                # Post requests use the public path. CDN queries may carry a required signature.
+                conn.request("GET", parts.path + (("?" + parts.query) if media and parts.query else ""),
                              headers={"User-Agent": "AnqoraStudio/5.1.3", "Accept-Encoding": "identity"})
                 response = conn.getresponse()
             except TimeoutError:
@@ -143,7 +197,10 @@ def transfer(url, *, media, cancel):
                 redirect = response.getheader("Location")
                 if not redirect:
                     raise ValueError("Instagram devolvió una redirección incompleta.")
-                url = urljoin(url, redirect)
+                try:
+                    url = response_url(url, redirect)
+                except ValueError:
+                    raise ValueError("Instagram devolvió una redirección inesperada a un destino inválido.") from None
         except BaseException:
             conn.close()
             raise
@@ -180,7 +237,6 @@ def clean_interrupted(folder):
 
 
 def import_video(url, folder, limits, progress):
-    url = canonical(url)
     max_bytes = limits["max_mib"] * 1024**2
     folder = Path(folder).resolve()
     deadline = time.monotonic() + 300
@@ -191,7 +247,10 @@ def import_video(url, folder, limits, progress):
         if time.monotonic() > deadline:
             raise ImportTimeout("Se agotó el tiempo de importación de Instagram (cinco minutos).")
 
+    stage = "validación del enlace"
     try:
+        url = canonical(url)
+        stage = "consulta de la página"
         clean_interrupted(folder)
         conn, response = transfer(url, media=False, cancel=cancel)
         with closing(conn), closing(response):
@@ -200,14 +259,11 @@ def import_video(url, folder, limits, progress):
                 page.extend(chunk)
                 if len(page) > 4 * 1024**2:
                     raise ValueError("La página de Instagram supera el límite de lectura.")
+        stage = "validación de los metadatos"
         parser = VideoMetadata()
         parser.feed(page.decode("utf-8", "replace"))
         values = parser.values
-        if not values.get("og:url") or canonical(values["og:url"]).split("/")[-2] != url.split("/")[-2]:
-            raise ValueError("Instagram no confirmó la publicación solicitada.")
-        link = values.get("og:video:secure_url") or values.get("og:video:url") or values.get("og:video")
-        if not link:
-            raise ValueError("Instagram no expone un video público descargable en este enlace.")
+        link = confirm_page(url, post_identity(url), values)
         meta = {"platform": "instagram", "title": values.get("og:title", "")[:300],
                 "author": (values.get("author") or values.get("video:actor") or values.get("og:video:actor", ""))[:200]}
         hint = values.get("video:duration") or values.get("og:video:duration") or ""
@@ -215,9 +271,14 @@ def import_video(url, folder, limits, progress):
             if int(hint) > limits["max_seconds"]:
                 raise ValueError("El video de Instagram supera el límite de duración.")
             meta["duration"] = int(hint)
-        if not permitted(target(link).hostname, True):
+        try:
+            allowed = permitted(target(link).hostname, True)
+        except ValueError:
+            allowed = False
+        if not allowed:
             raise ValueError("Instagram devolvió un destino de video no permitido.")
         from ingest import _run, check_disk
+        stage = "descarga del MP4"
         conn, response = transfer(link, media=True, cancel=cancel)
         with closing(conn), closing(response), tempfile.TemporaryDirectory(prefix=".instagram-", dir=folder) as staging:
             if response.getheader("Content-Type", "").split(";")[0].strip().lower() != "video/mp4":
@@ -244,6 +305,7 @@ def import_video(url, folder, limits, progress):
                         last_report = time.monotonic()
             if not done or (total is not None and done != total):
                 raise ValueError("La descarga de Instagram quedó incompleta.")
+            stage = "verificación del MP4"
             info = verify_mp4(temp, limits["max_seconds"], _run)
             cancel()
             ready = folder / "instagram.mp4"
@@ -251,11 +313,13 @@ def import_video(url, folder, limits, progress):
             return ready, {**meta, **info, "source": url, "size": done, "estimated_size": done,
                            "long": False, "url": True, "media_kind": "video", "render_from_sections": False}
     except ValueError:
+        print(f"Importación de Instagram interrumpida durante la etapa: {stage}.", file=sys.stderr, flush=True)
         raise
     except OSError:
+        print(f"Importación de Instagram interrumpida durante la etapa: {stage}.", file=sys.stderr, flush=True)
         raise ValueError("Studio no pudo guardar el video de Instagram en el proyecto. Comprueba el espacio y los permisos.") from None
     except Exception as exc:
-        print(f"Error interno de Python en el importador de Instagram ({type(exc).__name__}).",
+        print(f"Error interno de Python en la etapa {stage} de Instagram ({type(exc).__name__}).",
               file=sys.stderr, flush=True)
         raise ValueError("Error interno de Python al importar desde Instagram. Consulta el Registro del trabajo y reintenta.") from None
 

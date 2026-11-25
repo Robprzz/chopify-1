@@ -175,19 +175,28 @@ def _version(executable):
         return None
 
 
-def ffmpeg_directory(path):
+def ffmpeg_checks(path, *, require_pair=False):
     suffix = ".exe" if os.name == "nt" else ""
     path = Path(path)
     if not path.is_absolute():
         return None
-    names = ("ffmpeg", "ffprobe")
-    files = [path / (name + suffix) for name in names]
-    if not all(file.is_file() for file in files):
+    files = {name: path / (name + suffix) for name in ("ffmpeg", "ffprobe")}
+    exists = {name: file.is_file() for name, file in files.items()}
+    if require_pair and not all(exists.values()):
         return None
-    versions = {name: _version(file) for name, file in zip(names, files)}
-    if all(version and version.lower().startswith(name + " version ")
-           for name, version in versions.items()):
-        return {"directory": str(path), "versions": versions}
+    tools = {}
+    for name, file in files.items():
+        version = _version(file) if exists[name] else None
+        valid = bool(version and version.lower().startswith(name + " version "))
+        tools[name] = {"filename": file.name, "exists": exists[name], "version": version if valid else None}
+    return {"directory": str(path), "tools": tools}
+
+
+def ffmpeg_directory(path):
+    if checks := ffmpeg_checks(path, require_pair=True):
+        versions = {name: tool["version"] for name, tool in checks["tools"].items()}
+        if all(versions.values()):
+            return {"directory": checks["directory"], "versions": versions}
     return None
 
 
@@ -206,10 +215,10 @@ def ffmpeg_locations(checkout):
         yield Path(program_files) / "ffmpeg" / "bin"
 
 
-def find_ffmpeg(checkout, saved=""):
+def find_ffmpeg(checkout, saved="", *, search_path=None):
     candidates = [("saved", Path(saved))] if saved else []
     # Search explicit PATH directories, never the working directory or an empty PATH element.
-    for entry in os.environ.get("PATH", "").split(os.pathsep):
+    for entry in (os.environ.get("PATH", "") if search_path is None else search_path).split(os.pathsep):
         candidate = Path(entry.strip('"'))
         if candidate.is_absolute():
             candidates.append(("path", candidate))

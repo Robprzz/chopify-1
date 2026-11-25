@@ -57,8 +57,13 @@ def test_job_log_tail_preserves_split_utf8_character(tmp_path):
 def test_one_click_delayed_http_transcription_and_export_under_cp1252(tmp_path, monkeypatch):
     if sys.prefix == sys.base_prefix or os.name == "nt":
         pytest.skip("The subprocess fixture uses the Linux test virtual environment")
-    if not shutil.which("ffmpeg"):
-        pytest.skip("FFmpeg is required for the media pipeline test")
+    tools = {name: shutil.which(name) for name in ("ffmpeg", "ffprobe")}
+    if not all(tools.values()):
+        pytest.skip("FFmpeg and FFprobe are required for the media pipeline test")
+    tool_dir = tmp_path / "FFmpeg & herramientas"
+    tool_dir.mkdir()
+    for name, executable in tools.items():
+        (tool_dir / name).symlink_to(executable)
     checkout = tmp_path / "Chopify 日本語 café"
     checkout.mkdir()
     for source in CHECKOUT.glob("*.py"):
@@ -108,6 +113,7 @@ def _load_model(*_args):
     subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=black:s=320x180:r=25:d=3",
                     "-f", "lavfi", "-i", "sine=frequency=440:duration=3",
                     "-c:v", "libx264", "-c:a", "aac", "-shortest", str(media)], check=True)
+    monkeypatch.setenv("PATH", "")
     with socket.socket() as reserved:
         reserved.bind(("127.0.0.1", 0))
         port = reserved.getsockname()[1]
@@ -133,9 +139,13 @@ def _load_model(*_args):
         assert studio_launcher.launch(store, port=port) == url
         log = (store.logs / "studio.log").read_text(encoding="utf-8")
         assert log.count("Studio: verificando FFmpeg y FFprobe.") == 1
+        assert "FFmpeg y FFprobe pendientes de configurar." in log
         assert "Chopify 日本語 café" in log and root.name in log
         base = url.rstrip("/")
         token = request(base, "/api/config")["token"]
+        preferences = request(base, "/api/system/save", {"ffmpeg_dir": str(tool_dir)}, token)
+        assert preferences["ffmpeg_dir"] == str(tool_dir)
+        assert os.environ["PATH"] == ""
         project = request(base, "/api/projects", {"source": str(media), "options": {}}, token)
         route = f"/api/projects/{project['id']}"
         request(base, route + "/run", {"action": "prepare"}, token)
@@ -146,6 +156,7 @@ def _load_model(*_args):
 
         detail = until(finished, timeout=30)
         assert detail["project"]["status"] == "review", detail["log"]
+        assert "PREFLIGHT OK" in detail["log"]
         assert detail["transcript"]["segments"][0]["text"] == TEXT
         assert detail["transcript"]["words"][0]["word"] == TEXT
         assert TEXT in detail["log"]

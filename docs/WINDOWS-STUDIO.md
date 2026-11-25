@@ -29,7 +29,9 @@ Si falla el arranque, el cuadro de Windows indica la carpeta exacta de registros
 
 Si un doble clic no genera una entrada nueva en `launcher.log`, abre **Propiedades** del acceso directo. El destino debe usar `.venv\Scripts\pythonw.exe` y apuntar al `studio_launcher.py` de ese mismo repositorio. **Iniciar en** debe apuntar a la carpeta del repositorio. Puedes reparar el acceso directo de esa instalación con **Configuración → Diagnósticos → Crear o recrear acceso directo**.
 
-En **Configuración → Diagnósticos**, comprueba FFmpeg y FFprobe. Si faltan, selecciona y guarda la carpeta que contiene ambos ejecutables y reinicia Studio desde el acceso directo. Prepara y exporta un video local corto para validar todo el flujo. La apariencia de los subtítulos incrustados también depende de las fuentes que FFmpeg encuentra en Windows.
+En **Configuración → Diagnósticos → Dependencias**, pulsa **Elegir carpeta** o pega la ruta local de la carpeta `bin` que contiene ambos ejecutables. **Ejecutar diagnóstico** comprueba la ruta del campo y muestra el resultado y la versión de cada programa. **Guardar ubicación** valida los dos ejecutables y aplica la carpeta a los próximos trabajos sin reiniciar Studio. La ruta queda guardada para futuros inicios. Deja el campo vacío y guarda para volver a la detección automática.
+
+Si Windows no abre el selector, puedes pegar la ruta desde el Explorador. Prepara y exporta un video local corto para validar el flujo. Solo cambia el PATH del proceso de Studio y de sus procesos secundarios. La apariencia de los subtítulos incrustados también depende de las fuentes que FFmpeg encuentra en Windows.
 
 ## Credenciales y autorización
 

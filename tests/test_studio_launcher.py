@@ -115,14 +115,18 @@ def test_settings_subprocess_paths_and_different_installation_proofs(tmp_path, m
 
 def test_ffmpeg_probes_both_installed_bins(tmp_path, monkeypatch):
     # Use the OS executables with an empty PATH to exercise the absolute path.
-    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+    installed = [shutil.which(name) for name in ("ffmpeg", "ffprobe")]
+    if not all(installed):
         pytest.skip("FFmpeg and FFprobe are media test prerequisites")
-    destination = tmp_path / "FFmpeg & versiones"
-    destination.mkdir()
     if os.name == "nt":
-        pytest.skip("Windows builds may require adjacent distribution DLLs")
-    for name in ("ffmpeg", "ffprobe"):
-        (destination / name).symlink_to(shutil.which(name))
+        destination = Path(installed[0]).parent
+        if Path(installed[1]).parent != destination:
+            pytest.skip("This test requires both Windows executables in the same directory")
+    else:
+        destination = tmp_path / "FFmpeg & versiones"
+        destination.mkdir()
+        for name, executable in zip(("ffmpeg", "ffprobe"), installed):
+            (destination / name).symlink_to(executable)
     monkeypatch.setenv("PATH", "")
     report = studio_settings.ffmpeg_directory(destination)
     assert report["versions"]["ffprobe"].startswith("ffprobe version ")
@@ -710,3 +714,77 @@ def test_system_wizard_and_persisted_preferences_in_chromium(tmp_path, chromium_
         expect(page.get_by_role("heading", name="Primera configuración")).to_be_hidden()
         expect(page.locator('#system-general input[name="open_browser"]')).not_to_be_checked()
         assert not errors
+
+
+def test_ffmpeg_controls_during_slow_windows_shortcut_check(tmp_path, chromium_page, monkeypatch):
+    monkeypatch.setenv("PATH", "")
+    store = studio_settings.Settings(CHECKOUT, tmp_path / "user")
+    store.save({"projects_dir": str(tmp_path / "projects"), "setup_complete": True})
+    selected = tmp_path / "FFmpeg con espacios"
+    selected.mkdir()
+    suffix = ".exe" if os.name == "nt" else ""
+    (selected / f"ffmpeg{suffix}").touch()
+    monkeypatch.setattr(studio_settings, "_version", lambda file: f"{file.stem} version 9.0.2")
+    page, expect = chromium_page
+    release_shortcut = threading.Event()
+    checking_shortcut = threading.Event()
+
+    def shortcut(*_):
+        checking_shortcut.set()
+        release_shortcut.wait(15)
+        return "created"
+
+    monkeypatch.setattr(studio_windows, "shortcut", shortcut)
+    monkeypatch.setattr(studio_windows, "choose_folder", lambda: str(selected))
+    with serving(store) as (server, base, _):
+        system = server.app.system
+        status = system.status
+        monkeypatch.setattr(system, "status", lambda: {**status(), "windows": True})
+        try:
+            page.goto(base)
+            page.locator("#show-settings").click()
+            page.locator("#show-system").click()
+            assert checking_shortcut.wait(8)
+            page.locator('[data-system-folder="ffmpeg_dir"]').click()
+            expect(page.locator('input[name="ffmpeg_dir"]')).to_have_value(str(selected), timeout=2500)
+            page.locator("#system-diagnose").click()
+            expect(page.locator("#system-ffmpeg")).to_contain_text(f"ffprobe{suffix}: archivo no encontrado")
+            page.get_by_role("button", name="Guardar ubicación").click()
+            expect(page.locator("#system-ffmpeg-feedback")).to_contain_text("debe contener FFmpeg y FFprobe")
+            assert store.read()["ffmpeg_dir"] == ""
+
+            (selected / f"ffprobe{suffix}").touch()
+            page.get_by_role("button", name="Guardar ubicación").click()
+            expect(page.locator("#system-ffmpeg-feedback")).to_contain_text("guardada y aplicada")
+            assert studio_settings.Settings(CHECKOUT, tmp_path / "user").read()["ffmpeg_dir"] == str(selected)
+            assert os.environ["PATH"].split(os.pathsep)[0] == str(selected)
+            page.locator("#system-diagnose").click()
+            for label in (str(selected), "ffmpeg version 9.0.2", "ffprobe version 9.0.2"):
+                expect(page.locator("#system-ffmpeg")).to_contain_text(label)
+
+            def unavailable():
+                raise ValueError("Windows no pudo abrir el selector.")
+
+            monkeypatch.setattr(studio_windows, "choose_folder", unavailable)
+            page.locator('[data-system-folder="ffmpeg_dir"]').click()
+            expect(page.locator("#system-ffmpeg-feedback")).to_contain_text("Puedes pegar la ruta")
+        finally:
+            release_shortcut.set()
+
+
+def test_ffmpeg_diagnosis_validates_both_windows_executable_names(tmp_path, monkeypatch):
+    monkeypatch.setattr(studio_settings, "os", SimpleNamespace(name="nt"))
+    called = []
+
+    def version(path):
+        called.append(path)
+        return "ffmpeg version 9.0.2" if path.name == "ffmpeg.exe" else None
+
+    for name in ("ffmpeg.exe", "ffprobe.exe"):
+        (tmp_path / name).touch()
+    monkeypatch.setattr(studio_settings, "_version", version)
+    report = studio_settings.ffmpeg_checks(tmp_path)
+    assert called == [tmp_path / "ffmpeg.exe", tmp_path / "ffprobe.exe"]
+    assert report["tools"]["ffmpeg"]["version"] == "ffmpeg version 9.0.2"
+    assert report["tools"]["ffprobe"] == {"filename": "ffprobe.exe", "exists": True, "version": None}
+    assert studio_settings.ffmpeg_directory(tmp_path) is None

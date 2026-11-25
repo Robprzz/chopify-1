@@ -19,6 +19,31 @@ class System:
         self.repository = Repository(store.checkout, store.directory / "update.lock")
         self.restore_lock = threading.Lock()
         self.restore_thread = None
+        self.media_lock = threading.Lock()
+        self.original_path = os.environ.get("PATH")
+
+    def _find_media(self, saved=""):
+        return settings.find_ffmpeg(self.store.checkout, saved, search_path=self.original_path or "")
+
+    def _apply_media(self, report):
+        environment = {} if self.original_path is None else {"PATH": self.original_path}
+        settings.tool_path(report, environment)
+        if "PATH" in environment:
+            os.environ["PATH"] = environment["PATH"]
+        else:
+            os.environ.pop("PATH", None)
+
+    def configure_media(self):
+        report = self._find_media(self.store.read()["ffmpeg_dir"])
+        self._apply_media(report)
+        return report
+
+    def diagnose_media(self, folder):
+        if folder := settings.local_folder(folder):
+            return settings.ffmpeg_checks(folder)
+        if report := self._find_media():
+            return settings.ffmpeg_checks(report["directory"])
+        return None
 
     def _model(self):
         try:
@@ -40,7 +65,7 @@ class System:
 
     def diagnose(self, start=False):
         prefs = self.store.read()
-        report = settings.find_ffmpeg(self.store.checkout, prefs["ffmpeg_dir"])
+        report = self._find_media(prefs["ffmpeg_dir"])
         model = self._model()
         ollama = (self.ollama.ensure(prefs["ollama_auto_start"], model) if start
                   else self.ollama.status(model))
@@ -48,9 +73,19 @@ class System:
                 "secure_storage": self.app.tiktok.integrations()["protected_available"]}
 
     def save(self, changes):
+        if "ffmpeg_dir" not in changes:
+            return self._save(changes)
+        with self.media_lock:
+            folder = settings.local_folder(changes["ffmpeg_dir"])
+            report = settings.ffmpeg_directory(folder) if folder else self._find_media()
+            if folder and not report:
+                raise ValueError("La carpeta debe contener FFmpeg y FFprobe ejecutables y compatibles.")
+            result = self._save({**changes, "ffmpeg_dir": folder})
+            self._apply_media(report)
+            return result
+
+    def _save(self, changes):
         prefs = self.store.normalize(changes, self.store.read())
-        if "ffmpeg_dir" in changes and prefs["ffmpeg_dir"] and not settings.ffmpeg_directory(prefs["ffmpeg_dir"]):
-            raise ValueError("La carpeta debe contener FFmpeg y FFprobe ejecutables y compatibles.")
         if "projects_dir" in changes and prefs["projects_dir"]:
             path = Path(prefs["projects_dir"])
             if path.exists() and not path.is_dir():
@@ -66,7 +101,6 @@ class System:
             self.restore_in_background()
         else:
             result = self.store.save(changes)
-        # Taking the next-launch configuration does not modify global PATH or an active job.
         return result
 
     def restore_in_background(self):

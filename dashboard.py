@@ -185,6 +185,12 @@ class Studio:
         self.futures = {}
         self.resources = threading.Lock()
         self.installation = installation
+        self.system = studio_system.System(installation or studio_settings.Settings(HERE), self)
+        if installation:
+            print("Studio: verificando FFmpeg y FFprobe.", flush=True)
+            media = self.system.configure_media()
+            print("FFmpeg y FFprobe disponibles." if media else
+                  "FFmpeg y FFprobe pendientes de configurar.", flush=True)
         self.identity = installation.identity() if installation else None
         self.active_requests = 0
         self.requests_idle = threading.Condition(self.lock)
@@ -222,7 +228,6 @@ class Studio:
         self.preparing_publications = False
         self.schedule_stop = threading.Event()
         self.schedule_thread = threading.Thread(target=self._deliver_scheduled, name="studio-calendar", daemon=True)
-        self.system = studio_system.System(installation or studio_settings.Settings(HERE), self)
         self.telegram = telegram_gateway.Gateway(self, installation)
         self.telegram.start()
         self.schedule_thread.start()
@@ -1051,6 +1056,8 @@ class Handler(BaseHTTPRequestHandler):
         if action == "save":
             return self.send_json(system.save(body))
         if action == "diagnose":
+            if "ffmpeg_dir" in body:
+                return self.send_json({"ffmpeg": system.diagnose_media(body["ffmpeg_dir"])})
             return self.send_json(system.diagnose())
         if action == "ollama":
             return self.send_json(system.diagnose(start=True))
@@ -1068,7 +1075,7 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("Selecciona una acción de acceso directo.")
             return self.send_json({"shortcut": studio_windows.shortcut(system.store.checkout, command)})
         if action == "choose-folder":
-            return self.send_json({"path": studio_windows.choose_folder()})
+            return self.send_json({"path": studio_settings.local_folder(studio_windows.choose_folder())})
         if action == "logs":
             system.open_logs()
             return self.send_json({"ok": True})
@@ -1359,11 +1366,6 @@ def main():
     installation = studio_settings.Settings(HERE)
     try:
         prefs = installation.read()
-        print("Studio: verificando FFmpeg y FFprobe.", flush=True)
-        media = studio_settings.find_ffmpeg(HERE, prefs["ffmpeg_dir"])
-        studio_settings.tool_path(media, os.environ)
-        print("FFmpeg y FFprobe disponibles." if media else
-              "FFmpeg y FFprobe pendientes de configurar.", flush=True)
         print(f"Studio: preparando el servidor local en 127.0.0.1:{args.port}.", flush=True)
         server = make_server(args.projects_dir or installation.projects(prefs), args.port, installation)
     except ValueError as exc:

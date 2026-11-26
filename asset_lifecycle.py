@@ -46,16 +46,26 @@ def _write(root, items):
 
 
 def send_to_trash(root, project, media, title):
+    return send_many(root, [(project, media, title)])[0]
+
+
+def send_many(root, assets):
+    items = entries(root)
+    added = []
+    for project, media, title in assets:
+        row = _trash_row(root, project, media, title, items + added)
+        added.append(row)
+    _write(root, [*items, *added])
+    return added
+
+
+def _trash_row(root, project, media, title, items):
     if not isinstance(project, str) or not re.fullmatch(r"(?:live/)?[a-f0-9]{12}", project):
         raise ValueError("Identificador de proyecto no válido.")
-    if project.startswith("live/") and media is None:
-        raise ValueError("Selecciona un clip de la sesión Live.")
-    items = entries(root)
     if hidden(root, project, media, records=items):
         raise ValueError("Este elemento ya está en la papelera.")
     row = {"id": uuid.uuid4().hex, "project": project, "file": media, "title": title,
            "removed": time.time()}
-    _write(root, [*items, row])
     return row
 
 
@@ -96,8 +106,6 @@ def _targets(root, row):
     project = root / code
     media = row["file"]
     if media is None:
-        if code.startswith("live/"):
-            raise ValueError("No se puede purgar una sesión Live desde la papelera.")
         targets = [_safe_path(root, project)]
         if not targets[0].is_dir():
             raise ValueError("La carpeta del proyecto no está disponible.")
@@ -169,7 +177,7 @@ def _staged_move_is_owned(row, relative):
     if not re.fullmatch(r"(?:live/)?[a-f0-9]{12}", row["project"]):
         return False
     if row["file"] is None:
-        return not row["project"].startswith("live/") and relative == project
+        return relative == project
     if relative.parent != project / "clips":
         return False
     name = row["file"]
@@ -227,9 +235,8 @@ def purge(root, ids, confirmation):
     selected = [row for row in items if row["id"] in ids]
     if not selected or len(selected) != len(set(ids)):
         raise ValueError("Uno de los elementos ya no está en la papelera.")
-    required = confirmation_for(selected)
-    if confirmation != required:
-        raise ValueError(f"Escribe {required} para confirmar la eliminación permanente.")
+    if confirmation is not True and confirmation != confirmation_for(selected):
+        raise ValueError("Confirma la eliminación permanente.")
     summaries, targets = inspect_purge(root, selected)
     stage = Path(tempfile.mkdtemp(prefix=".anqora-purge-", dir=root))
     journal = stage / "journal.json"

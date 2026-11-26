@@ -277,16 +277,66 @@ class Studio:
             # A previous response may reach the browser just before its request is released.
             if not self.requests_idle.wait_for(lambda: self.active_requests <= 1, timeout=0.5):
                 raise ValueError("Espera a que terminen las operaciones en curso antes de eliminar archivos.")
-            with self.tiktok.lock:
-                if any(self.activity().values()):
+            with (self.live_lock, self.tiktok.lock,
+                  self.production.dispatch_lock, self.editorial.dispatch_lock):
+                if self.live_starting or any(self.activity().values()):
                     raise ValueError("Espera a que terminen los trabajos y las capturas antes de eliminar archivos.")
                 selected = [row for row in asset_lifecycle.entries(self.root) if row["id"] in ids]
                 with self.calendar.connect(write=True) as db:
                     for row in selected:
-                        if db.execute("""SELECT 1 FROM plans WHERE project=? AND (? IS NULL OR file=?)
-                        AND status NOT IN ('cancelled','published') LIMIT 1""", (row["project"], row["file"], row["file"])).fetchone():
-                            raise ValueError("Cancela o resuelve las programaciones relacionadas antes de eliminar los archivos.")
-                    return asset_lifecycle.purge(self.root, ids, confirmation)
+                        self.check_trash_schedule(db, row["project"], row["file"], include_drafts=True)
+                    for row in selected:
+                        key = (row["project"], row["file"], row["file"])
+                        for table in ("clip_art", "clip_copy"):
+                            db.execute(f"DELETE FROM {table} WHERE project=? AND (? IS NULL OR file=?)", key)
+                    result = asset_lifecycle.purge(self.root, ids, confirmation)
+                    for row in selected:
+                        if row["file"] is None and row["project"].startswith("live/"):
+                            self.live_sessions.pop(row["project"][5:], None)
+                    return result
+
+    def trash_clips(self, clips):
+        if (not isinstance(clips, list) or not 1 <= len(clips) <= 1000
+                or any(not isinstance(item, dict) for item in clips)):
+            raise ValueError("Selecciona entre 1 y 1000 clips.")
+        with self.lock, self.tiktok.lock, self.calendar.connect(write=True) as db:
+            if self.tiktok.sending:
+                raise ValueError("Espera a que termine el envío en curso.")
+            assets = []
+            for item in clips:
+                project, filename = item.get("project"), item.get("filename")
+                if not isinstance(project, str) or not isinstance(filename, str):
+                    raise ValueError("Clip no válido.")
+                if self.busy(project) or (project.startswith("live/") and self.activity()["live"]):
+                    raise ValueError("Espera a que termine el procesamiento del clip.")
+                media = self.tiktok._clip(project, filename)
+                self.check_trash_schedule(db, project, media.name)
+                assets.append((project, media.name, media.stem))
+            return asset_lifecycle.send_many(self.root, assets)
+
+    @staticmethod
+    def check_trash_schedule(db, project, filename, *, include_drafts=False):
+        if db.execute("""SELECT 1 FROM plans p LEFT JOIN inbox_schedule s ON p.id=s.plan
+                WHERE p.project=? AND (? IS NULL OR p.file=?)
+                AND ((? AND p.status NOT IN ('cancelled','published'))
+                     OR s.state IN ('pending','claimed','uncertain')) LIMIT 1""",
+                      (project, filename, filename, include_drafts)).fetchone():
+            raise ValueError("Cancela o resuelve las programaciones relacionadas antes de eliminar.")
+
+    def trash_live(self, ident):
+        with self.lock, self.live_lock, self.tiktok.lock, self.calendar.connect(write=True) as db:
+            session = self.live_sessions.get(ident)
+            active = session and (session.status in LIVE_ACTIVE or session.exporting()
+                                  or session.buffer and session.buffer.alive)
+            if active or self.live_production.busy(ident) or self.tiktok.sending:
+                raise ValueError("Espera a que terminen las capturas, exportaciones y envíos activos.")
+            directory = self.live_directory(ident)
+            manifest = self.read_live_manifest(directory, active=False)
+            if manifest.get("id") != ident:
+                raise FileNotFoundError
+            project = "live/" + ident
+            self.check_trash_schedule(db, project, None)
+            return asset_lifecycle.send_to_trash(self.root, project, None, "Sesión Live · " + ident)
 
     def _production_catalog(self):
         from live_clips import PRODUCTION_REPAIR, live_exports
@@ -476,6 +526,8 @@ class Studio:
         session.request_export(seconds)
 
     def live_state(self, session_id):
+        if asset_lifecycle.hidden(self.root, "live/" + session_id):
+            raise FileNotFoundError
         with self.live_lock:
             session = self.live_sessions.get(session_id)
         directory = session.dir if session else self.live_directory(session_id)
@@ -493,14 +545,17 @@ class Studio:
             except (OSError, ValueError, KeyError, TypeError, AttributeError):
                 continue
         trash = asset_lifecycle.entries(self.root)
-        detail["triggers"] = sorted((record for record in records.values()
-                                    if not asset_lifecycle.hidden(self.root, "live/" + session_id,
-                                        Path(record.get("files", {}).get("mp4") or "").name, records=trash)),
+        def visible(record):
+            name = Path(record.get("files", {}).get("mp4") or "").name
+            return not name or ((directory / "clips" / name).is_file()
+                                and not asset_lifecycle.hidden(self.root, "live/" + session_id, name, records=trash))
+
+        detail["triggers"] = sorted((record for record in records.values() if visible(record)),
                                     key=lambda item: item.get("start", 0))
         detail["production"] = self.live_production.status(session_id)
         if "export" in detail:
             detail["export"]["completed"] = sum(bool(row.get("files", {}).get("mp4")) and not row.get("error")
-                                                for row in records.values())
+                                                for row in detail["triggers"])
         return detail
 
     def live_directory(self, session_id):
@@ -525,7 +580,10 @@ class Studio:
             sessions = dict(self.live_sessions)
         directories.update({ident: session.dir for ident, session in sessions.items()})
         result = []
+        trash = asset_lifecycle.entries(self.root)
         for ident, directory in directories.items():
+            if asset_lifecycle.hidden(self.root, "live/" + ident, records=trash):
+                continue
             try:
                 if ident not in sessions:
                     directory = self.live_directory(ident)
@@ -539,12 +597,9 @@ class Studio:
                 export = detail.get("export") or {}
                 scores = detail.get("recent_scores") or []
                 score = (detail.get("health", {}).get("detection") or {}).get("last_score")
-                count = export.get("completed")
-                if count is None:
-                    from live_clips import finished_names
-                    count = len(finished_names(detail))
-                else:
-                    count += self.live_production.completed(ident)
+                count = sum(path.is_file() and not asset_lifecycle.hidden(
+                    self.root, "live/" + ident, path.name, records=trash)
+                    for path in (directory / "clips").glob("*.mp4"))
                 summary.update(
                     clips=count, score=score if score is not None else scores[-1] if scores else None,
                     errors=max(len(detail.get("errors") or []), export.get("errors", 0)),
@@ -736,7 +791,14 @@ class Handler(BaseHTTPRequestHandler):
                 payload.update(config_payload(self.app.root))
                 return self.send_json(payload)
             if parts == ["api", "trash"]:
-                return self.send_json({"items": asset_lifecycle.describe(self.app.root)})
+                items = asset_lifecycle.describe(self.app.root)
+                with self.app.calendar.connect() as db:
+                    for item in items:
+                        try:
+                            self.app.check_trash_schedule(db, item["project"], item["file"], include_drafts=True)
+                        except ValueError as exc:
+                            item.setdefault("blocked", str(exc))
+                return self.send_json({"items": items})
             if parts == ["api", "projects"]:
                 return self.send_json({"projects": self.app.list_projects()})
             if parts == ["api", "automation", "settings"]:
@@ -864,6 +926,12 @@ class Handler(BaseHTTPRequestHandler):
                         raise ValueError("Elige una plataforma disponible.")
                     return self.editorial_action("generate", {"project": project, "filename": filename,
                         "platform": "facebook" if platform == "instagram" else platform, "force": True, "semantic": True})
+            if parts == ["api", "trash", "clips"]:
+                return self.send_json({"items": self.app.trash_clips(body.get("clips"))})
+            if len(parts) == 4 and parts[:2] == ["api", "live"] and parts[3] == "trash":
+                if body.get("confirmed") is not True:
+                    raise ValueError("Confirma el envío de la sesión a la papelera.")
+                return self.send_json(self.app.trash_live(parts[2]))
             if parts == ["api", "trash", "purge"]:
                 if not isinstance(body.get("ids"), list) or not all(isinstance(item, str) for item in body["ids"]):
                     raise ValueError("Selecciona los elementos de la papelera.")
@@ -969,13 +1037,7 @@ class Handler(BaseHTTPRequestHandler):
                 if parts == ["api", "trash", "restore"]:
                     return self.send_json(asset_lifecycle.restore(self.app.root, body.get("id")))
                 if parts == ["api", "trash", "clip"]:
-                    project, filename = body.get("project"), body.get("filename")
-                    with self.app.tiktok.lock:
-                        if self.app.tiktok.sending:
-                            raise ValueError("Espera a que termine el envío en curso.")
-                        media = self.app.tiktok._clip(project, filename)
-                        trashed = asset_lifecycle.send_to_trash(self.app.root, project, media.name, media.stem)
-                    return self.send_json(trashed)
+                    return self.send_json(self.app.trash_clips([body])[0])
                 if len(parts) == 4 and parts[:2] == ["api", "projects"]:
                     project_id, action = parts[2:]
                     path = projects.project_path(self.app.root, project_id)
@@ -1008,9 +1070,10 @@ class Handler(BaseHTTPRequestHandler):
                         if path.is_symlink() or path.resolve() != path:
                             raise ValueError("La carpeta de proyecto debe ser local.")
                         if command == "trash":
-                            with self.app.tiktok.lock:
+                            with self.app.tiktok.lock, self.app.calendar.connect(write=True) as db:
                                 if self.app.tiktok.sending:
                                     raise ValueError("Espera a que termine el envío en curso.")
+                                self.app.check_trash_schedule(db, project_id, None)
                                 trashed = asset_lifecycle.send_to_trash(
                                     self.app.root, project_id, None, state.get("name") or project_id)
                             return self.send_json(trashed)

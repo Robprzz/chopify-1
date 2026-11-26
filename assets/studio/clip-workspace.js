@@ -258,7 +258,7 @@ async function publishFromClip(now) {
 $("#clip-publish").addEventListener("click",safe(() => publishFromClip(true)));
 $("#clip-schedule").addEventListener("click",safe(() => publishFromClip(false)));
 $("#clip-trash").addEventListener("click",safe(async () => {
-  if (!confirm("¿Enviar este clip a la papelera? Puedes restaurarlo después.")) return;
+  if (!await confirmDeletion("Enviar el clip a la papelera. Podrás restaurarlo después.")) return;
   const {project,file} = clipFields();
   await api("/api/trash/clip",{project,filename:file});
   clipEditor.dirty = false;

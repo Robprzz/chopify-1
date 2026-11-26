@@ -76,7 +76,9 @@
       </section>
       <section id="trash-view" class="view workspace-view" hidden>
         <header class="section-heading"><div><h1>Papelera</h1><p>Restaura proyectos y clips. Los originales se conservan en el almacenamiento local.</p></div></header>
-        <p id="trash-summary" role="status"></p><button id="trash-empty" type="button">Vaciar papelera</button><div id="asset-trash-list" class="project-list"></div>
+        <p id="trash-summary" role="status"></p><button id="trash-empty" type="button">Vaciar papelera</button>
+        <button id="trash-purge-selected" type="button" disabled>Eliminar seleccionados</button>
+        <span id="trash-selected-count" role="status"></span><div id="asset-trash-list" class="project-list"></div>
       </section>
       <section id="clips-view" class="view workspace-view">
         <header class="section-heading"><div><h1>Clips</h1><p>Busca, reproduce y prepara tus exportaciones.</p></div></header>
@@ -89,6 +91,12 @@
           <label>Origen <select id="clip-library-origin"><option value="">Todos</option><option value="project">Proyectos</option><option value="live">Live</option></select></label>
           <label>Formato <select id="clip-library-format"><option value="">Todos</option><option>9:16</option><option>16:9</option><option>1:1</option></select></label>
           <label>Desde <input id="clip-library-date" type="date" /></label>
+        </div>
+        <div class="publication-actions">
+          <button id="clip-select-all" type="button">Seleccionar todos</button>
+          <button id="clip-select-none" type="button">Deseleccionar todos</button>
+          <button id="clip-trash-selected" type="button" disabled>Eliminar seleccionados</button>
+          <span id="clip-selected-count" role="status"></span>
         </div>
         <div id="clip-library" class="library-grid"></div>
 
@@ -123,7 +131,9 @@
               <section class="workspace-card"><h2>Próximas publicaciones</h2><div id="calendar-upcoming"></div></section>
               <section class="workspace-card"><h2>Clips urgentes</h2><div id="calendar-urgent"></div></section>
               <section class="workspace-card"><h2>Clips sin programar</h2><div id="calendar-unplanned"></div></section>
-              <section class="workspace-card"><h2>Borradores y tareas sin fecha</h2><div id="calendar-drafts"></div></section>
+              <section class="workspace-card"><h2>Borradores y tareas sin fecha</h2><div id="calendar-drafts"></div><details><summary>Eliminar planes en grupo</summary>
+                <label>Planes locales <select id="calendar-delete-selection" multiple size="5"></select></label>
+                <button id="calendar-delete-batch" type="button">Eliminar seleccionados</button></details></section>
             </div>
           </div>
           <aside id="calendar-detail" class="workspace-card" hidden aria-labelledby="calendar-detail-title">
@@ -1486,5 +1496,15 @@
         Anqora Media Studio <span>Espacio de trabajo local</span>
       </footer>
     </main>
+    <dialog id="delete-confirmation" aria-labelledby="delete-confirmation-title">
+      <form method="dialog">
+        <h2 id="delete-confirmation-title">Confirmar eliminación</h2>
+        <p id="delete-confirmation-detail"></p>
+        <div class="publication-actions">
+          <button value="cancel" autofocus>Cancelar</button>
+          <button value="delete">Sí, eliminar</button>
+        </div>
+      </form>
+    </dialog>
   </body>
 </html>

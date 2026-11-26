@@ -270,6 +270,8 @@ def test_live_history_with_archived_clips_after_server_restart(tmp_path):
     records.mkdir(parents=True)
     clip = {"id": "aabbccddeeff", "start": 4, "end": 20, "score": 8, "files": {"mp4": "aabbccddeeff-clip.mp4"}}
     projects.atomic_json(records / "aabbccddeeff.json", clip)
+    (directory / "clips").mkdir()
+    (directory / "clips" / clip["files"]["mp4"]).write_bytes(b"local fixture")
     manifest = directory / "live_session.json"
     saved = {"id": ident, "status": "running", "started_at": 123, "stream_time": 23,
              "source": {"kind": "hls", "platform": "youtube", "label": "YouTube · 2dt0yxm4RUE"},

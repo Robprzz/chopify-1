@@ -302,13 +302,155 @@ def test_chromium_immediate_manual_package_and_confirmed_purge(tmp_path, chromiu
         page.get_by_role("button",name="Confirmar publicación manual").click()
         expect(page.locator("#calendar-detail-status")).to_contain_text("Publicado · confirmación manual")
         page.locator("#brand-home").click()
-        page.once("dialog", lambda dialog: dialog.accept())
         page.locator("#clip-library").get_by_role("button",name="Enviar a la papelera").click()
+        page.get_by_role("button", name="Sí, eliminar").click()
         expect(page.locator("#clip-library")).to_contain_text("No hay exportaciones")
         page.locator("#show-settings").click()
         page.locator("#show-trash").click()
         expect(page.locator("#asset-trash-list")).to_contain_text(media.name)
-        page.once("dialog", lambda dialog: dialog.accept("ELIMINAR"))
         page.get_by_role("button",name="Eliminar definitivamente").click()
+        page.get_by_role("button", name="Sí, eliminar").click()
         expect(page.locator("#asset-trash-list")).to_contain_text("La papelera está vacía")
         assert not media.exists()
+
+
+def test_bulk_clip_trash_atomic_and_confirmed_purge_preserves_source(tmp_path):
+    project, media = fixture_media(tmp_path)
+    sibling = media.with_name("second.mp4")
+    shutil.copyfile(media, sibling)
+    with running_server(tmp_path) as (server, base):
+        token = server.app.token
+
+        def trash(*files):
+            return request(base, "/api/trash/clips", {
+                "clips": [{"project": project, "filename": name} for name in files]}, token)
+
+        with pytest.raises(HTTPError):
+            trash(media.name, "missing.mp4")
+        assert request(base, "/api/trash")["items"] == []
+        rows = trash(media.name, sibling.name)["items"]
+        assert len(rows) == 2 and media.exists() and sibling.exists()
+        restored = request(base, "/api/trash/restore", {"id": rows[0]["id"]}, token)
+        assert restored["file"] == media.name
+        assert request(base, "/api/trash/purge", {"ids": [rows[1]["id"]], "confirmation": True}, token)["released"]
+        assert media.exists() and not sibling.exists() and (tmp_path / "gray source.mp4").exists()
+
+
+def test_live_trashed_session_disappears_and_restores_before_purge(tmp_path):
+    ident = "abcdef123456"
+    session = tmp_path / "live" / ident
+    session.mkdir(parents=True)
+    projects.atomic_json(session / "live_session.json", {"id": ident, "status": "stopped"})
+    with running_server(tmp_path) as (server, base):
+        from types import SimpleNamespace
+        token = server.app.token
+        endpoint = f"/api/live/{ident}/trash"
+        server.app.live_sessions[ident] = SimpleNamespace(status="running")
+        try:
+            with pytest.raises(HTTPError):
+                request(base, endpoint, {"confirmed": True}, token)
+        finally:
+            del server.app.live_sessions[ident]
+        row = request(base, endpoint, {"confirmed": True}, token)
+        assert request(base, "/api/live")["sessions"] == []
+        assert session.exists()
+        request(base, "/api/trash/restore", {"id": row["id"]}, token)
+        assert request(base, "/api/live")["sessions"][0]["id"] == ident
+        row = request(base, endpoint, {"confirmed": True}, token)
+        request(base, "/api/trash/purge", {"ids": [row["id"]], "confirmation": True}, token)
+        assert not session.exists()
+
+
+def test_calendar_purge_removes_pending_queue_and_rolls_back_batch(tmp_path):
+    project, media = fixture_media(tmp_path)
+    with running_server(tmp_path) as (server, base):
+        token = server.app.token
+        a = request(base, "/api/calendar/save", new_plan(project, media.name), token)
+        b = request(base, "/api/calendar/save", new_plan(project, media.name, platform="facebook", local=""), token)
+        with server.app.calendar.connect(write=True) as db:
+            db.execute("INSERT INTO inbox_schedule VALUES(?,?,?,?)", (a["id"], "test", a["revision"], "pending"))
+
+        def remove(revision):
+            return request(base, "/api/calendar/delete", {"confirmed": True,
+                "items": [{"id": a["id"], "revision": a["revision"]},
+                          {"id": b["id"], "revision": revision}]}, token)
+
+        with pytest.raises(HTTPError) as stale:
+            remove(b["revision"] + 1)
+        assert stale.value.code == 409
+        with server.app.calendar.connect(write=True) as db:
+            assert db.execute("SELECT count(*) FROM plans").fetchone()[0] == 2
+            db.execute("UPDATE inbox_schedule SET state='claimed' WHERE plan=?", (a["id"],))
+        with pytest.raises(HTTPError) as claimed:
+            remove(b["revision"])
+        assert claimed.value.code == 409
+        with server.app.calendar.connect(write=True) as db:
+            db.execute("UPDATE inbox_schedule SET state='pending' WHERE plan=?", (a["id"],))
+            db.execute("UPDATE plans SET status='published' WHERE id=?", (b["id"],))
+        with pytest.raises(HTTPError) as published:
+            remove(b["revision"])
+        assert published.value.code == 409
+        with server.app.calendar.connect(write=True) as db:
+            db.execute("UPDATE plans SET status='draft' WHERE id=?", (b["id"],))
+        assert remove(b["revision"]) == {"deleted": 2}
+        with server.app.calendar.connect() as db:
+            for name in ("plans", "inbox_schedule", "calendar_events"):
+                assert not db.execute(f"SELECT 1 FROM {name}").fetchone()
+        assert media.exists()
+
+
+def test_library_filter_and_trash_blocked_entry_in_chromium(tmp_path, chromium_page):
+    project, media = fixture_media(tmp_path)
+    second = media.with_name("distinct.mp4")
+    shutil.copyfile(media, second)
+    projects.atomic_json(second.with_suffix(".meta.json"), {"title": "Distinto", "start": 0, "end": 3})
+    page, expect = chromium_page
+    with running_server(tmp_path) as (server, base):
+        missing = asset_lifecycle.send_to_trash(tmp_path, "123456789abc", None, "Proyecto ausente")
+        page.goto(base)
+        page.locator("#show-clips-library").click()
+        page.locator("#clip-library-query").fill("Distinto")
+        page.get_by_role("button", name="Seleccionar todos", exact=True).click()
+        expect(page.locator("#clip-selected-count")).to_have_text("1 seleccionados")
+        page.get_by_role("button", name="Deseleccionar todos", exact=True).click()
+        expect(page.locator("#clip-selected-count")).to_have_text("0 seleccionados")
+        page.locator("#clip-library [data-clip-choice]").check()
+        page.locator("#clip-trash-selected").click()
+        page.locator("#delete-confirmation").get_by_role("button", name="Cancelar").click()
+        assert all(item["file"] is None for item in asset_lifecycle.entries(tmp_path))
+        page.locator("#clip-trash-selected").click()
+        page.get_by_role("button", name="Sí, eliminar").click()
+        expect(page.locator("#clip-library")).to_contain_text("No hay exportaciones")
+        page.locator("#show-settings").click()
+        page.locator("#show-trash").click()
+        page.get_by_role("button", name="Vaciar papelera").click()
+        expect(page.locator("#delete-confirmation-detail")).to_contain_text("1 elementos bloqueados")
+        page.get_by_role("button", name="Sí, eliminar").click()
+        expect(page.locator("#trash-summary")).to_contain_text("1 elementos")
+        assert asset_lifecycle.entries(tmp_path) == [missing] and not second.exists() and media.exists()
+
+
+def test_calendar_batch_and_live_trash_controls_in_chromium(tmp_path, chromium_page):
+    project, media = fixture_media(tmp_path)
+    ident = "abcdeffedcba"
+    session = tmp_path / "live" / ident
+    session.mkdir(parents=True)
+    projects.atomic_json(session / "live_session.json", {"id": ident, "status": "stopped"})
+    page, expect = chromium_page
+    with running_server(tmp_path) as (server, base):
+        token = server.app.token
+        rows = [request(base, "/api/calendar/save", new_plan(project, media.name, platform=platform), token)
+                for platform in ("youtube", "facebook")]
+        page.goto(base)
+        page.locator("#show-publications").click()
+        page.get_by_text("Eliminar planes en grupo", exact=True).click()
+        page.locator("#calendar-delete-selection").select_option([row["id"] for row in rows])
+        page.locator("#calendar-delete-batch").click()
+        page.get_by_role("button", name="Sí, eliminar").click()
+        expect(page.locator("#calendar-delete-selection option")).to_have_count(0)
+        assert request(base, "/api/calendar")["plans"] == []
+        page.locator("#show-live").click()
+        page.locator("#live-sessions").get_by_role("button", name="Eliminar sesión").click()
+        page.get_by_role("button", name="Sí, eliminar").click()
+        expect(page.locator("#live-sessions-empty")).to_be_visible()
+        assert request(base, "/api/live")["sessions"] == [] and session.exists()

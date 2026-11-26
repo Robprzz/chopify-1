@@ -340,6 +340,15 @@ class Calendar:
         return result
 
     @staticmethod
+    def _deletable(db, row):
+        return (row["status"] in {"draft", "pending_review", "editorial_approved", "ready",
+                                  "scheduled", "cancelled", "requires_action", "failed"}
+                and not row["external_id"] and not row["publish_id"]
+                and not db.execute("SELECT 1 FROM delivery_attempts WHERE plan=?", (row["id"],)).fetchone()
+                and not db.execute("SELECT 1 FROM inbox_schedule WHERE plan=? AND state IN ('claimed','uncertain','done')",
+                                   (row["id"],)).fetchone())
+
+    @staticmethod
     def _unclaimed(db, ident):
         if db.execute("SELECT 1 FROM inbox_schedule WHERE plan=? AND state='claimed'", (ident,)).fetchone():
             raise Conflict("Hay un envío programado en curso. Consulta su resultado antes de cambiarlo.")
@@ -437,6 +446,7 @@ class Calendar:
                 item = self._public(row)
                 delivery = db.execute("SELECT state FROM inbox_schedule WHERE plan=?", (ident,)).fetchone()
                 item["inbox_state"] = delivery[0] if delivery else None
+                item["deletable"] = self._deletable(db, row)
                 try:
                     current = self._clip(row["job"], row["project"], row["file"])
                     item["stale"] = not self._same_version(row, current)
@@ -469,7 +479,7 @@ class Calendar:
                     ORDER BY updated DESC LIMIT 80
                 )
                 ORDER BY scheduled,created DESC""", (start, end, now))
-            return {"preferences": prefs, "plans": [self._public(row) for row in rows]}
+            return {"preferences": prefs, "plans": [dict(self._public(row), deletable=self._deletable(db, row)) for row in rows]}
 
     def statistics(self, cutoff):
         with self.connect() as db:
@@ -482,6 +492,22 @@ class Calendar:
             return dict(row)
 
     def action(self, action, data):
+        if action == "delete":
+            items = data.get("items")
+            if (data.get("confirmed") is not True or not isinstance(items, list)
+                    or not 1 <= len(items) <= 1000 or any(not isinstance(item, dict) for item in items)):
+                raise ValueError("Selecciona las programaciones y confirma la eliminación.")
+            with self.connect(write=True) as db:
+                for item in items:
+                    row = self._get(db, item.get("id"))
+                    self._expect(row, item.get("revision"))
+                    self._unclaimed(db, row["id"])
+                    if not self._deletable(db, row):
+                        raise Conflict("Solo se pueden eliminar planes locales sin entregas externas.")
+                    db.execute("DELETE FROM inbox_schedule WHERE plan=?", (row["id"],))
+                    db.execute("DELETE FROM calendar_events WHERE plan=?", (row["id"],))
+                    db.execute("DELETE FROM plans WHERE id=?", (row["id"],))
+            return {"deleted": len(items)}
         if action == "save":
             return self.save(data)
         if action == "preferences":

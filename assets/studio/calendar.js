@@ -66,6 +66,12 @@ function renderCalendar() {
   if (mode !== "day") first.setUTCDate(first.getUTCDate() - (first.getUTCDay() + 6) % 7);
   const platform = $("#calendar-platform-filter").value, status = $("#calendar-status-filter").value;
   const filtered = plans.filter(item => (!platform || item.platform === platform) && (!status || item.status === status));
+  const deleteList = $("#calendar-delete-selection");
+  const selectedForDelete = new Set([...deleteList.selectedOptions].map(option => option.value));
+  const deletable = filtered.filter(item => item.deletable);
+  patchWorkspace("#calendar-delete-selection", deletable.map(item => `<option value="${escapeHTML(item.id)}"
+    ${selectedForDelete.has(item.id) ? "selected" : ""}>${escapeHTML(item.title)} · ${escapeHTML(planLabel(item))}</option>`).join(""));
+  $("#calendar-delete-batch").disabled = !deletable.length;
   const grid = $("#calendar-grid");
   grid.dataset.mode = mode;
   const cells = Array.from({length:mode === "month" ? 42 : mode === "week" ? 7 : 1}, (_, index) => {
@@ -90,9 +96,9 @@ function renderCalendar() {
   patchWorkspace("#calendar-urgent",shortcuts(candidates.filter(clip => clip.level === "urgent" && !planned.has(clip.project + "/" + clip.filename))) || "<p>Sin clips urgentes por programar.</p>");
   patchWorkspace("#calendar-unplanned",shortcuts(candidates.filter(clip => !planned.has(clip.project + "/" + clip.filename))) || "<p>Sin clips elegibles por programar.</p>");
 }
-async function refreshCalendar() {
+async function refreshCalendar(force = false) {
   const date = $("#calendar-date").value;
-  if (calendarLoading?.date === date) return calendarLoading.pending;
+  if (!force && calendarLoading?.date === date) return calendarLoading.pending;
   const pending = api("/api/calendar" + (date ? "?date=" + encodeURIComponent(date) : "")).then(data => {
     if (calendarLoading?.pending !== pending) return;
     calendarData = data;
@@ -214,6 +220,9 @@ async function openCalendarDetail(id = null, key = null, immediate = false) {
       else actions.push(["prepare", "Preparar paquete manual"],["confirm", "Confirmar publicación manual"]);
     } else if (detail.status === "failed" && !detail.publish_id) actions.push(["retry", "Preparar un nuevo intento"]);
     if (detail.external_id) actions.push(["history", "Ver historial de TikTok"]);
+  }
+  if (detail?.deletable) {
+    actions.push(["delete", detail.status === "scheduled" ? "Cancelar y eliminar" : "Eliminar plan"]);
   }
   $("#calendar-actions").innerHTML = actions.map(([action,label]) =>
     `<button type="button" data-calendar-action="${action}">${label}</button>`).join("");
@@ -338,6 +347,21 @@ $("#calendar-suggest").addEventListener("click",() => calendarMutation(async () 
   $("#calendar-local-zone").value = slot.zone;
   $("#calendar-feedback").textContent = slot.basis === "imported_csv" ? `Horario sugerido con ${slot.history_samples} publicaciones importadas de esa franja. Es una comparación histórica.` : "Horario sugerido según preferencias y huecos de la agenda.";
 }));
+async function deleteCalendarPlans(plans) {
+  if (!plans.length || !await confirmDeletion(`Eliminar definitivamente ${plans.length} planes locales y retirar sus programaciones de la cola.`)) return;
+  await calendarApi("delete", {items:plans.map(({id, revision}) => ({id, revision})), confirmed:true});
+  if (plans.some(plan => plan.id === calendarDetail?.id)) {
+    calendarDetail = null;
+    $("#calendar-detail").hidden = true;
+  }
+  await refreshCalendar(true);
+  await refreshWorkspace(true);
+}
+$("#calendar-delete-batch").addEventListener("click", () => calendarMutation(async () => {
+  if (!confirmCalendarEdits()) return;
+  const ids = new Set([...$("#calendar-delete-selection").selectedOptions].map(option => option.value));
+  return deleteCalendarPlans(calendarData.plans.filter(plan => ids.has(plan.id)));
+}));
 $("#calendar-actions").addEventListener("click",event => {
   const button = event.target.closest("[data-calendar-action]");
   if (!button || !calendarDetail) return;
@@ -351,6 +375,7 @@ $("#calendar-actions").addEventListener("click",event => {
     }
     if (!confirmCalendarEdits()) return;
     calendarDirty = false;
+    if (action === "delete") return deleteCalendarPlans([calendarDetail]);
     if (action === "cancel" && !confirm("¿Cancelar esta programación?")) return;
     if (action === "confirm" && !confirm("¿Confirmas que este clip ya está publicado en la plataforma indicada?")) return;
     const result = await calendarApi(action,{id:calendarDetail.id,revision:calendarDetail.revision,confirmed:action === "confirm"});

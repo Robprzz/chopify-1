@@ -107,7 +107,7 @@ function renderWorkspace(data) {
 
 async function refreshWorkspace(force = false) {
   if (!force && Date.now() - workspaceLast < 3500) return workspaceData;
-  if (workspaceLoading) return workspaceLoading;
+  if (workspaceLoading) return force ? workspaceLoading.then(() => refreshWorkspace(true)) : workspaceLoading;
   const period = workspaceView === "statistics-view" ? $("#statistics-period").value : 1;
   workspaceLoading = api("/api/workspace?days=" + period).then(data => {
     workspaceData = data;
@@ -144,14 +144,42 @@ $("#clip-preview-dialog").addEventListener("close", () => {
   video.load();
 });
 
+function confirmDeletion(message) {
+  const dialog = $("#delete-confirmation");
+  if (dialog.open) return Promise.resolve(false);
+  $("#delete-confirmation-detail").textContent = message;
+  dialog.returnValue = "";
+  return new Promise(resolve => {
+    dialog.addEventListener("close", () => resolve(dialog.returnValue === "delete"), {once:true});
+    dialog.showModal();
+  });
+}
+
 let trashItems = [];
+const trashSelection = new Set();
+function updateTrashSelection() {
+  $("#trash-purge-selected").disabled = !trashSelection.size;
+  $("#trash-selected-count").textContent = `${trashSelection.size} seleccionados`;
+}
+$("#asset-trash-list").addEventListener("change", event => {
+  const box = event.target.closest("[data-trash-choice]");
+  if (!box) return;
+  if (box.checked) trashSelection.add(box.dataset.trashChoice);
+  else trashSelection.delete(box.dataset.trashChoice);
+  updateTrashSelection();
+});
+$("#trash-purge-selected").addEventListener("click", safe(() =>
+  purgeTrash(trashItems.filter(item => trashSelection.has(item.id)))));
 async function refreshTrash() {
   const {items} = await api("/api/trash");
   trashItems = items;
-  $("#trash-empty").disabled = !items.length || items.some(item => item.blocked);
+  $("#trash-empty").disabled = !items.some(item => !item.blocked);
+  for (const id of trashSelection) if (!items.some(item => item.id === id && !item.blocked)) trashSelection.delete(id);
+  updateTrashSelection();
   $("#trash-summary").textContent = `${items.length} elementos · ${bytesLabel(items.reduce((n, item) => n + (item.bytes || 0),0))}`;
   $("#asset-trash-list").innerHTML = items.length ? [...items].reverse().map(item =>
     `<article class="workspace-card"><strong>${escapeHTML(item.title)}</strong>
+    <label><input type="checkbox" data-trash-choice="${escapeHTML(item.id)}" ${trashSelection.has(item.id) ? "checked" : ""} ${item.blocked ? "disabled" : ""}> Seleccionar</label>
     <p>${item.file ? "Clip" : "Proyecto"} · ${escapeHTML(item.project)} · ${bytesLabel(item.bytes)}</p>
     ${item.blocked ? `<p>${escapeHTML(item.blocked)}</p>` :
       `<details><summary>Archivos locales</summary><ul>${item.files.map(file => `<li>${escapeHTML(file)}</li>`).join("")}</ul></details>`}
@@ -164,15 +192,13 @@ function bytesLabel(value) {
 }
 async function purgeTrash(items) {
   if (!items.length) return;
-  const expected = items.length === 1 && !items[0].file ? items[0].title :
-    ["ELIMINAR", ...items.filter(item => !item.file).map(item => item.title).sort()].join(" / ");
-  const size = bytesLabel(items.reduce((total,item) => total + item.bytes,0));
-  const files = items.flatMap(item => item.files);
-  const summary = files.length > 12 ? `${files.slice(0,12).join("\n")}\n… y ${files.length - 12} más (consulta el listado en la papelera).` : files.join("\n");
-  const confirmation = prompt(`Eliminación irreversible · ${size}\n${items.map(item => item.title).join(", ")}\n${summary}
-Escribe ${expected} para continuar.`);
-  if (confirmation === null) return;
-  const result = await api("/api/trash/purge",{ids:items.map(item => item.id),confirmation});
+  const skipped = items.filter(item => item.blocked).length;
+  items = items.filter(item => !item.blocked);
+  if (!items.length) return;
+  const size = bytesLabel(items.reduce((total,item) => total + (item.bytes || 0),0));
+  if (!await confirmDeletion(`Eliminación irreversible de ${items.length} elementos · ${size}.`
+      + (skipped ? ` Se conservarán ${skipped} elementos bloqueados.` : ""))) return;
+  const result = await api("/api/trash/purge",{ids:items.map(item => item.id),confirmation:true});
   await refreshTrash();
   await refreshWorkspace(true);
   notice(result.message || "Archivos eliminados definitivamente.");
@@ -185,7 +211,7 @@ async function manageProject(id, action) {
     request.name = prompt("Nombre del proyecto", detail.project.name || projectName(detail.project.source));
     if (request.name === null) return;
   }
-  if (request.action === "trash" && !confirm("¿Enviar el proyecto a la papelera? Puedes restaurarlo después.")) return;
+  if (request.action === "trash" && !await confirmDeletion("Enviar el proyecto a la papelera. Podrás restaurarlo después.")) return;
   const result = await api(`/api/projects/${id}/manage`, request);
   if (state.id === id) {
     if (request.action === "trash") {
@@ -200,12 +226,47 @@ async function manageProject(id, action) {
   await refreshProjects();
   notice(request.action === "trash" ? "Proyecto enviado a la papelera." : "Proyecto actualizado.");
 }
+const clipSelection = new Set();
+let visibleLibrary = [];
+const libraryKey = clip => clip.project + "/" + clip.filename;
+function updateClipSelection() {
+  $("#clip-selected-count").textContent = `${clipSelection.size} seleccionados`;
+  $("#clip-trash-selected").disabled = !clipSelection.size;
+  $("#clip-select-none").disabled = !clipSelection.size;
+  $("#clip-select-all").disabled = !visibleLibrary.length;
+}
+$("#clip-library").addEventListener("change", event => {
+  const box = event.target.closest("[data-clip-choice]");
+  if (!box) return;
+  if (box.checked) clipSelection.add(box.dataset.clipChoice);
+  else clipSelection.delete(box.dataset.clipChoice);
+  updateClipSelection();
+});
+$("#clip-select-all").addEventListener("click", () => {
+  clipSelection.clear();
+  for (const clip of visibleLibrary) clipSelection.add(libraryKey(clip));
+  renderLibrary();
+});
+$("#clip-select-none").addEventListener("click", () => {
+  clipSelection.clear();
+  renderLibrary();
+});
+$("#clip-trash-selected").addEventListener("click", safe(async () => {
+  const clips = visibleLibrary.filter(item => clipSelection.has(libraryKey(item)));
+  if (!clips.length || !await confirmDeletion(`Enviar ${clips.length} clips a la papelera. Podrás restaurarlos después.`)) return;
+  await api("/api/trash/clips", {clips:clips.map(({project, filename}) => ({project, filename}))});
+  clipSelection.clear();
+  document.activeElement?.blur();
+  await refreshWorkspace(true);
+  notice("Clips enviados a la papelera.");
+}));
+
 const libraryFilters = ["query","filter","sort","mode","project","origin","format","date"];
-function libraryCard(clip) {
+function libraryCard(clip, selectable = false) {
   const plans = workspaceData.plans.filter(row => row.project === clip.project && row.file === clip.filename);
   const providers = plans.map(row => `${calendarPlatforms[row.platform]}: ${planLabel(row)}`).join(" · ");
   return `<article class="workspace-card library-item">${clipThumb(clip)}
-    <div class="library-info"><strong>${escapeHTML(clip.title)}</strong><p>${escapeHTML(clip.source)}
+    <div class="library-info">${selectable ? `<label><input type="checkbox" data-clip-choice="${escapeHTML(libraryKey(clip))}" ${clipSelection.has(libraryKey(clip)) ? "checked" : ""}> Seleccionar</label>` : ""}<strong>${escapeHTML(clip.title)}</strong><p>${escapeHTML(clip.source)}
     · ${clip.project.startsWith("live/") ? "Live" : "Proyecto"} · ${escapeHTML(new Date(clip.created*1000).toLocaleDateString())}
     · ${escapeHTML(clip.format || "Formato sin verificar")} · ${mediaDuration(clip.duration)}</p>
     <p>Detección ${clip.score ?? "—"} · Prioridad ${clip.priority?.toFixed(1) ?? "—"} · ${workspaceStates[clip.status] || "En producción"}</p>
@@ -242,9 +303,13 @@ function renderLibrary() {
   if (fields.sort === "priority") clips.sort((a,b) => (b.priority ?? -1) - (a.priority ?? -1));
   if (fields.sort === "title") clips.sort((a,b) => a.title.localeCompare(b.title));
   $("#clip-library").className = fields.mode === "list" ? "library-list" : "library-grid";
-  patchWorkspace("#clip-library", clips.map(libraryCard).join("") || '<p class="empty-card">No hay exportaciones que coincidan con la búsqueda.</p>');
+  visibleLibrary = clips;
+  const visibleKeys = new Set(clips.map(libraryKey));
+  for (const key of clipSelection) if (!visibleKeys.has(key)) clipSelection.delete(key);
+  updateClipSelection();
+  patchWorkspace("#clip-library", clips.map(clip => libraryCard(clip, true)).join("") || '<p class="empty-card">No hay exportaciones que coincidan con la búsqueda.</p>');
   if (workspaceView === "project-view") patchWorkspace("#project-exported-clips",
-    all.filter(clip => clip.project === state.id).map(libraryCard).join("") || '<p class="empty-card">Este proyecto aún no tiene exportaciones.</p>');
+    all.filter(clip => clip.project === state.id).map(clip => libraryCard(clip)).join("") || '<p class="empty-card">Este proyecto aún no tiene exportaciones.</p>');
 }
 function renderStatistics(data) {
   const labels = {detected:"Detectados en Live",finished:"Exportaciones terminadas",rejected:"Rechazados",
@@ -273,12 +338,14 @@ async function workspaceAction(action, key, job) {
   if (action === "restore-asset") {
     await api("/api/trash/restore",{id:key});
     await refreshTrash();
+    await refreshWorkspace(true);
+    await refreshProjects();
     notice("Elemento restaurado.");
     return;
   }
   if (action === "trash-clip") {
     const clip = workspaceData?.clips.find(item => item.project + "/" + item.filename === key);
-    if (!clip || !confirm("¿Enviar el clip a la papelera? Puedes restaurarlo después.")) return;
+    if (!clip || !await confirmDeletion("Enviar el clip a la papelera. Podrás restaurarlo después.")) return;
     await api("/api/trash/clip", {project:clip.project, filename:clip.filename});
     document.activeElement?.blur();
     await refreshWorkspace(true);

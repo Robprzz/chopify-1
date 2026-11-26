@@ -1164,6 +1164,16 @@ function showLiveForm(show) {
 
 $("#live-new").addEventListener("click", () => showLiveForm($("#live-form").hidden));
 $("#live-sessions").addEventListener("click", safe(async (event) => {
+  const remove = event.target.closest("[data-live-trash]");
+  if (remove) {
+    const id = remove.dataset.liveTrash;
+    if (!await confirmDeletion("Enviar la sesión Live y sus archivos locales a la papelera.")) return;
+    await api(`/api/live/${id}/trash`, {confirmed:true});
+    if (liveWanted === id) liveWanted = null;
+    await refreshLive();
+    notice("Sesión Live enviada a la papelera.");
+    return;
+  }
   const link = event.target.closest("[data-live-session]");
   if (!link) return;
   liveWanted = link.dataset.liveSession;
@@ -1377,8 +1387,9 @@ function renderLiveSessions(sessions) {
     <td>${Math.round(item.stream_time || 0)} s</td><td>${escapeHTML(item.clips)}</td>
     <td>${item.score == null ? "—" : Number(item.score).toFixed(2)}</td><td>${escapeHTML(item.errors)}</td>
     <td>${item.started_at == null ? "—" : escapeHTML(new Date(item.started_at * 1000).toLocaleString())}</td>
+    <td>${liveActive(item) ? "" : `<button type="button" data-live-trash="${escapeHTML(item.id)}">Eliminar sesión</button>`}</td>
     </tr>`).join("");
-  const contents = rows ? `<table><thead><tr><th>Fuente y sesión</th><th>Estado</th><th>Duración</th><th>Clips</th><th>Último score</th><th>Errores</th><th>Inicio</th></tr></thead><tbody>${rows}</tbody></table>` : "";
+  const contents = rows ? `<table><thead><tr><th>Fuente y sesión</th><th>Estado</th><th>Duración</th><th>Clips</th><th>Último score</th><th>Errores</th><th>Inicio</th><th>Acciones</th></tr></thead><tbody>${rows}</tbody></table>` : "";
   if (contents !== list.dataset.contents) {
     list.innerHTML = contents;
     list.dataset.contents = contents;

@@ -19,6 +19,7 @@ import render_clips
 import sections
 import subtitle_quality as quality
 import watermark
+import signature
 from unicode_io import configure_utf8, utf8_environment
 
 
@@ -63,10 +64,11 @@ def transcribe_final(media, destination, name, cancellation=None):
 
 
 def _options_for_clip(base, manifest, project):
+    render_options = manifest.get("render_options") or {}
     if project.startswith("live/"):
-        return projects.validate_options(manifest.get("render_options") or {})
+        return projects.validate_options(render_options)
     return projects.validate_options({**projects.read_project(base)["options"],
-                                      **(manifest.get("render_options") or {})})
+                                      "signature": None, **render_options})
 
 
 def clean_source(media, project, meta, duration):
@@ -177,7 +179,9 @@ def _rebuild(root, media, project, folder, draft, *, preview, export_id=None, ch
                    if abs(dimensions[0] / dimensions[1] - w / h) < .015), None)
     if aspect is None:
         raise quality.SubtitleError("No se reconoce la relación de aspecto del MP4 original.")
-    mark = watermark.Store(root).for_render()
+    frame_options = options["signature"] if aspect == "9:16" else None
+    frame = signature.load(frame_options["template"]) if frame_options else None
+    mark = watermark.Store(root).for_render() if not frame or frame_options["watermark"] else None
     brand = branding.load_brand(options["brand"]) if options["brand"] else None
     words = [{**w, "start": w["start"] + start, "end": w["end"] + start} for w in draft["words"]]
     tag = uuid.uuid4().hex[:10]
@@ -192,6 +196,7 @@ def _rebuild(root, media, project, folder, draft, *, preview, export_id=None, ch
             caption={**(options["caption"] or {}), **draft["timing"], "words_per_cue": draft["group_size"]},
             mark=mark, fit=options["fit"], layout=options["layout"], centers=options["centers"], camera_mode=options["camera_mode"],
             facecam_box=options["facecam_box"], facecam_height=options["facecam_height"],
+            **({"signature_frame": frame} if frame else {}),
             transcript_info={"model": draft["model"], "origin": draft.get("origin", "Faster-Whisper sobre el audio del MP4"),
                              "transcript_version": 1, "transcript_hash": projects.digest(draft["words"]),
                              "repaired_from": media.name},

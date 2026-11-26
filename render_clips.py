@@ -33,6 +33,7 @@ import captions
 import branding
 import tighten  # local module: filler/silence removal
 import watermark
+import signature
 import smart_camera
 from unicode_io import configure_utf8
 
@@ -601,10 +602,12 @@ def _render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAU
            layout="single", centers=(0.25, 0.75), caption=None,
            source_offset=0.0, fit="cover", facecam_box=None,
            facecam_height=0.34, mark=None, transcript_info=None, timeout=None, allow_model_download=True,
-           retain_for_repair=False, camera_mode="auto", *, scratch, burn_subtitles=True):
+           retain_for_repair=False, camera_mode="auto", *, scratch, burn_subtitles=True, signature_frame=None):
     out_dir = (Path(out_dir) if out_dir else default_out()).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     source = Path(source).resolve()
+    if signature_frame:
+        aspect = "9:16"
     resolved = resolve_caption(style, brand, caption)
     if camera_mode not in smart_camera.MODES:
         raise ValueError("Modo de cámara desconocido.")
@@ -626,6 +629,10 @@ def _render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAU
         margin_v = max(10, round(margin_v * scale))
     else:
         tw, th = full_w, full_h
+    canvas_h = th
+    if signature_frame:
+        top_band, bottom_band = signature_frame.bands(tw, canvas_h)
+        th -= top_band + bottom_band
     start = float(seg["start"])
     end = float(seg["end"])
     dur = end - start
@@ -769,7 +776,7 @@ def _render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAU
                      f"colorchannelmixer=aa={mark.settings['opacity'] / 100:.2f}[mark];"
                      f"[base][mark]overlay=x={x}:y={y}:eof_action=repeat:format=auto,"
                      "setsar=1,subtitles=_caption.ass[v]")
-        elif brand and brand.get("logo"):
+        elif brand and brand.get("logo") and not signature_frame:
             width = max(20, round(brand["logo_width"] * tw / 1920))
             cmd += ["-i", brand["logo"]]
             base = (graph.removesuffix("[v]") if layout == "stacked"
@@ -780,6 +787,16 @@ def _render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAU
             graph += "[v]"
         if not burn_subtitles:
             graph = graph.replace(",subtitles=_caption.ass", "")
+        if signature_frame:
+            band_input = 2 if mark else 1
+            for image in (signature_frame.header, signature_frame.footer):
+                cmd += ["-f", "image2", "-pattern_type", "none", "-i", str(image)]
+            graph = (("" if graph.startswith("[0:v]") else "[0:v]") + graph.removesuffix("[v]")
+                     + f",pad={tw}:{canvas_h}:0:{top_band}[canvas];"
+                     f"[{band_input}:v]scale={tw}:{top_band},setsar=1[header];"
+                     f"[{band_input + 1}:v]scale={tw}:{bottom_band},setsar=1[footer];"
+                     "[canvas][header]overlay=0:0:eof_action=repeat[branded_top];"
+                     f"[branded_top][footer]overlay=0:{canvas_h - bottom_band}:eof_action=repeat,setsar=1[v]")
         cmd += ["-t", f"{dur:.3f}"]
         if graph.endswith("[v]"):
             cmd += ["-filter_complex_threads", "1", "-filter_complex", graph, "-map", "[v]", "-map", "0:a?"]
@@ -892,7 +909,9 @@ def _render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAU
             "media_hash": artifact_hash(out), "tightened": bool(do_tighten), "burned_in": burn_subtitles,
             "render_options": {"style": style, "fit": fit, "layout": requested_layout, "centers": requested_centers,
                                "camera_mode": camera_mode,
-                               "caption": caption, "facecam_box": facecam_box, "facecam_height": facecam_height},
+                               "caption": caption, "facecam_box": facecam_box, "facecam_height": facecam_height,
+                               **({"signature": {"template": signature.TEMPLATE_ID, "watermark": bool(mark)}}
+                                  if signature_frame else {})},
             **(transcript_info or {}),
             **({"caption_error": caption_error} if caption_error else {}),
         }
@@ -911,7 +930,7 @@ def _render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAU
 
     if preview:
         # drafts skip the poster and metadata - they exist to be eyeballed fast
-        print(f"SAVED {out}  ({aspect} {tw}x{th} preview, {mode})", flush=True)
+        print(f"SAVED {out}  ({aspect} {tw}x{canvas_h} preview, {mode})", flush=True)
         return out
 
     # poster: a representative still saved next to the clip (<clip>.png)
@@ -921,7 +940,7 @@ def _render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAU
                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=timeout)
     meta_path = write_meta(seg, out, track, motion)
 
-    print(f"SAVED {out}  ({aspect} {tw}x{th}, {mode})  "
+    print(f"SAVED {out}  ({aspect} {tw}x{canvas_h}, {mode})  "
           f"+ poster {poster.name} + {meta_path.name}", flush=True)
     return out
 

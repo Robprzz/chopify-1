@@ -13,6 +13,7 @@ import render_clips
 import subtitle_quality
 import subtitle_repair
 import watermark
+import signature
 
 
 # Conservative product limits, including the text sent as one TikTok field.
@@ -270,6 +271,8 @@ class Clips:
         meta = projects.read_json(path.with_suffix(".meta.json"))
         source, start = subtitle_repair.clean_source(path, project, meta, duration)
         options = subtitle_repair._options_for_clip(path.parent.parent, meta.get("subtitles") or {}, project)
+        frame_options = options["signature"] if aspect == "9:16" else None
+        frame = signature.load(frame_options["template"]) if frame_options else None
         # Reuse the original words rather than turning publication copy into subtitles.
         if project.startswith("live/"):
             cues = subtitle_quality.read_srt(path.with_suffix(".srt")) if path.with_suffix(".srt").is_file() else []
@@ -283,7 +286,7 @@ class Clips:
             row = db.execute("SELECT mark FROM clip_art WHERE project=? AND file=?", (project, filename)).fetchone()
         saved = json.loads(row[0]) if row and row[0] else None
         if not saved:
-            mark = watermark.Store(self.root).for_render()
+            mark = watermark.Store(self.root).for_render() if not frame or frame_options["watermark"] else None
         elif saved["mode"] == "none":
             mark = None
         else:
@@ -302,6 +305,7 @@ class Clips:
                 out_dir=tmp, camera_mode=options["camera_mode"],
                 layout=options["layout"] if aspect == "9:16" else "single", centers=options["centers"],
                 style=options["style"], fit=options["fit"], caption=options["caption"], mark=mark,
+                **({"signature_frame": frame} if frame else {}),
                 timeout=600, allow_model_download=False)
             if project.startswith("live/"):
                 from live_clips import finished_record

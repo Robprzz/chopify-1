@@ -1,0 +1,9 @@
+# Anqora Signature 1.0
+
+En **Configuración → Apariencia y marca → Marca de agua**, elige el proyecto y activa **Template Anqora Signature**. Usa **Guardar template** para aplicar la configuración al proyecto o elige un candidato y pulsa **Vista previa del template** para guardar y renderizar un borrador. El reproductor de referencia muestra de inmediato la fuente disponible con las franjas activadas. El borrador de 480p permite verificar el encuadre y los subtítulos que usará FFmpeg.
+
+Con Signature activo, la exportación del proyecto es vertical de 1080 × 1920. Usa el modo de cámara y ajuste del proyecto para encuadrar el video central. El interruptor **Incluir la marca de agua tradicional en el video central** permite combinar la plantilla con el PNG que esté activo en Marca de agua. La configuración de la plantilla se guarda por proyecto y se recupera al volver a abrirlo. **Restablecer valores predeterminados** deja el interruptor apagado. Pulsa **Guardar template** para aplicar ese cambio a los próximos renders.
+
+El arte se extrajo del archivo aprobado `Anqora Media Studio Spotlight.png`, de 941 × 1672 píxeles. Se conservaron las filas 0–292 del encabezado y 1473–1671 del pie, comprobadas píxel a píxel. En la salida de 1080 × 1920, las franjas miden 336 y 228 píxeles de alto, con 1356 píxeles para el video. FFmpeg encuadra y compone el video y sus subtítulos dentro de ese espacio antes de añadir las franjas. Los recursos se localizan desde el directorio del módulo.
+
+Los proyectos anteriores conservan su formato normal hasta que se active la plantilla. Para revisar el flujo en Windows, inicia con el acceso directo habitual, prepara un proyecto, prueba la vista de referencia ON/OFF y renderiza un borrador. Exporta el mismo candidato con y sin la marca de agua, comprueba el encuadre, los límites de los subtítulos y el audio, y vuelve a abrir el proyecto para comprobar que conserva sus ajustes.

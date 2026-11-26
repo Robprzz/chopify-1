@@ -45,6 +45,7 @@ import tiktok
 import video_types
 import asset_lifecycle
 import watermark
+import signature
 from unicode_io import configure_utf8, utf8_environment
 
 HERE = Path(__file__).resolve().parent
@@ -708,10 +709,16 @@ class Handler(BaseHTTPRequestHandler):
                         key: brand[key] for key in branding.CAPTION_FIELDS
                         if brand[key] is not None
                     }
+                try:
+                    signature_frame = signature.load(signature.TEMPLATE_ID)
+                except ValueError:
+                    signature_frame = None
                 payload = {
                     "token": self.app.token,
                     "managed_settings": self.app.installation is not None,
                     "defaults": projects.DEFAULT_OPTIONS,
+                    "signature_template": signature.TEMPLATE_ID if signature_frame else None,
+                    "signature_bands": signature_frame.bands(1080, 1920) if signature_frame else None,
                     "brands": brands,
                     "caption_brands": caption_brands,
                     "caption_presets": render_clips.CAPTION_STYLES,
@@ -750,6 +757,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_file(self.app.subtitle_repair.asset(parts[1], parts[2]))
             if parts == ["api", "watermark"]:
                 return self.send_json(self.app.watermark.read())
+            if parts in (["signature", "header.png"], ["signature", "footer.png"]):
+                frame = signature.load(signature.TEMPLATE_ID)
+                image = frame.header if parts[1] == "header.png" else frame.footer
+                return self.send_content(image.read_bytes(), "image/png")
             if len(parts) == 2 and parts[0] == "watermark-image":
                 if not re.fullmatch(r"[a-f0-9]{64}", parts[1]):
                     raise ValueError("Identificador de marca de agua no válido.")
@@ -1022,6 +1033,8 @@ class Handler(BaseHTTPRequestHandler):
                                 raise ValueError("Invalid brand preset.")
                             settings["brand"] = str(self.app.root / "brands" / f"{name}.json") if name else None
                         state["options"] = projects.validate_options({**state["options"], **settings})
+                        if "signature" in settings and state["options"]["signature"]:
+                            signature.load(state["options"]["signature"]["template"])
                         projects.save_project(path, state)
                     elif action == "transcript":
                         projects.edit_transcript(path, body["words"])

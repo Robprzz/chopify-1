@@ -18,6 +18,7 @@ import sections
 import branding
 import video_types
 import watermark
+import signature
 from captions import TIMELINE_VERSION, update_transcript
 
 LIVE_DEFAULTS = {
@@ -35,7 +36,7 @@ DEFAULT_OPTIONS = {"aspect": "16:9", "fit": "cover", "style": "default", "tighte
                    "llm": None, "search": None, "semantic": None,
                    "embed_model": "nomic-embed-text", "brand": None,
                    "layout": "single", "camera_mode": "auto", "centers": [0.25, 0.75], "caption": None,
-                   "facecam_box": None, "facecam_height": 0.34,
+                   "facecam_box": None, "facecam_height": 0.34, "signature": None,
                     "video_type": "auto", "format": None, "video_type_model": None,
                    **LIVE_DEFAULTS}
 
@@ -66,6 +67,7 @@ def validate_options(options):
     if unknown:
         raise ValueError(f"Unknown settings: {', '.join(sorted(unknown))}")
     result = {**DEFAULT_OPTIONS, **options}
+    result["signature"] = signature.validate(result["signature"])
     if result["aspect"] not in render_clips.ASPECTS or result["style"] not in render_clips.CAPTION_STYLES:
         raise ValueError("Unknown aspect ratio or caption style.")
     if result["fit"] not in {"cover", "contain"}:
@@ -615,8 +617,13 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
             out = path / ("previews" if preview else "clips")
             out.mkdir(exist_ok=True)
             state["render_recovery"] = None
+            frame_options = options["signature"]
+            frame = signature.load(frame_options["template"]) if frame_options else None
+            frame_identity = [file_identity(frame.header), file_identity(frame.footer)] if frame else []
+            render_options = options if frame else {key: value for key, value in options.items() if key != "signature"}
             try:
-                mark = None if recovery == "watermark" else watermark.Store(workspace).for_render()
+                use_mark = recovery != "watermark" and (not frame or frame_options["watermark"])
+                mark = watermark.Store(workspace).for_render() if use_mark else None
             except watermark.WatermarkError as exc:
                 raise render_clips.WatermarkRenderFailure(str(exc), "watermark") from exc
             mark_identity = [mark.settings] if mark else []
@@ -659,8 +666,8 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
                         section_source, group["start"], group["end"],
                         sections.SECTION_VERSION])
                 key = digest([segment, data["words"], file_identity(source),
-                              options, brand, logo_identity, preview,
-                              source_offset, section_key, TIMELINE_VERSION, *mark_identity, *([recovery] if recovery else [])])
+                              render_options, brand, logo_identity, preview, source_offset, section_key,
+                              TIMELINE_VERSION, *mark_identity, *frame_identity, *([recovery] if recovery else [])])
                 cached = state["renders"].get(key)
                 expected_suffixes = [".mp4", ".srt"] if preview else [".mp4", ".srt", ".png", ".meta.json"]
                 if resume and cached and all(Path(cached).with_suffix(ext).is_file() for ext in expected_suffixes):
@@ -694,9 +701,8 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
                             render_source = source
                             key = digest([
                                 segment, data["words"],
-                                file_identity(source), options, brand,
-                                logo_identity, preview, source_offset,
-                                section_key, TIMELINE_VERSION, *mark_identity, *([recovery] if recovery else [])])
+                                file_identity(source), render_options, brand, logo_identity, preview, source_offset,
+                                section_key, TIMELINE_VERSION, *mark_identity, *frame_identity, *([recovery] if recovery else [])])
                         except (Exception, SystemExit) as exc:
                             failed_sections[group_index] = str(exc)
                             render_errors.append(
@@ -712,6 +718,7 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
                         do_tighten=options["tighten"], loudnorm=options["loudnorm"], preview=preview,
                         brand=brand, layout=options["layout"], centers=options["centers"], camera_mode=options["camera_mode"],
                         caption=options["caption"], source_offset=source_offset, mark=mark,
+                        **({"signature_frame": frame} if frame else {}),
                         retain_for_repair=automation_export, burn_subtitles=recovery != "subtitles",
                         transcript_info={"model": data.get("model"), "origin": "project",
                                          "transcript_version": data.get("transcript_version"),

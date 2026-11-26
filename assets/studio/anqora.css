@@ -245,6 +245,34 @@ summary.settings-heading:hover { background: #f7f9fd; border-radius: 14px; }
 #watermark-stage { border: 1px solid #d9e2f0; border-radius: 12px; overflow: hidden; background: linear-gradient(145deg,#e9effa,#dce6f6); }
 #watermark-stage[data-aspect="9:16"] { width: min(100%, 208px); }
 #watermark-stage[data-aspect="1:1"] { width: min(100%, 255px); }
+.signature-draft, .signature-output { width: min(100%, 270px); }
+.signature-draft[data-framed="true"] {
+  display: grid;
+  grid-template-rows: var(--signature-header) minmax(0, 1fr) var(--signature-footer);
+  aspect-ratio: 9 / 16;
+  background: #080e1c;
+}
+.signature-draft img, .signature-draft[data-framed="true"] video { width: 100%; height: 100%; }
+.signature-draft video { width: 100%; object-fit: contain; }
+#signature-enabled {
+  appearance: none;
+  display: inline-grid;
+  align-items: center;
+  width: 2.5rem;
+  height: 1.4rem;
+  padding: .17rem;
+  border-radius: 1rem;
+  background: #64748b;
+}
+#signature-enabled::before {
+  content: "";
+  width: 1rem;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: white;
+}
+#signature-enabled:checked { background: #115ac1; }
+#signature-enabled:checked::before { justify-self: end; }
 #watermark-status { min-height: 1.4em; }
 #watermark-error { color: #a62136; }
 @media (max-width: 650px) {

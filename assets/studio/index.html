@@ -508,6 +508,31 @@
             </div>
           </fieldset>
         </form>
+        <form id="signature-form" class="panel input-panel">
+          <h2>Template Anqora Signature</h2>
+          <p id="signature-status" role="status"></p>
+          <fieldset id="signature-fields" class="automation-fields" disabled>
+            <label>Proyecto<select id="signature-project"></select></label>
+            <label>Plantilla<select id="signature-template">
+              <option value="anqora-signature-1">Anqora Signature 1.0</option>
+            </select></label>
+            <label class="check"><input id="signature-enabled" type="checkbox" role="switch" /> Activar template</label>
+            <label class="check"><input id="signature-mark" type="checkbox" /> Incluir la marca de agua tradicional en el video central</label>
+            <p class="muted">La plantilla exporta a 9:16 y usa el encuadre del proyecto.</p>
+            <div class="watermark-actions">
+              <button type="submit" class="primary">Guardar template</button>
+              <button type="button" id="signature-reset">Restablecer valores predeterminados</button>
+            </div>
+            <label>Clip para la vista previa<select id="signature-clip"></select></label>
+            <button type="button" id="signature-preview">Vista previa del template</button>
+          </fieldset>
+          <div id="signature-draft" class="signature-draft" aria-label="Encuadre de referencia" hidden>
+            <img id="signature-header" alt="" hidden />
+            <div class="signature-window"><video id="signature-source" controls preload="metadata" hidden></video></div>
+            <img id="signature-footer" alt="" hidden />
+          </div>
+          <video id="signature-player" class="signature-output" controls preload="metadata" hidden></video>
+        </form>
       </section>
       <section id="automation-view" class="view" lang="es" hidden>
         <div class="intro">

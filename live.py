@@ -117,6 +117,7 @@ class LiveSession:
                 "errors": self.errors[-24:],
                 "threshold": self.options["live_threshold"],
                 "production_profile": self.options.get("live_duration"),
+                "whisper_device": self.options.get("live_whisper_device", "auto"),
                 "export": dict(getattr(self, "_export_status", {})),
                 "health": getattr(self, "health", {}),
                 "detection": getattr(self, "detection", None),
@@ -436,9 +437,9 @@ class LiveSession:
             smart = self.pipeline is not None and self.options["live_duration"] != "legacy"
             if not self._analyzers_started and probe is not None:
                 self.analyzers = live_signals.start_analyzers(
-                    self.buffer, self.bus, {**self.options, "device": "cpu"} if smart else self.options,
+                    self.buffer, self.bus, {**self.options, "device": self.options["live_whisper_device"]},
                     self.source.platform, _channel(self.source.page_url or self.source.url),
-                    shared=self.pipeline.continuous if smart else self._transcript_worker)
+                    shared=self.pipeline.continuous if self.pipeline else self._transcript_worker)
                 self._analyzers_started = True
             analyzer_status = {analyzer.name: analyzer.status(latest) for _, analyzer in self.analyzers}
             for name, status in analyzer_status.items():

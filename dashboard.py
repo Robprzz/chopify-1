@@ -1436,7 +1436,10 @@ def make_server(root="projects", port=8765, installation=None):
 
 
 def main():
+    import gpu_runtime
+
     configure_utf8()
+    gpu_runtime.configure()
     parser = argparse.ArgumentParser(description="Open Anqora Media Studio on your own computer.")
     parser.add_argument("--projects-dir")
     parser.add_argument("--port", type=int, default=8765)

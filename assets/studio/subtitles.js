@@ -52,7 +52,8 @@ async function restoreSubtitleDraft(clip) {
 function showSubtitleDraft(draft) {
   subtitlePanel.draft = draft.id;
   $("#subtitle-draft").hidden = false;
-  $("#subtitle-draft-text").textContent = draft.text;
+  $("#subtitle-draft-text").textContent = draft.whisper_runtime
+    ? whisperSummary(draft.whisper_runtime) + "\n\n" + draft.text : draft.text;
   $("#subtitle-srt").href = subtitleAsset(draft.id, "draft.srt");
 }
 

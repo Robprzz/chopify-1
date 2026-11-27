@@ -444,7 +444,7 @@ const settingsTriggers = {automation:"show-automation",ai:"show-ai-settings",app
   integrations:"show-telegram",storage:"show-trash",diagnostics:"show-system"};
 const settingsNav = [...document.querySelectorAll("[data-setting]")];
 const settingsVideoKeys = {"new-aspect":"Formato de proyectos nuevos","live-aspect":"Formato Live","live-camera-mode":"Encuadre Live",
-  "live-max-height":"Resolución máxima Live","new-style":"Estilo de subtítulos","new-model":"Modelo de transcripción"};
+  "live-max-height":"Resolución máxima Live","new-style":"Estilo de subtítulos","new-model":"Modelo de transcripción", "new-device":"Aceleración de transcripción"};
 const settingsRows = [...$("#settings-categories").children];
 function settingsDisplay(category, view) {
   setPreference("settings-category",category);

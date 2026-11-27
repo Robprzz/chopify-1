@@ -693,6 +693,13 @@ async function buildFormat(detail) {
   }
 }
 
+function whisperSummary(metrics) {
+  if (!metrics) return "Whisper · sin datos de ejecución registrados";
+  const timing = metrics.elapsed_seconds == null ? "" : ` · ${metrics.elapsed_seconds} s de transcripción`;
+  return `Whisper ${metrics.model} · ${metrics.device} · ${metrics.compute_type}${timing}`
+    + (metrics.fallback ? ` · ${metrics.fallback}` : "");
+}
+
 function renderDetail() {
   const detail = state.detail,
     p = detail.project,
@@ -702,6 +709,8 @@ function renderDetail() {
   $("#project-title").textContent = p.name || projectName(p.source);
   $("#project-source").textContent = p.source;
   $("#project-created").textContent = p.created ? "Creado " + new Date(p.created * 1000).toLocaleDateString("es") : "";
+  $("#project-whisper").hidden = !detail.transcript;
+  $("#project-whisper").textContent = whisperSummary(detail.transcript?.whisper_runtime);
   const archive = $("[data-project-manage=archive],[data-project-manage=unarchive]");
   archive.dataset.projectManage = p.archived ? "unarchive" : "archive";
   archive.textContent = p.archived ? "Desarchivar" : "Archivar";
@@ -920,6 +929,7 @@ $("#create-form").addEventListener(
       const options = {
         aspect: $("#new-aspect").value,
         whisper_model: $("#new-model").value,
+        device: $("#new-device").value,
         style: $("#new-style").value,
       };
       const brief = ($("#brief-text")?.value || "").trim();

@@ -112,10 +112,10 @@ def test_generation_gap_and_stale_lease(tmp_path):
 
 
 def test_whisper_cuda_failure_uses_real_cpu_backend_and_reuses_model(monkeypatch):
-    import ctranslate2
+    import gpu_runtime
     from types import SimpleNamespace
 
-    monkeypatch.setattr(ctranslate2, "get_cuda_device_count", lambda: 1)
+    monkeypatch.setattr(gpu_runtime, "candidate", lambda: None)
     monkeypatch.setattr(lp, "gpu_sample", lambda: {"free_mib": 8192})
     attempts = []
 

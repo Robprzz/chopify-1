@@ -296,7 +296,6 @@ class TranscriptAnalyzer(BaseAnalyzer):
 
     def __init__(self, buffer, bus, model=None, device="cpu", enabled=True, shared=None):
         super().__init__(buffer, bus)
-        self.model = model
         self.shared = shared or {"lock": threading.Lock(), "model": model}
         self.device = device
         self.enabled = enabled
@@ -322,16 +321,38 @@ class TranscriptAnalyzer(BaseAnalyzer):
             try:
                 if self._stop and self._stop.is_set():
                     return [], start, end, None
-                if self.shared["model"] is None:
-                    self.shared["model"] = dt._load_model(LIVE_TRANSCRIPT_MODEL, self.device, "int8")
-                self.model = self.shared["model"]
-                started = time.monotonic()
-                _, words, _, _ = dt._transcribe_media(self.model, wav, offset=start)
-                elapsed = time.monotonic() - started
-                backend = getattr(self.model, "model", None)
-                performance = {"device": str(getattr(backend, "device", None) or "sin confirmar"),
-                               "model": LIVE_TRANSCRIPT_MODEL, "inference_seconds": round(elapsed, 3),
-                               "rtf": round(elapsed / max(.001, end - start), 4)}
+                resources = self.shared.get("resources")
+                owns_slot = self.device != "cpu" and resources is not None and resources.acquire(blocking=False)
+                try:
+                    # A busy production/editorial slot should not stop live speech analysis.
+                    busy = self.device != "cpu" and resources is not None and not owns_slot
+                    mode = "cpu" if busy else self.device
+                    runtimes = self.shared.setdefault("runtimes", {})
+                    if mode not in runtimes:
+                        shared = self.shared
+
+                        def load(name, device, compute):
+                            if device == "cuda":
+                                return dt._load_model(name, device, compute)
+                            if shared["model"] is None:
+                                shared["model"] = dt._load_model(name, device, compute)
+                            return shared["model"]
+
+                        runtimes[mode] = dt.Session(LIVE_TRANSCRIPT_MODEL, mode, "default", load)
+                    runtime = runtimes[mode]
+                    try:
+                        (_, words, _, _), performance = runtime.run(
+                            lambda model: dt._transcribe_media(model, wav, offset=start))
+                    finally:
+                        # Do not retain CUDA weights across segments while others need VRAM.
+                        if runtime.device == "cuda":
+                            runtime.model = None
+                    if busy:
+                        performance.update(requested=self.device, fallback="GPU ocupada por otro trabajo local. Este segmento usó CPU.")
+                    performance["rtf"] = round(performance["inference_seconds"] / max(.001, end - start), 4)
+                finally:
+                    if owns_slot:
+                        resources.release()
             finally:
                 lock.release()
         return words, start, end, performance

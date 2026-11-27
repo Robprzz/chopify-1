@@ -349,7 +349,7 @@ def test_whisper_subprocess_contract_loads_only_local_weights(tmp_path, monkeypa
     output = tmp_path / "draft.json"
     with pytest.raises(quality.SubtitleError, match="caché local"):
         subtitle_repair._whisper(audio, output, "large-v3")
-    subtitle_repair._whisper(audio, output, "tiny")
+    subtitle_repair._whisper(audio, output, "tiny", "cpu")
     assert calls == [(str(model_path), {"device": "cpu", "compute_type": "int8",
                                        "cpu_threads": 2, "local_files_only": True})]
     assert projects.read_json(output)["words"] == words(("Hola", .2, .6))

@@ -300,11 +300,18 @@
               >Transcription model<select id="new-model">
                 <option>tiny</option>
                 <option>base</option>
-                <option>small</option>
+                <option value="small">Small (Turbo)</option>
                 <option selected>medium</option>
                 <option>large-v3</option>
               </select></label
             >
+            <label>Aceleración de transcripción
+              <select id="new-device">
+                <option value="auto">Automático</option>
+                <option value="cpu">CPU</option>
+                <option value="cuda">NVIDIA CUDA con respaldo CPU</option>
+              </select>
+            </label>
             <label
               >Caption style<select id="new-style">
                 <option>default</option>
@@ -782,7 +789,7 @@
             <details id="instagram-history" hidden><summary>Historial de errores de Instagram</summary><ul id="instagram-errors"></ul></details>
             <div id="detection-banner" class="detection-banner" hidden></div>
           </div>
-          <div><span id="status" class="status"></span><p id="project-created" class="muted"></p></div>
+          <div><span id="status" class="status"></span><p id="project-created" class="muted"></p><p id="project-whisper" class="muted" hidden></p></div>
           <div class="publication-actions">
             <button id="project-continue" type="button">Continuar procesamiento</button>
             <button id="project-new-clip" type="button">Nuevo clip</button>
@@ -1034,15 +1041,15 @@
                   >Whisper model<select name="whisper_model">
                     <option>tiny</option>
                     <option>base</option>
-                    <option>small</option>
+                    <option value="small">Small (Turbo)</option>
                     <option>medium</option>
                     <option>large-v3</option>
                   </select></label
                 ><label
-                  >Compute<select name="device">
-                    <option>cpu</option>
-                    <option>cuda</option>
-                    <option>auto</option>
+                  >Aceleración de transcripción<select name="device">
+                    <option value="cpu">CPU</option>
+                    <option value="cuda">NVIDIA CUDA con respaldo CPU</option>
+                    <option value="auto">Automático</option>
                   </select></label
                 ><label
                   >Local scoring model (optional)<input
@@ -1348,6 +1355,8 @@
         <section class="panel input-panel system-section" id="system-dependencies">
           <h2>Dependencias</h2>
           <dl id="system-python" class="production-metrics"></dl>
+          <h3>Transcripción del proyecto abierto</h3>
+          <p id="system-whisper"></p>
           <form id="system-ffmpeg-form" autocomplete="off">
             <label>Carpeta de FFmpeg y FFprobe <input name="ffmpeg_dir" maxlength="4096" placeholder="Detección automática" /></label>
             <div class="publication-actions">

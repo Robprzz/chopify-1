@@ -59,6 +59,9 @@ def check_environment(runner=subprocess.run):
     actually encode H.264/AAC (clips from mp4v-only builds are unplayable on
     most platforms), and the required Python packages.
     """
+    import gpu_runtime
+
+    gpu_runtime.configure()
     problems = []
     if sys.version_info < (3, 11):
         problems.append(f"Python 3.11+ required (you are running "
@@ -360,7 +363,8 @@ def main():
                     help="facecam panel fraction of output height, 0.20-0.60 (default 0.34)")
     ap.add_argument("--centers", type=float, nargs=2, default=[0.25, 0.75],
                     help="horizontal speaker centers from 0 to 1 for split-screen")
-    ap.add_argument("--device", choices=["cpu", "cuda", "auto"], default="cpu")
+    ap.add_argument("--device", choices=["cpu", "cuda", "auto"],
+                    help="Whisper acceleration for new projects (default: auto); saved projects keep their preference.")
     render_clips.add_caption_arguments(ap)
     args = ap.parse_args()
     if args.list_formats:
@@ -404,6 +408,8 @@ def main():
         live_options = {key: getattr(args, key) for key in projects.DEFAULT_OPTIONS
                         if getattr(args, key, None) is not None}
         live_options["caption"] = caption
+        if args.live_whisper_device is None and args.device is not None:
+            live_options["live_whisper_device"] = args.device
         if live_options.get("brand"):
             live_options["brand"] = str(Path(live_options["brand"]).resolve())
         live_explicit_keys = {key for key in projects.DEFAULT_OPTIONS
@@ -440,6 +446,8 @@ def main():
     import projects
     options = {k: getattr(args, k, None) for k in projects.DEFAULT_OPTIONS if k != "caption"}
     options["caption"] = caption
+    if options["device"] is None and not args.project:
+        options["device"] = "auto"
     if options["min_score"] is None:
         options["min_score"] = 8.0
     if options["video_type"] is None:

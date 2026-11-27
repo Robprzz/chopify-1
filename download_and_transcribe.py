@@ -17,6 +17,7 @@ import shutil
 from urllib.parse import urlparse
 from pathlib import Path
 from unicode_io import configure_utf8, utf8_environment
+from whisper_runtime import Session
 
 TRANSCRIPT_VERSION = 2
 CHUNK_SECONDS = 1800
@@ -86,14 +87,15 @@ def transcribe(video, workdir, model_size, device, compute_type, duration=None,
             render_from_sections=render_from_sections, identity=identity,
             progress=progress, resume=resume)
 
-    model = _load_model(model_size, device, compute_type)
-    seg_list, words, language, info_duration = _transcribe_media(model, video)
+    runtime = Session(model_size, device, compute_type, _load_model)
+    (seg_list, words, language, info_duration), metrics = runtime.run(lambda model: _transcribe_media(model, video))
     total = float(duration) if duration is not None else float(info_duration)
     transcript = {
         "video": str(video),
         "language": language,
         "duration": total,
         "model": model_size,
+        "whisper_runtime": metrics,
         "segments": seg_list,
         "words": words,
         "transcript_version": TRANSCRIPT_VERSION,
@@ -130,9 +132,6 @@ def _transcribe_media(model, media, offset=0.0):
     segments, info = model.transcribe(
         str(media), word_timestamps=True, vad_filter=True)
     language = getattr(info, "language", "")
-    print(f"Detected language: {language} "
-          f"(p={getattr(info, 'language_probability', 0.0):.2f}), "
-          f"audio {getattr(info, 'duration', 0.0):.1f}s", flush=True)
     seg_list, words = [], []
     for seg in segments:
         start = float(seg.start) + offset
@@ -144,8 +143,11 @@ def _transcribe_media(model, media, offset=0.0):
                 "start": float(w.start) + offset,
                 "end": float(w.end) + offset,
             })
-        print(f"[{start:7.2f} -> {end:7.2f}] {seg.text}", flush=True)
     info_duration = float(getattr(info, "duration", 0.0) or 0.0)
+    print(f"Detected language: {language} "
+          f"(p={getattr(info, 'language_probability', 0.0):.2f}), audio {info_duration:.1f}s", flush=True)
+    for seg in seg_list:
+        print(f"[{seg['start']:7.2f} -> {seg['end']:7.2f}] {seg['text']}", flush=True)
     return seg_list, words, language, info_duration
 
 
@@ -263,7 +265,7 @@ def transcribe_chunked(video, workdir, model_size, device, compute_type,
         bounds.append((index, float(start), float(end)))
         index += 1
 
-    model = None
+    runtime = Session(model_size, device, compute_type, _load_model)
     parts = []
     part_dir = workdir / "audio_parts"
     part_dir.mkdir(parents=True, exist_ok=True)
@@ -271,18 +273,17 @@ def transcribe_chunked(video, workdir, model_size, device, compute_type,
         part_path = workdir / (f"transcript.part{index:03d}.json")
         part = _read_part(part_path) if resume else None
         if not _part_matches(part, index, start, end, identity):
-            if model is None:
-                model = _load_model(model_size, device, compute_type)
             wav = part_dir / f"part{index:03d}.wav"
             _extract_chunk(source_path, start, end, wav)
-            seg_list, words, language, _ = _transcribe_media(
-                model, wav, offset=start)
+            (seg_list, words, language, _), metrics = runtime.run(
+                lambda model: _transcribe_media(model, wav, offset=start))
             part = {
                 "version": TRANSCRIPT_VERSION,
                 "index": index,
                 "start": start,
                 "end": end,
                 "identity": identity,
+                "whisper_runtime": metrics,
                 "language": language,
                 "segments": seg_list,
                 "words": words,
@@ -297,11 +298,20 @@ def transcribe_chunked(video, workdir, model_size, device, compute_type,
             progress(done, len(bounds))
 
     merged = merge_transcript_parts(parts, total, overlap=OVERLAP_SECONDS)
+    completed = [part.get("whisper_runtime") or {} for part in parts]
+    devices = sorted({item.get("device", "sin confirmar") for item in completed})
+    compute = sorted({item.get("compute_type", "sin confirmar") for item in completed})
+    timings = [item["elapsed_seconds"] for item in completed if "elapsed_seconds" in item]
     transcript = {
         "video": str(video),
         "language": merged["language"],
         "duration": total,
         "model": model_size,
+        "whisper_runtime": {"requested": device, "model": model_size, "device": " / ".join(devices),
+                            "compute_type": " / ".join(compute),
+                            "elapsed_seconds": round(sum(timings), 4) if len(timings) == len(parts) else None,
+                            "fallback": next((item["fallback"] for item in reversed(completed)
+                                              if item.get("fallback")), None)},
         "segments": merged["segments"],
         "words": merged["words"],
         "transcript_version": TRANSCRIPT_VERSION,
@@ -356,8 +366,8 @@ def main():
     ap.add_argument("--workdir", default="work")
     ap.add_argument("--model", default="medium",
                     help="faster-whisper model: tiny/base/small/medium/large-v3")
-    ap.add_argument("--device", default="cpu")
-    ap.add_argument("--compute-type", default="int8")
+    ap.add_argument("--device", choices=("cpu", "cuda", "auto"), default="auto")
+    ap.add_argument("--compute-type", default="default")
     args = ap.parse_args()
 
     workdir = Path(args.workdir)

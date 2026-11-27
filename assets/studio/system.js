@@ -54,6 +54,9 @@ function systemRender(snapshot, fill, mediaRevision) {
     ...Object.entries(snapshot.python.packages)];
   $("#system-python").innerHTML = fields.map(([key, value]) =>
     `<div><dt>${escapeHTML(key)}</dt><dd>${escapeHTML(value ?? "Pendiente")}</dd></div>`).join("");
+  $("#system-whisper").textContent = state.detail?.transcript
+    ? whisperSummary(state.detail.transcript.whisper_runtime)
+    : "Abre un proyecto transcrito para consultar el dispositivo, el modelo y el tiempo.";
   $("#system-secret-save").disabled = !integrations.protected_available;
   $("#system-storage").textContent = integrations.protected_available
     ? "Windows DPAPI protege las credenciales y la autorización persistente para tu usuario."

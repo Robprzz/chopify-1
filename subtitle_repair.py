@@ -13,6 +13,7 @@ import uuid
 
 import branding
 import captions
+import gpu_runtime
 import local_process
 import projects
 import render_clips
@@ -20,6 +21,7 @@ import sections
 import subtitle_quality as quality
 import watermark
 import signature
+from whisper_runtime import Session
 from unicode_io import configure_utf8, utf8_environment
 
 
@@ -27,7 +29,8 @@ MODELS = {"tiny", "base", "small", "medium", "large-v2", "large-v3", "turbo", "d
 RENDER_TIMEOUT = 300
 
 
-def _whisper(media, destination, name):
+def _whisper(media, destination, name, device="auto"):
+    gpu_runtime.configure()
     from faster_whisper import WhisperModel
     from faster_whisper.utils import download_model
 
@@ -35,29 +38,45 @@ def _whisper(media, destination, name):
         path = download_model(name, local_files_only=True)
     except (OSError, ValueError):
         raise quality.SubtitleError("El modelo de Faster-Whisper elegido no está en la caché local.") from None
-    model = WhisperModel(path, device="cpu", compute_type="int8", cpu_threads=2, local_files_only=True)
-    segments, info = model.transcribe(str(media), word_timestamps=True, vad_filter=True,
-                                      vad_parameters={"min_silence_duration_ms": 350}, beam_size=3)
-    words = []
-    count = 0
-    for segment in segments:
-        count += 1
-        words.extend({"word": w.word, "start": w.start, "end": w.end} for w in (segment.words or []))
+
+    def load(_name, backend, compute):
+        return WhisperModel(path, device=backend, compute_type=compute, cpu_threads=2, local_files_only=True)
+
+    def infer(model):
+        segments, info = model.transcribe(str(media), word_timestamps=True, vad_filter=True,
+                                          vad_parameters={"min_silence_duration_ms": 350}, beam_size=3)
+        words = []
+        count = 0
+        for segment in segments:
+            count += 1
+            words.extend({"word": w.word, "start": w.start, "end": w.end} for w in (segment.words or []))
+        return words, info.language, count
+
+    (words, language, count), metrics = Session(name, device, "default", load).run(infer)
     if not words:
         raise quality.SubtitleError("Faster-Whisper no encontró palabras en el audio final.")
-    projects.atomic_json(destination, {"model": name, "language": info.language, "words": words,
-                                        "whisper_segments": count})
+    projects.atomic_json(destination, {"model": name, "language": language, "words": words,
+                                        "whisper_segments": count, "whisper_runtime": metrics})
 
 
-def transcribe_final(media, destination, name, cancellation=None):
+def acceleration_for_clip(media, project):
+    base = media.parent.parent
+    if project.startswith("live/"):
+        state = projects.read_json(base / "live_session.json")
+        return state.get("whisper_device", "auto")
+    return projects.read_project(base).get("options", {}).get("device", "cpu")
+
+
+def transcribe_final(media, destination, name, cancellation=None, device="auto"):
     try:
-        command = [sys.executable, str(Path(__file__).resolve()), str(media), str(destination), name]
+        command = [sys.executable, str(Path(__file__).resolve()), str(media), str(destination), name, device]
         result = (local_process.run(command, 300, cancellation) if cancellation
                   else subprocess.run(command, env=utf8_environment(), capture_output=True, timeout=300))
     except subprocess.TimeoutExpired:
         raise quality.SubtitleError("La retranscripción local superó 5 minutos. Prueba con un modelo instalado más pequeño.") from None
     if result.returncode == 2:
-        raise quality.SubtitleError(result.stdout.decode("utf-8", errors="backslashreplace").strip())
+        messages = result.stdout.decode("utf-8", errors="backslashreplace").splitlines()
+        raise quality.SubtitleError(messages[-1] if messages else "Faster-Whisper no pudo generar el borrador.")
     if result.returncode:
         raise quality.SubtitleError("Faster-Whisper no pudo retranscribir el audio final con el modelo local.")
     return projects.read_json(destination)
@@ -352,7 +371,8 @@ class Repair:
                 if "audio" not in streams or duration > quality.MAX_AUDIO_SECONDS:
                     raise quality.SubtitleError("Para retranscribir se necesita una pista de audio y un clip de hasta diez minutos.")
                 fingerprint = quality.artifact_hash(media)
-                evidence = transcribe_final(media, folder / "whisper.json", model)
+                evidence = transcribe_final(media, folder / "whisper.json", model, None,
+                                            acceleration_for_clip(media, project))
                 if fingerprint != quality.artifact_hash(media):
                     raise quality.SubtitleError("El MP4 cambió durante la retranscripción.")
                 draft, cues = make_draft(media, project, folder, evidence, timing, duration, fingerprint)
@@ -364,6 +384,7 @@ class Repair:
                 projects.atomic_json(folder / "draft.json", draft)
                 status["draft"] = {"id": status["id"], "model": evidence["model"], "segments": len(cues),
                                    "words": sum(len(c[2].split()) for c in cues), "coverage": ratio,
+                                   "whisper_runtime": evidence.get("whisper_runtime"),
                                    "text": "\n".join(f"{a:.2f}–{b:.2f} s  {text}" for a, b, text in cues[:150])}
             else:
                 if draft["media_hash"] != quality.artifact_hash(media):
@@ -382,7 +403,7 @@ class Repair:
 if __name__ == "__main__":
     configure_utf8()
     try:
-        _whisper(Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3])
+        _whisper(Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3], *sys.argv[4:5])
     except quality.SubtitleError as exc:
         print(exc)
         sys.exit(2)

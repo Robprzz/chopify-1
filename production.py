@@ -463,7 +463,8 @@ class Production:
                 evidence = projects.read_json(cache)
             else:
                 cancellation.check()
-                evidence = repair.transcribe_final(original, cache, model, cancellation)
+                evidence = repair.transcribe_final(original, cache, model, cancellation,
+                                                   repair.acceleration_for_clip(original, job["project"]))
                 projects.atomic_json(stamp, [fingerprint, model])
         cancellation.check()
         if quality.artifact_hash(original) != fingerprint:

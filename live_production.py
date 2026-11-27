@@ -147,53 +147,26 @@ class _WhisperRuntime:
         self.cpu_model = None
 
     def transcribe(self, media, duration, requested):
-        import ctranslate2
-        import gc
-
-        started = time.monotonic()
-        fallback = None
-        before = gpu_sample()
+        before = gpu_sample() if requested != "cpu" else None
+        block = ("Menos de 2048 MiB libres en la GPU."
+                 if before and before["free_mib"] < 2048 else None)
+        runtime = dt.Session(MODEL, requested, "default", self._load)
         try:
-            cuda = requested != "cpu" and ctranslate2.get_cuda_device_count() > 0
-        except (RuntimeError, OSError):
-            cuda = False
-        if requested != "cpu" and not cuda:
-            fallback = "CUDA no disponible en CTranslate2."
-        if cuda and before and before["free_mib"] < 2048:
-            fallback = "Menos de 2048 MiB libres. Whisper usó CPU."
-            cuda = False
-        device = "cuda" if cuda else "cpu"
-        model = None
-        for attempt in range(2):
-            compute = "int8_float16" if device == "cuda" else "int8"
-            try:
-                if device == "cpu":
-                    if self.cpu_model is None:
-                        self.cpu_model = dt._load_model(MODEL, device, compute)
-                    model = self.cpu_model
-                else:
-                    model = dt._load_model(MODEL, device, compute)
-                inference = time.monotonic()
-                _, words, language, _ = dt._transcribe_media(model, media)
-                seconds = time.monotonic() - inference
-                backend = getattr(model, "model", None)
-                actual = getattr(backend, "device", None) or "sin confirmar"
-                metrics = {"requested": requested, "device": str(actual), "model": MODEL,
-                           "compute_type": str(getattr(backend, "compute_type", compute)),
-                           "inference_seconds": round(seconds, 3), "rtf": round(seconds / duration, 4),
-                           "elapsed_seconds": round(time.monotonic() - started, 3), "fallback": fallback,
-                           "gpu_before": before, "gpu_after": gpu_sample() if device == "cuda" else None}
-                return words, language, metrics
-            except (RuntimeError, OSError, ValueError) as exc:
-                if device != "cuda" or attempt:
-                    raise Rejected("Whisper no pudo transcribir la fuente preservada.") from exc
-                fallback = f"Falló la inferencia o carga CUDA ({type(exc).__name__}); se reintentó en CPU."
-                device = "cpu"
-            finally:
-                # Release GPU weights before handing the shared lock back to
-                # Ollama/rendering. Retain only the CPU model between jobs.
-                model = None
-                gc.collect()
+            (_, words, language, _), metrics = runtime.run(
+                lambda model: dt._transcribe_media(model, media), cuda_block=block)
+            metrics.update(rtf=round(metrics["inference_seconds"] / duration, 4),
+                           gpu_before=before, gpu_after=gpu_sample() if metrics["device"] == "cuda" else None)
+            return words, language, metrics
+        finally:
+            # Only retain the CPU model when yielding the shared resource slot.
+            runtime.model = None
+
+    def _load(self, name, device, compute):
+        if device == "cuda":
+            return dt._load_model(name, device, compute)
+        if self.cpu_model is None:
+            self.cpu_model = dt._load_model(name, device, compute)
+        return self.cpu_model
 
 
 def _whisper_worker(connection):
@@ -279,7 +252,7 @@ class Pipeline:
         self.wake = threading.Event()
         self.stop = threading.Event()
         self.whisper = Whisper(self.resources, self.stop)
-        self.continuous = {"lock": threading.Lock(), "model": None}
+        self.continuous = {"lock": threading.Lock(), "model": None, "resources": self.resources}
         self.worker = None
         self.directory.mkdir(exist_ok=True, parents=True)
         with self.connect() as conn:

@@ -31,7 +31,7 @@
 
 Chopify is an open-source Python app with a local browser dashboard and a CLI. Import a recording or a video URL, find moments, correct captions, review drafts, and export MP4 clips with SRT subtitles. Local clipping is free and works without API credentials. Studio also offers an optional TikTok inbox workflow with your own TikTok developer credentials. [TikTok setup and testing](docs/TIKTOK.md) · [Product tour](https://mehbul.github.io/chopify/)
 
-[Workflow guide](docs/WORKFLOWS.md) · [CLI reference](docs/CLI.md) · [Agent/API reference](docs/AGENT-API.md) · [Live clipping](docs/LIVE.md) · [Telegram Control Center](docs/TELEGRAM.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [Changelog](CHANGELOG.md)
+[Workflow guide](docs/WORKFLOWS.md) · [CLI reference](docs/CLI.md) · [Agent/API reference](docs/AGENT-API.md) · [Live clipping](docs/LIVE.md) · [Whisper CUDA en Windows](docs/WHISPER-CUDA.md) · [Telegram Control Center](docs/TELEGRAM.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [Changelog](CHANGELOG.md)
 
 ## What can Chopify do?
 

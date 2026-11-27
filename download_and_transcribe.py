@@ -29,7 +29,7 @@ def run(cmd):
     subprocess.run(cmd, env=utf8_environment(), check=True)
 
 
-def resolve_source(source, workdir):
+def resolve_source(source, workdir, *, public_only=False):
     """Keep local files in place; authorized Instagram imports use projects."""
     from instagram_import import candidate
     if candidate(str(source)):
@@ -41,24 +41,25 @@ def resolve_source(source, workdir):
         return path.resolve()
     if urlparse(source).scheme not in {"http", "https"}:
         raise ValueError(f"Video file does not exist or URL is invalid: {source}")
-    return download(source, Path(workdir))
+    return download(source, Path(workdir), public_only=True) if public_only else download(source, Path(workdir))
 
 
-def download(url, workdir):
+def download(url, workdir, *, public_only=False):
     workdir.mkdir(parents=True, exist_ok=True)
     # A fresh directory prevents a changed URL from reusing an old source.mp4.
     with tempfile.TemporaryDirectory(prefix="download-", dir=workdir) as temp:
-        video = _download(url, Path(temp))
+        video = _download(url, Path(temp), public_only=True) if public_only else _download(url, Path(temp))
         destination = workdir / video.name
         shutil.move(str(video), str(destination))
         return destination.resolve()
 
 
-def _download(url, workdir):
+def _download(url, workdir, *, public_only=False):
     out_tmpl = workdir / "source.%(ext)s"
     # Highest quality: best video + best audio, merged to mp4 (needs ffmpeg on PATH).
+    from ingest import PUBLIC_YOUTUBE
     cmd = [
-        sys.executable, "-m", "yt_dlp",
+        sys.executable, "-m", "yt_dlp", *(PUBLIC_YOUTUBE if public_only else ()),
         "-f", "bestvideo*+bestaudio/best",
         "--merge-output-format", "mp4",
         "--no-playlist",

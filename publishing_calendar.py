@@ -18,6 +18,9 @@ DEFAULTS = {"timezone": "America/Santo_Domingo", "daily": 3, "interval": 60,
             "hours": ["09:00", "13:00", "19:00"]}
 
 
+DRAFTS = {"draft", "pending_review", "editorial_approved", "ready"}
+
+
 class Conflict(ValueError):
     pass
 
@@ -491,7 +494,42 @@ class Calendar:
                 FROM plans""", (cutoff, cutoff, cutoff, cutoff)).fetchone()
             return dict(row)
 
+    def delete_drafts(self, data):
+        items = data.get("items")
+        if (data.get("confirmed") is not True or not isinstance(items, list) or not 1 <= len(items) <= 120
+                or any(not isinstance(item, dict) or not isinstance(item.get("id"), str) for item in items)
+                or len({item["id"] for item in items}) != len(items)):
+            raise ValueError("Selecciona y confirma hasta 120 borradores distintos.")
+        deleted, excluded = [], []
+        with self.connect(write=True) as db:
+            for item in items:
+                ident = item["id"]
+                row = db.execute("SELECT * FROM plans WHERE id=?", (ident,)).fetchone()
+                reason = None
+                if row is None:
+                    reason = "El borrador ya no está disponible."
+                elif row["revision"] != item.get("revision") or type(item.get("revision")) is not int:
+                    reason = "El plan cambió desde la última revisión."
+                elif row["scheduled"] is not None or row["status"] not in DRAFTS:
+                    reason = "El plan ya no es un borrador sin programar."
+                elif not self._deletable(db, row):
+                    reason = "El plan tiene actividad de entrega y se conservó."
+                if reason:
+                    excluded.append({"id": ident, "title": row["title"] if row else None, "reason": reason})
+                    continue
+                self._delete_local(db, ident)
+                deleted.append(ident)
+        return {"deleted": len(deleted), "ids": deleted, "excluded": excluded}
+
+    @staticmethod
+    def _delete_local(db, ident):
+        db.execute("DELETE FROM inbox_schedule WHERE plan=?", (ident,))
+        db.execute("DELETE FROM calendar_events WHERE plan=?", (ident,))
+        db.execute("DELETE FROM plans WHERE id=?", (ident,))
+
     def action(self, action, data):
+        if action == "delete-drafts":
+            return self.delete_drafts(data)
         if action == "delete":
             items = data.get("items")
             if (data.get("confirmed") is not True or not isinstance(items, list)
@@ -504,9 +542,7 @@ class Calendar:
                     self._unclaimed(db, row["id"])
                     if not self._deletable(db, row):
                         raise Conflict("Solo se pueden eliminar planes locales sin entregas externas.")
-                    db.execute("DELETE FROM inbox_schedule WHERE plan=?", (row["id"],))
-                    db.execute("DELETE FROM calendar_events WHERE plan=?", (row["id"],))
-                    db.execute("DELETE FROM plans WHERE id=?", (row["id"],))
+                    self._delete_local(db, row["id"])
             return {"deleted": len(items)}
         if action == "save":
             return self.save(data)

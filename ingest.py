@@ -132,7 +132,11 @@ def _probe_local(path, run=None):
     }
 
 
-def _probe_url(url, run=None):
+PUBLIC_YOUTUBE = ("--ignore-config", "--no-cookies", "--no-cookies-from-browser",
+                  "--socket-timeout", "20", "--retries", "2", "--fragment-retries", "2")
+
+
+def _probe_url(url, run=None, public_only=False):
     run = run or _run
     fallback = {
         "source": url, "url": True, "title": url, "duration": None,
@@ -142,7 +146,7 @@ def _probe_url(url, run=None):
     try:
         result = run([
             sys.executable, "-m", "yt_dlp", "--dump-single-json",
-            "--skip-download", "--no-playlist", url])
+            "--skip-download", "--no-playlist", *(PUBLIC_YOUTUBE if public_only else ()), url])
         data = json.loads(result.stdout or "{}")
     except (OSError, subprocess.SubprocessError, ValueError, TypeError):
         return fallback
@@ -197,10 +201,12 @@ def _probe_url(url, run=None):
             item.get("acodec") not in (None, "none") for item in formats),
         "has_video": bool(videos),
         "formats": formats,
+        **({"availability": data.get("availability"), "live_status": data.get("live_status"),
+            "channel_id": data.get("channel_id")} if public_only else {}),
     }
 
 
-def probe_source(source, runner=None):
+def probe_source(source, runner=None, *, public_only=False):
     """Return local or yt-dlp metadata; URL failures become an unknown source."""
     source = str(source)
     run = runner or _run
@@ -208,7 +214,7 @@ def probe_source(source, runner=None):
     if candidate(source):
         raise ValueError("Usa la importación autorizada de Instagram desde Studio.")
     if is_url(source):
-        return _probe_url(source, run)
+        return _probe_url(source, run, public_only=True) if public_only else _probe_url(source, run)
     path = Path(source).expanduser()
     if not path.is_file():
         raise ValueError(f"Video file does not exist or URL is invalid: {source}")

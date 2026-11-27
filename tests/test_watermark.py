@@ -285,8 +285,10 @@ def test_replacement_appears_in_all_camera_modes_and_landscape(tmp_path, logo, s
     ):
         monkeypatch.setattr(render_clips, "detect_track", lambda *_: [(i / 5, faces, False) for i in range(5)])
         limit = render_clips.ASPECTS[aspect][:2]
+        scene = tmp_path / f"scene-{aspect.replace(':', '-')}-{requested}.mp4"
+        shutil.copyfile(source, scene)
         clip = render_clips.render(
-            {"start": 0, "end": 1}, [], source, 640, 360, tmp_path, aspect, camera_mode=requested,
+            {"start": 0, "end": 1}, [], scene, 640, 360, tmp_path, aspect, camera_mode=requested,
             out_dir=tmp_path / "new" / aspect.replace(":", "-") / requested, mark=mark, timeout=45,
         )
         frame = extract_frame(clip)

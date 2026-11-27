@@ -92,7 +92,10 @@ async function showClipEditor(input, origin = workspaceView) {
   }
   const data = await loadClipCopy();
   if (!data || serial !== clipEditor.serial) return;
-  $("#clip-render-aspect").value = data.format;
+  clipEditor.export = data.export || {};
+  $("#clip-render-aspect").value = clipEditor.export.aspect || data.format;
+  $("#clip-render-profile").value = "";
+  clipRenderSummary();
   const controls = $("#clip-art-form").elements;
   $("#clip-mark-mode").value = data.mark?.mode || "global";
   $("#clip-mark-controls").hidden = data.mark?.mode !== "custom";
@@ -226,27 +229,61 @@ $("#clip-cover-remove").addEventListener("click",safe(async () => {
   clipFeedback("Miniatura automática restaurada.");
 }));
 function mediaPreviewPath(clip) { return clip.url.replace(/\.mp4$/,".png"); }
+function clipRenderSummary() {
+  const original = clipEditor.export || {};
+  const aspect = $("#clip-render-aspect").value;
+  const incompatible = original.signature && aspect !== "9:16";
+  $("#clip-effective-export").textContent = exportSummary({...original, aspect,
+    export_profile: $("#clip-render-profile").value || original.export_profile,
+    signature: incompatible ? null : original.signature,
+    warning: incompatible ? "Signature requiere 9:16. Se exportará sin franjas." : original.warning});
+}
+$("#clip-render-aspect").addEventListener("change", clipRenderSummary);
+$("#clip-render-profile").addEventListener("change", clipRenderSummary);
+let runningClipExport = null;
+$("#clip-cancel-render").addEventListener("click", safe(async () => {
+  if (!runningClipExport) return;
+  await api("/api/clip-render/cancel", {id:runningClipExport});
+  clipFeedback("Cancelación solicitada.");
+}));
 $("#clip-reexport").addEventListener("click",safe(async () => {
   const button = $("#clip-reexport");
+  const meter = $("#clip-render-progress");
+  const cancel = $("#clip-cancel-render");
   button.disabled = true;
   try {
     const fields = clipFields(), serial = clipEditor.serial;
-    const {job} = await api("/api/clip/render",{...fields,aspect:$("#clip-render-aspect").value});
-    clipFeedback("Generando una nueva exportación…");
-    for (let i=0; i<330; i++) {
-      await new Promise(resolve => setTimeout(resolve,2000));
+    const {job} = await api("/api/clip/render",{...fields,aspect:$("#clip-render-aspect").value,
+      profile:$("#clip-render-profile").value || null});
+    runningClipExport = job;
+    cancel.hidden = false;
+    clipFeedback("Exportación en cola.");
+    for (let i=0; i<660; i++) {
+      await new Promise(resolve => setTimeout(resolve,1000));
       const result = await api("/api/clip-render?id=" + job);
       if (result.state === "error") throw new Error(result.error);
+      if (result.state === "cancelled") { clipFeedback(result.error); return; }
+      if (result.progress && serial === clipEditor.serial) {
+        meter.hidden = false;
+        if (Number.isFinite(result.progress.fraction)) meter.value = result.progress.fraction;
+        else meter.removeAttribute("value");
+        clipFeedback(renderProgressSummary(result.progress));
+      }
       if (result.state !== "ready") continue;
       await refreshWorkspace(true);
-      if (serial === clipEditor.serial && workspaceView === "clip-editor-view") {
-        clipFeedback("Nueva versión disponible en Clips: " + result.file);
+      if (serial === clipEditor.serial) {
+        clipFeedback((result.reused ? "MP4 reutilizado en Clips" : "Nueva versión disponible en Clips")
+          + " · " + result.file + (result.progress ? " · " + renderProgressSummary(result.progress) : ""));
       }
-      notice("Nueva versión exportada.");
+      notice(result.reused ? "Archivo reutilizado sin recodificar." : "Nueva versión exportada.");
       return;
     }
     clipFeedback("La exportación sigue en segundo plano. Consulta Clips cuando termine.");
-  } finally { button.disabled = false; }
+  } finally {
+    runningClipExport = null;
+    button.disabled = false;
+    cancel.hidden = meter.hidden = true;
+  }
 }));
 async function publishFromClip(now) {
   const copy = await saveClipCopy();

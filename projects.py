@@ -11,6 +11,8 @@ import download_and_transcribe as dt
 import render_clips
 import score_clips
 import evidence
+import export_cache
+import render_progress
 import visual
 import ingest
 import instagram_import
@@ -37,7 +39,8 @@ DEFAULT_OPTIONS = {"aspect": "16:9", "fit": "cover", "style": "default", "tighte
                    "embed_model": "nomic-embed-text", "brand": None,
                    "layout": "single", "camera_mode": "auto", "centers": [0.25, 0.75], "caption": None,
                    "facecam_box": None, "facecam_height": 0.34, "signature": None,
-                    "video_type": "auto", "format": None, "video_type_model": None,
+                    "template_override": False, "use_watermark": True, "export_profile": "quality",
+                    "strict_selection": False, "video_type": "auto", "format": None, "video_type_model": None,
                    **LIVE_DEFAULTS}
 
 
@@ -128,7 +131,9 @@ def validate_options(options):
     for key in ("whisper_model", "embed_model", "llm", "search", "semantic", "brand"):
         if result[key] is not None and (not isinstance(result[key], str) or len(result[key]) > 2000):
             raise ValueError(f"{key} must be text.")
-    for key in ("tighten", "loudnorm"):
+    if result["export_profile"] not in {"quality", "fast"}:
+        raise ValueError("Perfil de exportación no válido.")
+    for key in ("tighten", "loudnorm", "template_override", "use_watermark", "strict_selection"):
         if not isinstance(result[key], bool):
             raise ValueError(f"{key} must be true or false.")
     live_int_ranges = {
@@ -187,7 +192,7 @@ def score_keys(transcript_key, data, options, recipe=None):
                             visual.FEATURE_VERSION])
     selection_options = {key: options[key] for key in (
         "min_score", "max_clips", "llm")}
-    selection_key = digest([discovery_key, selection_options])
+    selection_key = digest([discovery_key, selection_options, score_clips.SELECTION_VERSION])
     return discovery_key, selection_key
 
 
@@ -201,6 +206,19 @@ def _read_cached_selection(path):
     if isinstance(selection, dict) and isinstance(segments, list):
         return selection
     return None
+
+
+def suggestions(path, selection):
+    if "suggestions" in selection:
+        return selection["suggestions"]
+    try:
+        records, _ = score_clips.load_candidates(path)
+    except (OSError, ValueError, SystemExit):
+        return []
+    options = read_project(path).get("options") or {}
+    if not records or selection.get("passing"):
+        return []
+    return score_clips.review_suggestions(records, min(5, options.get("max_clips") or 5))
 
 
 def apply_detection(path, state, options, detection, on_detection=None,
@@ -254,7 +272,7 @@ def validate_instagram(source, authorization):
     return {"url":url,"authorized":True,"confirmed_at":time.time(),"limits":limits}
 
 
-def init_project(path, source, options, project_id=None, *, instagram=None):
+def init_project(path, source, options, project_id=None, *, instagram=None, monitored=None):
     if not isinstance(source, str) or not source.strip() or len(source) > 8000:
         raise ValueError("Provide a video path or URL.")
     options = validate_options(options)
@@ -272,6 +290,8 @@ def init_project(path, source, options, project_id=None, *, instagram=None):
              "updated": time.time(), "cache": {}, "renders": {}, "error": None}
     if authorization:
         state["instagram_import"] = authorization
+    if monitored:
+        state["youtube_monitor"] = monitored
     save_project(path, state)
     return state
 
@@ -355,12 +375,10 @@ def instagram_source(path, state, stage):
 def run_project(path, action="all", preview=False, pick=None, resume=True,
                 progress=None, on_detection=None, explicit_keys=None, automation_export=False, recovery=None):
     """Prepare candidates or render saved candidates; checkpoint every successful clip."""
-    workspace = Path(path).parent
+    workspace = Path(path).resolve().parent
     path = Path(path).resolve()
     state = read_project(path)
     options = validate_options(state["options"])
-    if recovery == "stable":
-        options = {**options, "layout": "single", "camera_mode": "stable"}
     if action not in {"all", "prepare", "render"}:
         raise ValueError("Unknown project action.")
     def stage(name):
@@ -383,6 +401,7 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
             stage("source")
             source_input = state["source"]
             local = Path(source_input).expanduser()
+            monitored = state.get("youtube_monitor")
             instagram = instagram_import.candidate(source_input)
             if instagram:
                 local, imported_meta = instagram_source(path, state, stage)
@@ -404,11 +423,13 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
             elif cached_meta:
                 meta = state["source_meta"]
             else:
-                meta = ingest.probe_source(source_input)
+                meta = (ingest.probe_source(source_input, public_only=True) if monitored
+                        else ingest.probe_source(source_input))
                 meta.pop("formats", None)
                 meta = {**meta, "long": ingest.is_long_source(meta)}
                 state["source_meta"] = meta
-                state["cache"]["source_meta"] = source_key
+                if not monitored or (meta.get("availability") and meta.get("live_status") in {"not_live", "was_live"}):
+                    state["cache"]["source_meta"] = source_key
                 save_project(path, state)
             long = bool(meta.get("long", ingest.is_long_source(meta)))
 
@@ -417,7 +438,19 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
             render_from_sections = bool(meta.get("render_from_sections", False))
             if (not resume or state["cache"].get("source") != source_key
                     or not source.is_file()):
-                if is_url and long:
+                if monitored:
+                    if not meta.get("availability"):
+                        raise ValueError("No se pudo verificar el acceso público de YouTube. Se reintentará desde el monitor.")
+                    if meta["availability"] != "public" or meta.get("channel_id") != monitored["channel"]:
+                        state["monitor_restricted"] = True
+                        raise ValueError("YouTube no ofrece un video público verificable para este canal.")
+                    if meta.get("live_status") not in {"not_live", "was_live"}:
+                        raise ValueError("El video de YouTube todavía no está disponible como grabación terminada.")
+                    ingest.check_disk(path, meta.get("estimated_size"))
+                    source = dt.resolve_source(source_input, path, public_only=True)
+                    media_kind = "video"
+                    render_from_sections = False
+                elif is_url and long:
                     ingest.check_disk(path, None)
                     source, media_kind = ingest.download_discovery(
                         source_input, path, meta)
@@ -591,9 +624,20 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
                                   else read_json(path / "selection.json"))
             if discovered is not None:
                 state["automation_discovery"] = {"detected_at": discovered, "key": discovery_key}
-        if action == "prepare":
+        adaptive_review = (action == "all" and not pick and not read_json(path / "segments.json")
+                           and (state.get("youtube_monitor") or
+                                (not options["strict_selection"] and
+                                 suggestions(path, state.get("selection") or {}))))
+        if action == "prepare" or adaptive_review:
             state.update(status="review", stage="ready for review")
         else:
+            from export_settings import Store
+
+            options, _, warning = Store(workspace).resolve(options)
+            if warning:
+                print(warning, flush=True)
+            if recovery == "stable":
+                options = {**options, "layout": "single", "camera_mode": "stable"}
             stage("render preview" if preview else "render")
             data = read_json(path / "transcript.json")
             source = Path(data["video"]).resolve()
@@ -601,6 +645,11 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
             if state.get("source_identity") and state["source_identity"] != file_identity(source):
                 raise ValueError("Source video changed since transcription. Find clips again before rendering.")
             segments = validate_segments(read_json(path / "segments.json"), data["duration"])
+            if not segments and pick and not options["strict_selection"]:
+                review = read_json(path / "selection.json") if (path / "selection.json").exists() else {}
+                segments = validate_segments(suggestions(path, review), data["duration"])
+                if len(pick.split(",")) > 5:
+                    raise ValueError("Selecciona hasta cinco candidatos para revisión.")
             if not segments:
                 stats = state.get("selection") or {}
                 low = stats.get("score_min")
@@ -619,16 +668,13 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
             state["render_recovery"] = None
             frame_options = options["signature"]
             frame = signature.load(frame_options["template"]) if frame_options else None
-            frame_identity = [file_identity(frame.header), file_identity(frame.footer)] if frame else []
-            render_options = options if frame else {key: value for key, value in options.items() if key != "signature"}
             try:
-                use_mark = recovery != "watermark" and (not frame or frame_options["watermark"])
+                use_mark = options["use_watermark"] and recovery != "watermark" and (not frame or frame_options["watermark"])
                 mark = watermark.Store(workspace).for_render() if use_mark else None
             except watermark.WatermarkError as exc:
                 raise render_clips.WatermarkRenderFailure(str(exc), "watermark") from exc
-            mark_identity = [mark.settings] if mark else []
             brand = branding.load_brand(options["brand"]) if options["brand"] else None
-            logo_identity = file_identity(brand["logo"]) if brand and brand["logo"] else None
+            transcript_digest = digest(data["words"])
             render_from_sections = bool(
                 (state.get("source_meta") or {}).get("render_from_sections")
                 or data.get("render_from_sections"))
@@ -647,14 +693,24 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
                         section_plan[clip_index] = (group_index, group)
                 W, H = None, None
             else:
-                W, H = render_clips.ffprobe_dims(source)
+                W, H = None, None
             loaded_sections = {}
             failed_sections = {}
             render_errors = []
             state["render_errors"] = render_errors
             outputs = []
+            render_cancel = path / ".render-cancel"
+
+            def emit_render(info):
+                state["progress"] = {"stage": "render", "done": i - 1, "total": len(segments),
+                                     "detail": info["stage"], "render": info}
+                save_project(path, state)
+
             for i, segment in enumerate(segments, 1):
                 stage(f"{'preview' if preview else 'render'} {i}/{len(segments)}")
+                tracker = render_progress.Progress(emit_render, render_cancel.exists)
+                tracker.update("preparation")
+                tracker.check()
                 render_source = source
                 source_offset = 0.0
                 section_key = None
@@ -665,14 +721,22 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
                     section_key = digest([
                         section_source, group["start"], group["end"],
                         sections.SECTION_VERSION])
-                key = digest([segment, data["words"], file_identity(source),
-                              render_options, brand, logo_identity, preview, source_offset, section_key,
-                              TIMELINE_VERSION, *mark_identity, *frame_identity, *([recovery] if recovery else [])])
-                cached = state["renders"].get(key)
-                expected_suffixes = [".mp4", ".srt"] if preview else [".mp4", ".srt", ".png", ".meta.json"]
-                if resume and cached and all(Path(cached).with_suffix(ext).is_file() for ext in expected_suffixes):
-                    outputs.append(cached)
+                key = export_cache.recipe(source, segment, data["words"], options, brand, mark, frame,
+                                          preview, section_key, recovery, automation_export)
+                cached = export_cache.verified(state.setdefault("render_artifacts", {}).get(key), out, preview) if resume else None
+                if resume and cached is None:
+                    old = export_cache.legacy_project(state, source, segment, data["words"], options, brand,
+                                                      mark, frame, preview, source_offset, section_key, recovery, out)
+                    if old is not None:
+                        cached = old
+                        state["render_artifacts"][key] = export_cache.record(old, preview, segment, automation_export, section_key)
+                if cached is not None:
+                    tracker.update("reuse")
+                    tracker.update("ready")
+                    outputs.append(str(cached))
+                    state["last_outputs"] = outputs
                     continue
+                tracker.update("inspection")
                 if render_from_sections:
                     if group_index in failed_sections:
                         render_errors.append(
@@ -685,7 +749,7 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
                             render_source = sections.ensure_section(
                                 section_source, path, group_index,
                                 group["start"], group["end"])
-                            W, H = render_clips.ffprobe_dims(render_source)
+                            W, H = export_cache.dimensions(render_source, path)
                             loaded_sections[group_index] = (
                                 render_source, W, H)
                         except ingest.SectionDownloadTimeout as exc:
@@ -697,12 +761,10 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
                             render_from_sections = False
                             source_offset = 0.0
                             section_key = None
-                            W, H = render_clips.ffprobe_dims(source)
+                            W, H = export_cache.dimensions(source, path)
                             render_source = source
-                            key = digest([
-                                segment, data["words"],
-                                file_identity(source), render_options, brand, logo_identity, preview, source_offset,
-                                section_key, TIMELINE_VERSION, *mark_identity, *frame_identity, *([recovery] if recovery else [])])
+                            key = export_cache.recipe(source, segment, data["words"], options, brand, mark, frame,
+                                                      preview, None, recovery, automation_export)
                         except (Exception, SystemExit) as exc:
                             failed_sections[group_index] = str(exc)
                             render_errors.append(
@@ -712,17 +774,23 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
                     else:
                         render_source, W, H = loaded
                 try:
+                    if W is None:
+                        W, H = export_cache.dimensions(render_source, path)
                     started = time.monotonic()
                     output = render_clips.render({**segment, "id": segment["id"] + "-" + key[:8]}, data["words"], render_source, W, H, path,
                         options["aspect"], out_dir=out, style=options["style"],
                         do_tighten=options["tighten"], loudnorm=options["loudnorm"], preview=preview,
                         brand=brand, layout=options["layout"], centers=options["centers"], camera_mode=options["camera_mode"],
                         caption=options["caption"], source_offset=source_offset, mark=mark,
+                        fit=options["fit"], facecam_box=options["facecam_box"], facecam_height=options["facecam_height"],
+                        export_profile=options["export_profile"], progress=tracker,
                         **({"signature_frame": frame} if frame else {}),
                         retain_for_repair=automation_export, burn_subtitles=recovery != "subtitles",
                         transcript_info={"model": data.get("model"), "origin": "project",
                                          "transcript_version": data.get("transcript_version"),
-                                         "transcript_hash": digest(data["words"])})
+                                         "transcript_hash": transcript_digest})
+                except render_progress.Cancelled:
+                    raise
                 except render_clips.RenderFailure as exc:
                     state["last_outputs"] = outputs
                     if exc.alternative:
@@ -737,11 +805,14 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
                     save_project(path, state)
                     continue
                 state["renders"][key] = str(output)
+                state["render_artifacts"][key] = export_cache.record(Path(output), preview, segment, automation_export, section_key, recovery)
+                state["last_outputs"] = [*outputs, str(output)]
                 if not preview:
                     transcript_metrics = state.get("automation_transcription") or {}
                     discovery_metrics = state.get("automation_discovery") or {}
                     state.setdefault("automation_render_metrics", {})[Path(output).name] = {
                         "render_seconds": round(time.monotonic() - started, 4),
+                        "stages": tracker.times,
                         "available_at": time.time(),
                         "detected_at": discovery_metrics.get("detected_at")
                         if discovery_metrics.get("key") == state["cache"].get("discovery") else None,
@@ -765,7 +836,7 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
         save_project(path, state)
         return state
     except (Exception, SystemExit) as exc:
-        cancelled = isinstance(exc, instagram_import.Cancelled)
+        cancelled = isinstance(exc, (instagram_import.Cancelled, render_progress.Cancelled))
         alternative = exc.alternative if isinstance(exc, render_clips.RenderFailure) else None
         if alternative and not state.get("render_recovery"):
             state["render_recovery"] = {"alternative": alternative, "pick": pick, "preview": preview}
@@ -773,6 +844,9 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
                      stage="render recovery" if alternative else state.get("stage", "failed"))
         save_project(path, state)
         raise
+    finally:
+        if action != "prepare":
+            (path / ".render-cancel").unlink(missing_ok=True)
 
 
 def run_batch(sources, root, options, runner=None, brief_text=None, **kwargs):

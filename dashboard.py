@@ -24,6 +24,10 @@ import branding
 import editorial
 import editorial_providers
 import editorial_store
+import export_cache
+import export_settings
+import render_progress
+import youtube_monitor
 import live_production
 import projects
 import production
@@ -98,6 +102,7 @@ STATIC_FILES = {
     "realtime.js": ("realtime.js", "text/javascript; charset=utf-8"),
     "workspace.js": ("workspace.js", "text/javascript; charset=utf-8"),
     "clip-workspace.js": ("clip-workspace.js", "text/javascript; charset=utf-8"),
+    "production-tools.js": ("production-tools.js", "text/javascript; charset=utf-8"),
     "calendar.js": ("calendar.js", "text/javascript; charset=utf-8"),
     "anqora.css": ("anqora.css", "text/css; charset=utf-8"),
     "anqora.svg": ("anqora.svg", "image/svg+xml"),
@@ -160,7 +165,12 @@ def project_detail(root, project_id):
         source_meta.get("render_from_sections")
         or transcript.get("render_from_sections"))
     video = transcript.get("video") or state.get("video")
+    if not data["candidates"] and not state["options"].get("strict_selection"):
+        suggestions = projects.suggestions(path, data["selection"] or {})
+        if suggestions:
+            data.update(candidates=suggestions, suggested=True)
     data.update({
+        "effective_export": export_settings.Store(root).summary(projects.validate_options(state["options"])),
         "source_meta": source_meta,
         "progress": state.get("progress") or {},
         "render_errors": state.get("render_errors") or [],
@@ -225,6 +235,8 @@ class Studio:
         self.preparation = Preparation(self.calendar)
         self.clips = clip_workspace.Clips(self.root, self.calendar, self.tiktok, self.editorial)
         self.clip_jobs = {}
+        self.clip_progress = {}
+        self.clip_cancels = {}
         self.calendar.recover_dispatches()
         self.preparing_publications = False
         self.schedule_stop = threading.Event()
@@ -232,6 +244,53 @@ class Studio:
         self.telegram = telegram_gateway.Gateway(self, installation)
         self.telegram.start()
         self.schedule_thread.start()
+        self.channels = youtube_monitor.Monitor(self.root, self._monitor_project, self._monitor_idle, start=False)
+        self.channels.worker.start()
+
+    def _monitor_idle(self):
+        with self.lock:
+            return not self.closing and not any(
+                not job.done() for job in [*self.futures.values(), *self.clip_jobs.values()])
+
+    def _monitor_project(self, item, ident):
+        with self.lock:
+            if not self._monitor_idle():
+                return "queued", None
+            folder = projects.project_path(self.root, ident)
+            if folder.resolve() != folder or asset_lifecycle.hidden(self.root, ident):
+                return "restricted", "La ruta de proyecto está protegida o en la papelera."
+            with self.channels.connect() as db:
+                current = self.channels._channel(db, item["channel"])
+            item.update({key: current[key] for key in ("active","authorized","reason","maximum","preferred",
+                                                     "template","category","render")})
+            stamp = {"channel": item["channel"], "video": item["id"], "published": item["published"],
+                     "authorization": item["reason"]}
+            if (folder / "project.json").exists():
+                state = projects.read_project(folder)
+                ownership = state.get("youtube_monitor") or {}
+                if any(ownership.get(key) != stamp[key] for key in ("channel", "video")):
+                    return "restricted", "El identificador local ya pertenece a otro proyecto."
+                if state["status"] in {"review", "complete"}:
+                    return "ready", None
+                if state.get("monitor_restricted"):
+                    return "restricted", state.get("error")
+                if state["status"] == "failed" and item["state"] == "queued":
+                    return "retry", "Falló el procesamiento. Consulta el registro del proyecto."
+                if state["status"] == "cancelled":
+                    return "restricted", "Se canceló el procesamiento local."
+                if not item["active"] or not item["authorized"]:
+                    return "paused", None
+            else:
+                if not item["active"] or not item["authorized"]:
+                    return "paused", None
+                options = {"device": "auto", "max_clips": item["maximum"], "preferred_len": item["preferred"],
+                           "video_type": item["category"], "template_override": item["template"] != "inherit"}
+                if item["template"] == "signature":
+                    options.update(aspect="9:16", signature={"template": signature.TEMPLATE_ID, "watermark": True})
+                projects.init_project(folder, f"https://www.youtube.com/watch?v={item['id']}", options, ident,
+                                      monitored=stamp)
+            self.enqueue(ident, "all" if item["render"] else "prepare")
+            return "queued", None
 
     def _deliver_scheduled(self):
         while not self.schedule_stop.wait(5):
@@ -254,21 +313,33 @@ class Studio:
                 except (OSError, sqlite3.Error):
                     continue
 
-    def render_clip_version(self, project, filename, aspect):
+    def render_clip_version(self, project, filename, aspect, profile=None):
+        if profile is not None and profile not in export_settings.PROFILES:
+            raise ValueError("Perfil de exportación no válido.")
         with self.lock:
-            if any(not item.done() for item in self.clip_jobs.values()):
+            if self.closing or any(not item.done() for item in self.clip_jobs.values()):
                 raise ValueError("Espera a que termine la exportación anterior.")
             self.tiktok._clip(project, filename)
             while len(self.clip_jobs) >= 24:
-                self.clip_jobs.pop(next(iter(self.clip_jobs)))
+                expired = next(iter(self.clip_jobs))
+                self.clip_jobs.pop(expired)
+                self.clip_progress.pop(expired, None)
+                self.clip_cancels.pop(expired, None)
             ident = secrets.token_hex(12)
+            cancel = self.clip_cancels[ident] = threading.Event()
+            stages = self.clip_progress[ident] = {"stage": "queued"}
+            tracker = render_progress.Progress(stages.update, cancel.is_set)
 
             def render_version():
                 with self.resources:
                     try:
-                        return {"state": "ready", "file": self.clips.reexport(project, filename, aspect)}
-                    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
-                        return {"state": "error", "error": "No se pudo exportar. Comprueba el original, los subtítulos y FFmpeg."}
+                        name = self.clips.reexport(project, filename, aspect, profile, tracker)
+                        return {"state": "ready", "file": name, "reused": "reuse" in tracker.times, "progress": dict(stages)}
+                    except render_progress.Cancelled as exc:
+                        return {"state": "cancelled", "error": str(exc)}
+                    except (OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
+                        message = str(exc) if isinstance(exc, ValueError) else "Comprueba el archivo original, los subtítulos y FFmpeg."
+                        return {"state": "error", "error": message, "progress": dict(stages)}
             self.clip_jobs[ident] = self.executor.submit(render_version)
             return ident
 
@@ -424,6 +495,7 @@ class Studio:
                 if (state["status"] in instagram_import.RETRY_STATUSES
                         and state["stage"] in instagram_import.DOWNLOAD_STAGES and state.get("error")):
                     state.setdefault("instagram_errors", []).append({"at": state["updated"], "error": state["error"]})
+            (path / ".render-cancel").unlink(missing_ok=True)
             state.update(status="queued", stage=action, error=None)
             projects.save_project(path, state)
             future = self.executor.submit(self._run, path, action, preview, pick, recovery)
@@ -646,6 +718,9 @@ class Studio:
             self.closed = self.closing = True
             sessions = list(self.live_sessions.values())
             children = list(self.processes)
+        self.channels.close()
+        for cancel in self.clip_cancels.values():
+            cancel.set()
         self.schedule_stop.set()
         self.schedule_thread.join()
         self.telegram.close()
@@ -725,9 +800,14 @@ class Handler(BaseHTTPRequestHandler):
                 ident = parse_qs(location.query, max_num_fields=1).get("id", [""])[0]
                 with self.app.lock:
                     future = self.app.clip_jobs.get(ident)
+                    running = dict(self.app.clip_progress.get(ident, {}))
                 if future is None:
                     raise FileNotFoundError
-                return self.send_json(future.result() if future.done() else {"state": "running"})
+                return self.send_json(future.result() if future.done() else {"state": "running", "progress": running})
+            if parts == ["api", "export-template"]:
+                return self.send_json(export_settings.Store(self.app.root).read())
+            if parts == ["api", "youtube-monitor"]:
+                return self.send_json(self.app.channels.snapshot())
             if parts == ["api", "publishing-assist"]:
                 return self.send_json({**self.app.preparation.settings(), "history": self.app.preparation.history()})
             if parts == ["api", "publishing-capabilities"]:
@@ -913,6 +993,20 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(body, dict):
                 raise ValueError("Expected a JSON object.")
             parts = unquote(urlsplit(self.path).path).strip("/").split("/")
+            if len(parts) == 3 and parts[:2] == ["api", "youtube-monitor"]:
+                if parts[2] == "add":
+                    return self.send_json(self.app.channels.action(parts[2], body))
+                with self.app.lock:
+                    return self.send_json(self.app.channels.action(parts[2], body))
+            if parts == ["api", "clip-render", "cancel"]:
+                with self.app.lock:
+                    cancel = self.app.clip_cancels.get(body.get("id"))
+                    if cancel is None:
+                        raise FileNotFoundError
+                    cancel.set()
+                return self.send_json({"ok": True})
+            if parts == ["api", "export-template", "nvenc"]:
+                return self.send_json(export_cache.nvenc_probe())
             if len(parts) == 3 and parts[:2] == ["api", "clip"]:
                 project, filename, platform = (body.get(key) for key in ("project", "file", "platform"))
                 if parts[2] == "copy":
@@ -920,7 +1014,7 @@ class Handler(BaseHTTPRequestHandler):
                 if parts[2] == "artwork":
                     return self.send_json(self.app.clips.artwork(project, filename, platform, body))
                 if parts[2] == "render":
-                    return self.send_json({"job": self.app.render_clip_version(project, filename, body.get("aspect"))}, 202)
+                    return self.send_json({"job": self.app.render_clip_version(project, filename, body.get("aspect"), body.get("profile"))}, 202)
                 if parts[2] == "generate":
                     if platform not in clip_workspace.LIMITS:
                         raise ValueError("Elige una plataforma disponible.")
@@ -990,6 +1084,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.app.export_live(parts[2], body.get("seconds"))
                 return self.send_json({"queued": True}, 202)
             with self.app.lock:
+                if parts == ["api", "export-template"]:
+                    return self.send_json(export_settings.Store(self.app.root).save(body))
                 if parts == ["api", "watermark"]:
                     if "settings" not in body or body.keys() - {"settings", "image_data"}:
                         raise ValueError("Envía los ajustes y el PNG de marca de agua.")
@@ -1051,6 +1147,18 @@ class Handler(BaseHTTPRequestHandler):
                             raise ValueError("Este proyecto no tiene una descarga de Instagram pendiente de reintento.")
                         self.app.enqueue(project_id, "prepare")
                         return self.send_json({"ok": True}, 202)
+                    if action == "cancel-render":
+                        if not self.app.busy(project_id) or not (state["stage"] in {"render", "render preview"} or
+                                str(state["stage"]).startswith(("render ", "preview "))):
+                            raise ValueError("No hay una exportación activa para cancelar.")
+                        if path.resolve() != path:
+                            raise ValueError("La carpeta de proyecto debe ser local.")
+                        try:
+                            with (path / ".render-cancel").open("x"):
+                                pass
+                        except FileExistsError:
+                            pass
+                        return self.send_json({"ok": True})
                     if action == "cancel-import":
                         if (not state.get("instagram_import") or not self.app.busy(project_id)
                                 or state["stage"] not in instagram_import.DOWNLOAD_STAGES):
@@ -1104,7 +1212,18 @@ class Handler(BaseHTTPRequestHandler):
                     elif action == "candidates":
                         duration = projects.read_json(path / "transcript.json")["duration"]
                         segments = projects.validate_segments(body["candidates"], duration)
-                        projects.atomic_json(path / "segments.json", segments)
+                        if body.get("suggested") is True:
+                            selection = projects.read_json(path / "selection.json")
+                            previous = projects.suggestions(path, selection)
+                            if (state["options"].get("strict_selection") or projects.read_json(path / "segments.json")
+                                    or len(segments) != len(previous) or len(segments) > 5
+                                    or any(a["start"] != b["start"] or a["end"] != b["end"] or a["overall"] != b["overall"]
+                                           for a, b in zip(segments, previous))):
+                                raise ValueError("Los mejores candidatos cambiaron. Recarga el proyecto para revisarlos.")
+                            selection["suggestions"] = [{**old, "hook": new["hook"]} for old, new in zip(previous, segments)]
+                            projects.atomic_json(path / "selection.json", selection)
+                        else:
+                            projects.atomic_json(path / "segments.json", segments)
                     elif action == "render-recovery":
                         recovery = body.get("alternative")
                         if recovery not in ("stable", "subtitles", "watermark") or body.get("confirmed") is not True:
@@ -1114,7 +1233,7 @@ class Handler(BaseHTTPRequestHandler):
                         if "output" in body:
                             output = body["output"]
                             if (body.get("action") != "render" or not isinstance(output, dict)
-                                    or output.keys() - {"aspect", "layout", "camera_mode"}):
+                                    or output.keys() - {"aspect", "layout", "camera_mode", "export_profile"}):
                                 raise ValueError("Configuración de exportación no válida.")
                             self.app.enqueue(project_id, "render", body.get("preview", False), body.get("pick"), output=output)
                         else:

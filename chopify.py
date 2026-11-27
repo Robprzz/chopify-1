@@ -365,6 +365,10 @@ def main():
                     help="horizontal speaker centers from 0 to 1 for split-screen")
     ap.add_argument("--device", choices=["cpu", "cuda", "auto"],
                     help="Whisper acceleration for new projects (default: auto); saved projects keep their preference.")
+    ap.add_argument("--export-profile", choices=("fast", "quality"), default="quality")
+    ap.add_argument("--template-override", action="store_true")
+    ap.add_argument("--strict-selection", action="store_true")
+    ap.set_defaults(use_watermark=True)
     render_clips.add_caption_arguments(ap)
     args = ap.parse_args()
     if args.list_formats:

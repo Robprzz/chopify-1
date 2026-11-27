@@ -15,6 +15,9 @@ let calendarPrefsInitialized = false;
 let calendarDetailRequest = 0;
 let calendarImmediate = false;
 let calendarAccount = "";
+const draftStatuses = new Set(["draft", "pending_review", "editorial_approved", "ready"]);
+const checkedDrafts = new Set();
+let visibleDrafts = [];
 
 const calendarApi = (action, body) => api("/api/calendar/" + action, body);
 function calendarLocal(seconds, zone, includeTime = true) {
@@ -38,6 +41,45 @@ function calendarEntry(item, grid = false) {
     <strong>${escapeHTML(item.title)}</strong><small>${grid ? time.slice(11) : time.replace("T", " · ")} · ${calendarPlatforms[item.platform]}</small>
     <small>${calendarPriorities[item.priority]} · ${mediaDuration(item.duration)} · ${escapeHTML(planLabel(item))}</small></button>`;
 }
+function draftCard(item) {
+  return `<article class="calendar-draft-card">
+    ${calendarEntry(item)}
+    <div class="publication-actions">
+      ${item.deletable ? `<label class="check"><input type="checkbox" data-draft-check="${escapeHTML(item.id)}"
+        ${checkedDrafts.has(item.id) ? "checked" : ""}/> Seleccionar</label>
+        <button type="button" data-draft-remove="${escapeHTML(item.id)}">Eliminar borrador</button>`
+        : "<small>Plan protegido por su historial de entrega.</small>"}
+    </div></article>`;
+}
+function draftSelection() {
+  for (const checkbox of document.querySelectorAll("[data-draft-check]")) {
+    checkbox.checked = checkedDrafts.has(checkbox.dataset.draftCheck);
+  }
+  $("#calendar-draft-count").textContent = checkedDrafts.size + " seleccionados";
+  $("#calendar-remove-drafts").disabled = !checkedDrafts.size;
+  $("#calendar-clear-drafts").disabled = !checkedDrafts.size;
+  $("#calendar-select-drafts").disabled = !visibleDrafts.some(item => item.deletable);
+}
+function filterCalendar(plan) {
+  const platform = $("#calendar-platform-filter").value, status = $("#calendar-status-filter").value;
+  return (!platform || plan.platform === platform) && (!status ||
+    (status === "draft-only" ? draftStatuses.has(plan.status) && plan.scheduled == null : plan.status === status));
+}
+async function removeDrafts(items) {
+  if (!items.length || !await confirmDeletion("Eliminar " + items.length + " borradores del calendario. Los MP4 se conservarán.")) return;
+  document.activeElement?.blur();
+  const result = await calendarApi("delete-drafts", {confirmed:true, items:items.map(({id, revision}) => ({id, revision}))});
+  for (const id of result.ids) checkedDrafts.delete(id);
+  if (result.ids.includes(calendarDetail?.id)) {
+    calendarDetail = null;
+    $("#calendar-detail").hidden = true;
+  }
+  await refreshCalendar(true);
+  await refreshWorkspace(true);
+  $("#calendar-draft-message").textContent = result.deleted + " borradores eliminados."
+    + (result.excluded.length ? " Excluidos: " + result.excluded.map(item => (item.title || item.id) + " — " + item.reason).join(" / ") : "");
+}
+
 function renderCalendar() {
   if (!calendarData) return;
   const batch = $("#batch-clips");
@@ -55,7 +97,8 @@ function renderCalendar() {
   if (modeFilter) {
     const visible = plans.filter(plan => modeFilter === "sent" ? Boolean(plan.publish_id || plan.confirmation) :
       statusGroups[modeFilter].includes(plan.status));
-    patchWorkspace("#publishing-list", visible.map(plan => calendarEntry(plan)).join("") || "<p>Sin planes en esta vista.</p>");
+    patchWorkspace("#publishing-list", visible.filter(filterCalendar)
+      .map(plan => modeFilter === "draft" && plan.scheduled == null ? draftCard(plan) : calendarEntry(plan)).join("") || "<p>Sin planes en esta vista.</p>");
   }
   const mode = $("#calendar-view-mode").value;
   const chosen = $("#calendar-date").value || calendarDate(Date.now()/1000);
@@ -64,8 +107,7 @@ function renderCalendar() {
   const first = new Date(target);
   if (mode === "month") first.setUTCDate(1);
   if (mode !== "day") first.setUTCDate(first.getUTCDate() - (first.getUTCDay() + 6) % 7);
-  const platform = $("#calendar-platform-filter").value, status = $("#calendar-status-filter").value;
-  const filtered = plans.filter(item => (!platform || item.platform === platform) && (!status || item.status === status));
+  const filtered = plans.filter(filterCalendar);
   const deleteList = $("#calendar-delete-selection");
   const selectedForDelete = new Set([...deleteList.selectedOptions].map(option => option.value));
   const deletable = filtered.filter(item => item.deletable);
@@ -87,8 +129,11 @@ function renderCalendar() {
   $("#calendar-zone").textContent = preferences.timezone;
   patchWorkspace("#calendar-upcoming",filtered.filter(row => row.scheduled > Date.now()/1000 &&
     !["cancelled","published"].includes(row.status)).sort((a,b) => a.scheduled - b.scheduled).slice(0,8).map(item => calendarEntry(item)).join("") || "<p>Sin próximas programaciones.</p>");
-  patchWorkspace("#calendar-drafts",filtered.filter(row => row.scheduled == null && row.status !== "cancelled").slice(0,12)
-    .map(item => calendarEntry(item)).join("") || "<p>Sin tareas sin fecha.</p>");
+  visibleDrafts = filtered.filter(row => row.scheduled == null && draftStatuses.has(row.status));
+  const eligible = new Set(visibleDrafts.filter(item => item.deletable).map(item => item.id));
+  for (const id of checkedDrafts) if (!eligible.has(id)) checkedDrafts.delete(id);
+  patchWorkspace("#calendar-drafts", visibleDrafts.map(draftCard).join("") || "<p>No hay borradores con estos filtros.</p>");
+  draftSelection();
   const candidates = workspaceData?.clips || [];
   const planned = new Set(plans.filter(item => item.status !== "cancelled").map(item => item.project + "/" + item.file));
   const shortcuts = items => items.slice(0,8).map(clip => `<button type="button" class="calendar-entry" data-workspace="plan-clip" data-key="${escapeHTML(clip.project + "/" + clip.filename)}">
@@ -292,7 +337,27 @@ for (const [key,label] of Object.entries(calendarPlatforms)) {
   $("#calendar-platform").add(new Option(label,key));
   $("#calendar-platform-filter").add(new Option(label,key));
 }
+$("#calendar-status-filter").add(new Option("Solo borradores sin programar","draft-only"));
 for (const [key,label] of Object.entries(calendarStatuses)) $("#calendar-status-filter").add(new Option(label,key));
+$("#calendar-view").addEventListener("change", event => {
+  const input = event.target.closest("[data-draft-check]");
+  if (!input) return;
+  if (input.checked) checkedDrafts.add(input.dataset.draftCheck);
+  else checkedDrafts.delete(input.dataset.draftCheck);
+  draftSelection();
+});
+$("#calendar-view").addEventListener("click", event => {
+  const button = event.target.closest("[data-draft-remove]");
+  if (button) calendarMutation(() => removeDrafts(visibleDrafts.filter(item => item.id === button.dataset.draftRemove)));
+});
+$("#calendar-select-drafts").addEventListener("click", () => {
+  for (const item of visibleDrafts) if (item.deletable) checkedDrafts.add(item.id);
+  draftSelection();
+});
+$("#calendar-clear-drafts").addEventListener("click", () => { checkedDrafts.clear(); draftSelection(); });
+$("#calendar-remove-drafts").addEventListener("click", () => calendarMutation(
+  () => removeDrafts(visibleDrafts.filter(item => checkedDrafts.has(item.id)))
+));
 $("#show-publications").addEventListener("click", safe(openCalendar));
 $("#tiktok-back").addEventListener("click",safe(openCalendar));
 $("#calendar-now").addEventListener("click", safe(() => openCalendarDetail(null,null,true)));

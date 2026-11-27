@@ -185,12 +185,14 @@ def sentenceize(words, gap=SENTENCE_PAUSE_SECONDS):
     still provide useful endpoints even when a period never appears.
     """
     sentences, cur = [], []
+    abbreviations = {"sr.", "sra.", "srta.", "dr.", "dra.", "ud.", "uds.", "núm.", "pág.", "prof.", "mr.", "mrs.", "ms."}
     for w in words:
         if cur and (w["start"] - cur[-1]["end"]) > gap:
             sentences.append((cur, "pause"))
             cur = []
         cur.append(w)
-        if is_arc_complete(w["word"]):
+        token = unicodedata.normalize("NFC", w["word"].strip()).casefold()
+        if token not in abbreviations and is_arc_complete(w["word"]):
             sentences.append((cur, "punct"))
             cur = []
     if cur:
@@ -1003,6 +1005,28 @@ def _public_segment(item):
     return segment
 
 
+def review_suggestions(records, limit=5):
+    """Surface measured, self-contained windows for a human decision."""
+    distinct, verified = [], []
+    for item in records:
+        try:
+            verified.append(_validated_candidate(item))
+        except (TypeError, ValueError):
+            continue
+    ranked = sorted(verified, key=lambda item: (-item["overall"], item["start"], item["end"]))
+    for item in ranked:
+        profile = item.get("score_parts") or {}
+        if (item.get("seed_kind") != "sentence" or not item.get("endpoint_kind")
+                or profile.get("self_containment", 0) < .65 or profile.get("payoff", 0) < .4
+                or profile.get("penalties", 1) >= .25
+                or any(overlap_ratio(item, other) > .25 for other in distinct)):
+            continue
+        distinct.append(item)
+        if len(distinct) == limit:
+            break
+    return [dict(_public_segment(item), rank=i) for i, item in enumerate(distinct, 1)]
+
+
 def select_candidates(candidates, min_score=8.0, max_clips=None,
                       preferred_len=None, band=(30, 120), dedupe=True,
                       discovery=None, mode="heuristic",
@@ -1075,10 +1099,13 @@ def select_candidates(candidates, min_score=8.0, max_clips=None,
         "visual_sections": discovery.get("visual_sections", 0),
         "warnings": discovery.get("warnings", []),
     }
+    if not segments and records:
+        stats["suggestions"] = review_suggestions(records, min(5, max_clips or 5))
     return segments, stats
 
 
 CANDIDATES_VERSION = 1
+SELECTION_VERSION = 2
 
 
 def _write_json(path, data):

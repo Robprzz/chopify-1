@@ -21,6 +21,7 @@
     <script src="/workspace.js" defer></script>
     <script src="/clip-workspace.js" defer></script>
     <script src="/calendar.js" defer></script>
+    <script src="/production-tools.js" defer></script>
   </head>
   <body>
     <svg class="icon-defs" aria-hidden="true"><symbol id="icon-home" viewBox="0 0 24 24"><path d="m3 10 9-7 9 7v10H3z"/><path d="M9 20v-7h6v7"/></symbol><symbol id="icon-live" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2"/><path d="M7 8a7 7 0 0 0 0 8m10-8a7 7 0 0 1 0 8M4 5a11 11 0 0 0 0 14M20 5a11 11 0 0 1 0 14"/></symbol><symbol id="icon-clip" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="m10 8 6 4-6 4z"/></symbol><symbol id="icon-stack" viewBox="0 0 24 24"><path d="m3 7 9-4 9 4-9 4zm0 5 9 4 9-4M3 17l9 4 9-4"/></symbol><symbol id="icon-publish" viewBox="0 0 24 24"><path d="m22 3-7 18-4-8-8-3 19-7zM11 13 22 3"/></symbol><symbol id="icon-stats" viewBox="0 0 24 24"><path d="M3 21h18M5 17v-5h3v5zm6 0V8h3v9zm6 0V4h3v13z"/></symbol><symbol id="icon-config" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="m9 3-1 3-3 1-2 4 2 3v3l4 3 3-1 3 1 4-3v-3l2-3-2-4-3-1-1-3z"/></symbol><symbol id="icon-search" viewBox="0 0 24 24"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></symbol><symbol id="icon-bell" viewBox="0 0 24 24"><path d="M5 17h14l-2-3V9a5 5 0 0 0-10 0v5zm5 3a2 2 0 0 0 4 0"/></symbol><symbol id="icon-star" viewBox="0 0 24 24"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z"/></symbol><symbol id="icon-rail" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></symbol></svg>
@@ -69,10 +70,31 @@
         <section aria-labelledby="home-recent-heading"><h2 id="home-recent-heading">Clips recientes</h2><div id="home-recent" class="home-clips"></div></section>
       </section>
       <section id="projects-view" class="view workspace-view" hidden>
-        <header class="section-heading"><div><h1>Proyectos</h1><p>Crea proyectos, vuelve a la edición o recupera un proyecto archivado.</p></div><button id="new-project" type="button" class="primary">Nuevo proyecto</button></header>
+        <header class="section-heading"><div><h1>Proyectos</h1><p>Crea proyectos, vuelve a la edición o recupera un proyecto archivado.</p></div><div class="publication-actions"><button id="show-youtube-monitor" type="button">Canales monitoreados</button><button id="new-project" type="button" class="primary">Nuevo proyecto</button></div></header>
         <label class="workspace-toolbar">Mostrar <select id="projects-filter"><option value="active">Activos</option><option value="archived">Archivados</option><option value="all">Todos</option></select></label>
         <p id="project-count" aria-live="polite"></p>
         <div id="projects" class="project-list" aria-label="Proyectos guardados"></div>
+      </section>
+      <section id="youtube-monitor-view" class="view" hidden>
+        <div class="intro"><h1>Canales monitoreados</h1><p>Studio consulta YouTube mientras permanece abierto. Si el equipo se suspende o apaga, vuelve a consultar al reabrir.</p></div>
+        <form id="youtube-monitor-form" class="panel input-panel">
+          <h2 id="youtube-monitor-heading">Agregar canal</h2>
+          <label id="youtube-monitor-source">Canal de YouTube<input name="source" placeholder="https://www.youtube.com/@canal" required maxlength="240" /></label>
+          <div class="form-grid">
+            <label>Revisar cada (minutos)<input name="interval" type="number" min="5" max="1440" value="15" required /></label>
+            <label>Máximo de clips<input name="maximum" type="number" min="1" max="5" value="3" required /></label>
+            <label>Duración preferida (segundos)<input name="preferred" type="number" min="15" max="300" value="60" required /></label>
+            <label>Plantilla<select name="template"><option value="inherit">Heredar configuración global</option><option value="project">Formato del proyecto</option><option value="signature">Signature 9:16</option></select></label>
+            <label>Categoría<select name="category"><option value="auto">Automática</option></select></label>
+          </div>
+          <label class="check"><input type="checkbox" name="active" checked /> Canal activo</label>
+          <label class="check"><input type="checkbox" name="authorized" /> Tengo autorización de uso para descargar y producir clips de este canal</label>
+          <label>Referencia de la autorización<input name="reason" maxlength="500" placeholder="Por ejemplo, canal propio o licencia documentada" /></label>
+          <label class="check"><input type="checkbox" name="render" /> Exportar automáticamente clips que superen el umbral, para revisión</label>
+          <div class="publication-actions"><button class="primary" type="submit">Guardar canal</button><button type="button" id="youtube-monitor-reset">Nuevo canal</button></div>
+        </form>
+        <p id="youtube-monitor-feedback" role="status"></p>
+        <div id="youtube-monitor-list" class="workspace-list"></div>
       </section>
       <section id="trash-view" class="view workspace-view" hidden>
         <header class="section-heading"><div><h1>Papelera</h1><p>Restaura proyectos y clips. Los originales se conservan en el almacenamiento local.</p></div></header>
@@ -131,7 +153,10 @@
               <section class="workspace-card"><h2>Próximas publicaciones</h2><div id="calendar-upcoming"></div></section>
               <section class="workspace-card"><h2>Clips urgentes</h2><div id="calendar-urgent"></div></section>
               <section class="workspace-card"><h2>Clips sin programar</h2><div id="calendar-unplanned"></div></section>
-              <section class="workspace-card"><h2>Borradores y tareas sin fecha</h2><div id="calendar-drafts"></div><details><summary>Eliminar planes en grupo</summary>
+              <section class="workspace-card"><h2>Borradores y tareas sin fecha</h2><div class="publication-actions"><button id="calendar-select-drafts" type="button">Seleccionar borradores filtrados</button>
+              <button id="calendar-clear-drafts" type="button">Deseleccionar</button><button id="calendar-remove-drafts" type="button">Eliminar borradores seleccionados</button>
+              <span id="calendar-draft-count">0 seleccionados</span></div><p id="calendar-draft-message" role="status"></p>
+              <div id="calendar-drafts"></div><details><summary>Eliminar planes en grupo</summary>
                 <label>Planes locales <select id="calendar-delete-selection" multiple size="5"></select></label>
                 <button id="calendar-delete-batch" type="button">Eliminar seleccionados</button></details></section>
             </div>
@@ -205,7 +230,27 @@
           </form></div></details>
         </div>
         <p id="settings-empty" role="status" hidden>No se encontraron ajustes.</p>
-        <div id="settings-brand" class="workspace-card settings-inline" hidden><h2>Identidad de Studio</h2><img src="/anqora-logo" alt="Anqora Media Studio" /><p>La marca de agua de los videos se configura por separado.</p></div>
+        <div id="settings-brand" class="workspace-card settings-inline" hidden>
+          <h2>Identidad de Studio</h2><img src="/anqora-logo" alt="Anqora Media Studio" />
+          <form id="export-template-form">
+            <h3>Plantilla de exportación</h3>
+            <label class="check"><input name="enabled" type="checkbox" /> Aplicar plantilla a todos los proyectos</label>
+            <div class="form-grid">
+              <label>Relación de aspecto<select name="aspect"><option>9:16</option><option>16:9</option><option>1:1</option></select></label>
+              <label>Marco visual<select name="signature"><option value="none">Sin franjas</option><option value="signature">Anqora Signature 1.0</option></select></label>
+              <label>Subtítulos<select name="style"></select></label>
+              <label>Marca guardada<select name="brand_name"><option value="">Sin marca guardada</option></select></label>
+              <label>Ajuste del video<select name="fit"><option value="cover">Llenar</option><option value="contain">Contener</option></select></label>
+              <label>Composición<select name="layout"><option value="single">Un encuadre</option><option value="split">Dos interlocutores</option><option value="stacked">Cámara y juego</option></select></label>
+              <label>Cámara<select name="camera_mode"><option value="auto">Automática</option><option value="smart">Smart Camera</option><option value="split">Dividida</option><option value="stable">Estable</option></select></label>
+              <label>Perfil<select name="export_profile"><option value="quality">Alta calidad · perfil anterior</option><option value="fast">Rápido</option></select></label>
+            </div>
+            <label class="check"><input name="watermark" type="checkbox" /> Incluir la marca de agua activa en Apariencia</label>
+            <p id="export-template-warning" class="muted"></p>
+            <div class="publication-actions"><button type="submit">Guardar plantilla</button><button type="button" id="export-test-nvenc">Comprobar NVENC</button></div>
+            <p id="export-template-status" role="status"></p>
+          </form>
+        </div>
         <div id="settings-tiktok" class="workspace-card settings-inline" hidden><h2>TikTok</h2><div id="settings-tiktok-controls"></div></div>
         <form id="settings-video" class="workspace-card settings-inline" hidden><h2>Video y exportación</h2><div class="form-grid" id="settings-video-fields"></div><button class="primary">Guardar valores predeterminados</button></form>
         <section id="settings-disk" class="workspace-card settings-inline" hidden><h2>Almacenamiento local</h2><p id="settings-disk-path"></p></section>
@@ -696,7 +741,10 @@
             </details>
             <details><summary>Formato y nueva exportación</summary>
               <label>Formato<select id="clip-render-aspect"><option>9:16</option><option>16:9</option><option>1:1</option></select></label>
-              <button id="clip-reexport" type="button">Exportar nueva versión</button>
+              <label>Perfil<select id="clip-render-profile"><option value="">Usar perfil efectivo</option><option value="quality">Alta calidad</option><option value="fast">Rápido</option></select></label>
+              <button id="clip-reexport" type="button">Exportar a Clips</button>
+              <button id="clip-cancel-render" type="button" hidden>Cancelar exportación</button>
+              <p id="clip-effective-export" class="muted"></p><progress id="clip-render-progress" max="1" hidden aria-label="Progreso de exportación"></progress>
             </details>
           </div>
           <form id="clip-copy-form" class="workspace-card">
@@ -803,7 +851,8 @@
             <canvas id="job-pulse" width="1200" height="92"></canvas>
           </div>
         </div>
-        <p id="job-error" role="alert" hidden></p><button id="render-recovery" type="button" hidden></button>
+        <p id="job-error" role="alert" hidden></p><button id="cancel-project-render" type="button" hidden>Cancelar exportación</button>
+                <button id="render-recovery" type="button" hidden></button>
         <section class="project-library" aria-labelledby="project-library-heading">
           <h2 id="project-library-heading">Clips exportados</h2>
           <div id="project-clip-detail"></div>
@@ -840,7 +889,7 @@
             </div>
             <div id="clip-panel">
               <div id="selection-summary" class="selection-summary" hidden></div>
-              <div id="candidates" class="candidate-list"></div>
+              <p id="suggested-candidates" class="muted" hidden>Mejores candidatos para revisión. Ninguno alcanzó el umbral. Elige hasta cinco si aportan contexto.</p><div id="candidates" class="candidate-list"></div>
               <div class="candidate-pager">
                 <button id="candidates-prev" type="button">← Anterior</button>
                 <span id="candidate-page">0–0 of 0</span>
@@ -902,12 +951,18 @@
             </section>
             <details class="log-panel">
               <summary>Registro del trabajo</summary>
+              <p id="project-render-progress" role="status"></p>
               <pre id="log">Aún no se ha ejecutado ningún trabajo.</pre>
             </details>
           </div>
           <aside class="settings panel">
             <div class="panel-title"><h2>Ajustes de exportación</h2></div>
             <form id="settings-form">
+              <p id="project-effective-export" class="muted"></p>
+              <label class="check"><input type="checkbox" name="template_override" /> Usar ajustes propios de este proyecto</label>
+              <label class="check"><input type="checkbox" name="strict_selection" /> Filtro estricto de puntuación</label>
+              <label class="check"><input type="checkbox" name="use_watermark" checked /> Usar la marca de agua activa en este proyecto</label>
+              <label>Perfil de exportación<select name="export_profile"><option value="quality">Alta calidad · perfil anterior</option><option value="fast">Rápido</option></select></label>
               <label
                 >Formato de salida<select name="aspect">
                   <option>16:9</option>

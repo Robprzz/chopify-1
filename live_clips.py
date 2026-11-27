@@ -14,6 +14,8 @@ import projects
 import render_clips
 import smart_camera
 import watermark
+import signature
+from export_settings import Store as TemplateStore
 
 
 def live_clips_dir(root, session_id):
@@ -160,6 +162,7 @@ class LiveClipWriter:
     def __init__(self, session_dir, root=None):
         self.session_dir = Path(session_dir)
         self.watermark = watermark.Store(root) if root is not None else None
+        self.template = TemplateStore(root) if root is not None else None
         self.resources = nullcontext()
         self.clips_dir = self.session_dir / "clips"
         self.windows_dir = self.session_dir / "windows"
@@ -181,7 +184,12 @@ class LiveClipWriter:
                             manual=manual_window is not None)
         window = self.windows_dir / f"{record.id}.mp4"
         try:
-            mark = self.watermark.for_render() if self.watermark else None
+            if self.template:
+                options, _, _ = self.template.resolve(options)
+            frame_options = options.get("signature")
+            frame = signature.load(frame_options["template"]) if frame_options else None
+            use_mark = options.get("use_watermark", True) and (not frame or frame_options["watermark"])
+            mark = self.watermark.for_render() if self.watermark and use_mark else None
             brand = branding.load_brand(options["brand"]) if options["brand"] else None
             window = stitch(segments, window)
             seg = {"id": record.id, "start": round(start - offset, 3), "end": round(end - offset, 3)}
@@ -195,6 +203,7 @@ class LiveClipWriter:
                           caption=options["caption"], fit=options["fit"],
                           facecam_box=options["facecam_box"],
                           facecam_height=options["facecam_height"], mark=mark, retain_for_repair=True,
+                          signature_frame=frame, export_profile=options.get("export_profile", "quality"),
                           timeout=max(60, min(600, (end - start) * 8 + 60)),
                           transcript_info={"model": LIVE_TRANSCRIPT_MODEL if words else None,
                                            "origin": "Transcripción Live"})

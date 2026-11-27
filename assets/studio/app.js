@@ -443,7 +443,7 @@ async function selectProject(id) {
   switchView("project-view");
   state.detail = detail;
   state.words = structuredClone(state.detail.transcript?.words || []);
-  state.selected = new Set(state.detail.candidates.map((_, i) => i + 1));
+  state.selected = new Set(state.detail.suggested ? [] : state.detail.candidates.map((_, i) => i + 1));
   renderDetail();
   await refreshProjects();
 }
@@ -455,6 +455,10 @@ $("#render-recovery").addEventListener("click",safe(async () => {
   await api(`/api/projects/${state.id}/render-recovery`,{alternative,confirmed:true});
   const detail = await api(`/api/projects/${state.id}`);
   if (detail.project.id === state.id) { state.detail = detail; updateStatus(detail); }
+}));
+$("#cancel-project-render").addEventListener("click", safe(async () => {
+  await api(`/api/projects/${state.id}/cancel-render`, {});
+  notice("Cancelación solicitada. Se conservan los archivos ya terminados.");
 }));
 $("#cancel-instagram").addEventListener("click", safe(async () => {
   await api(`/api/projects/${state.id}/cancel-import`, {});
@@ -514,9 +518,10 @@ function updateStatus(detail) {
   updateInstagram(detail);
   const progress = detail.progress || {};
   const total = Number(progress.total);
+  const renderState = progress.render && typeof renderProgressSummary === "function" ? " · " + renderProgressSummary(progress.render, false) : "";
   const progressText =
     detail.busy && progress.stage && Number.isFinite(total) && total > 0
-      ? ` · ${progress.stage} ${Number(progress.done) || 0}/${total}`
+      ? ` · ${progress.stage} ${Number(progress.done) || 0}/${total}${renderState}`
       : "";
   const statusEl = $("#status");
   statusEl.textContent =
@@ -531,6 +536,9 @@ function updateStatus(detail) {
   const recovery = recoveryLabels[detail.project.render_recovery?.alternative];
   $("#render-recovery").hidden = detail.busy || !recovery || detail.project.stage !== "render recovery";
   $("#render-recovery").textContent = recovery || "";
+  $("#cancel-project-render").hidden = !detail.busy || !(/^(render|preview)( |$)/).test(detail.project.stage);
+  $("#project-render-progress").textContent = detail.progress?.render && typeof renderProgressSummary === "function"
+    ? renderProgressSummary(detail.progress.render) : "";
   $("#log").textContent = detail.log || "Aún no se ha ejecutado ningún trabajo.";
   state.busy = detail.busy;
   for (const selector of [
@@ -624,7 +632,8 @@ function renderSelectionSummary(detail) {
         : `Candidate scores ${scoreLow.toFixed(1)}-${scoreHigh.toFixed(1)}.`,
     );
     lines.push(
-      `No clips at ${minScore.toFixed(1)}+. Lower the minimum score to review more.`,
+      detail.suggested ? `Ningún clip alcanzó ${minScore.toFixed(1)}. Revisa los mejores candidatos disponibles.`
+        : `No clips at ${minScore.toFixed(1)}+. Lower the minimum score to review more.`,
     );
   } else {
     const range =
@@ -736,6 +745,10 @@ function renderDetail() {
       : "Prepara el proyecto para previsualizar la fuente.";
   }
   const form = $("#settings-form");
+  form.elements.use_watermark.checked = options.use_watermark !== false;
+  form.elements.template_override.checked = options.template_override === true;
+  form.elements.strict_selection.checked = options.strict_selection === true;
+  form.elements.export_profile.value = options.export_profile || "quality";
   for (const [key, value] of Object.entries(options)) {
     const input = form.elements.namedItem(key);
     if (input) {
@@ -762,6 +775,8 @@ function renderDetail() {
   fillCaptionForm(savedCaptionStyle(), options.style);
   markCaptionPreset(options.style);
   $("#candidate-count").textContent = detail.candidates.length;
+  $("#suggested-candidates").hidden = !detail.suggested;
+  $("#project-effective-export").textContent = typeof exportSummary === "function" ? exportSummary(detail.effective_export) : "";
   const total = detail.candidates.length;
   const pageCount = Math.max(1, Math.ceil(total / CANDIDATES_PER_PAGE));
   state.candidatePage = Math.min(Math.max(0, state.candidatePage), pageCount - 1);
@@ -773,7 +788,7 @@ function renderDetail() {
           const i = start + offset;
           const rank = Number.isFinite(Number(c.rank)) ? Number(c.rank) : i + 1;
           const duration = Number(c.duration ?? c.end - c.start);
-          return `<article class="candidate" data-index="${i}"><input type="checkbox" aria-label="Select clip ${i + 1}" data-select="${i + 1}" ${state.selected.has(i + 1) ? "checked" : ""}><div><div class="candidate-title"><input aria-label="Clip ${i + 1} title" data-field="hook" value="${escapeHTML(c.hook)}"></div><div class="candidate-meta">#${rank} · ${Number(c.overall).toFixed(1)}/10 · ${formatDuration(duration)}${c.similarity !== undefined ? " · SEMANTIC " + Number(c.similarity).toFixed(2) : ""}</div><div class="candidate-time"><label>Start (seconds)<input data-field="start" type="number" min="0" step="0.01" value="${c.start}"></label><label>End (seconds)<input data-field="end" type="number" min="0" step="0.01" value="${c.end}"></label></div><details class="candidate-reason"><summary>Why this clip</summary><p>${escapeHTML(c.reason || "")}</p><pre>${escapeHTML(JSON.stringify(c.score_parts || {}, null, 2))}</pre>${c.evidence ? `<pre>${escapeHTML(JSON.stringify(c.evidence, null, 2))}</pre>` : ""}</details></div><button data-play="${i}">▶ Watch</button></article>`;
+          return `<article class="candidate" data-index="${i}"><input type="checkbox" aria-label="Select clip ${i + 1}" data-select="${i + 1}" ${state.selected.has(i + 1) ? "checked" : ""}><div><div class="candidate-title"><input aria-label="Clip ${i + 1} title" data-field="hook" value="${escapeHTML(c.hook)}"></div><div class="candidate-meta">#${rank} · ${Number(c.overall).toFixed(1)}/10 · ${formatDuration(duration)}${c.similarity !== undefined ? " · SEMANTIC " + Number(c.similarity).toFixed(2) : ""}</div><div class="candidate-time"><label>Start (seconds)<input data-field="start" type="number" min="0" step="0.01" value="${c.start}" ${detail.suggested ? "readonly" : ""}></label><label>End (seconds)<input data-field="end" type="number" min="0" step="0.01" value="${c.end}" ${detail.suggested ? "readonly" : ""}></label></div><details class="candidate-reason"><summary>Why this clip</summary><p>${escapeHTML(c.reason || "")}</p><pre>${escapeHTML(JSON.stringify(c.score_parts || {}, null, 2))}</pre>${c.evidence ? `<pre>${escapeHTML(JSON.stringify(c.evidence, null, 2))}</pre>` : ""}</details></div><button data-play="${i}">▶ Watch</button></article>`;
         })
         .join("")
     : '<p class="muted">Find clips to see candidates here. You can adjust selection and timing before export.</p>';
@@ -851,14 +866,14 @@ async function saveCandidates(showNotice = true) {
   if (!state.detail.candidates.length)
     throw new Error("Find clips before exporting.");
   await api(`/api/projects/${state.id}/candidates`, {
-    candidates: state.detail.candidates,
+    candidates: state.detail.candidates, suggested: Boolean(state.detail.suggested),
   });
   if (showNotice) notice("Clip edits saved.");
 }
 function projectOutput() {
   const form = $("#settings-form").elements;
   const aspect = form.aspect.value;
-  return {aspect, layout: aspect === "9:16" ? form.layout.value : "single", camera_mode: form.camera_mode.value};
+  return {aspect, layout: aspect === "9:16" ? form.layout.value : "single", camera_mode: form.camera_mode.value, export_profile: form.export_profile.value};
 }
 async function run(action, preview = false) {
   if (action === "render") {
@@ -963,6 +978,9 @@ $("#settings-form").addEventListener(
     values.preferred_len = (values.preferred_len || "").trim() || null;
     values.tighten = form.elements.tighten.checked;
     values.loudnorm = form.elements.loudnorm.checked;
+    values.template_override = $("#settings-form").elements.template_override.checked;
+    values.strict_selection = $("#settings-form").elements.strict_selection.checked;
+    values.use_watermark = $("#settings-form").elements.use_watermark.checked;
     values.centers = [Number(values.center1), Number(values.center2)];
     delete values.center1;
     delete values.center2;
@@ -1500,7 +1518,7 @@ setInterval(async () => {
         state.detail = detail;
         state.words = structuredClone(detail.transcript?.words || []);
         if (!pending) {
-          state.selected = new Set(detail.candidates.map((_, i) => i + 1));
+          state.selected = new Set(detail.suggested ? [] : detail.candidates.map((_, i) => i + 1));
           state.candidatePage = 0;
         }
         let match = null;

@@ -9,6 +9,10 @@ import time
 import uuid
 
 import projects
+import branding
+import export_cache
+import export_settings
+import render_progress
 import render_clips
 import subtitle_quality
 import subtitle_repair
@@ -138,6 +142,8 @@ class Clips:
             db.execute("CREATE INDEX IF NOT EXISTS clip_copy_key ON clip_copy(project,file,platform,id)")
             db.execute("""CREATE TABLE IF NOT EXISTS clip_art (
                 project TEXT NOT NULL,file TEXT NOT NULL,cover TEXT,mark TEXT,PRIMARY KEY(project,file))""")
+            db.execute("""CREATE TABLE IF NOT EXISTS clip_renders (
+                key TEXT PRIMARY KEY, record TEXT NOT NULL)""")
 
     def read(self, project, filename, platform):
         if platform not in LIMITS:
@@ -149,10 +155,20 @@ class Clips:
             art = db.execute("SELECT cover,mark FROM clip_art WHERE project=? AND file=?", (project, filename)).fetchone()
         versions = [{"id": x["id"], **json.loads(x["copy"]), "created": x["created"]} for x in history]
         cover = self.cover_url(project, filename, art["cover"]) if art and art["cover"] else None
-        return {"platform": platform,
+        details = media_info(path, media_stamp(path))
+        try:
+            meta = projects.read_json(path.with_suffix(".meta.json"))
+            options = subtitle_repair._options_for_clip(path.parent.parent, meta.get("subtitles") or {}, project)
+            template = export_settings.Store(self.root)
+            effective = template.summary(options)
+            if not effective["inherited"]:
+                effective = template.summary(options, aspect=details["format"])
+        except FileNotFoundError:
+            effective = {"aspect": details["format"], "inherited": False, "warning": None}
+        return {"platform": platform, "export": effective,
                 "copy": versions[0] if versions else (self.initial_copy(project, filename, platform) or fallback(path)),
                 "versions": versions, "cover": cover, "mark": self.mark_preview(project, filename, art),
-                **{key: value for key, value in media_info(path, media_stamp(path)).items() if key != "tracks"}}
+                **{key: value for key, value in details.items() if key != "tracks"}}
 
     def initial_copy(self, project, filename, platform):
         self.editorial._migrate()
@@ -263,30 +279,73 @@ class Clips:
             raise FileNotFoundError
         return cover
 
-    def reexport(self, project, filename, aspect):
+    @staticmethod
+    def _changed_transcript(project, base, track):
+        previous = track.get("transcript_hash")
+        if not previous or project.startswith("live/"):
+            return False
+        try:
+            return previous != projects.digest(projects.read_json(base / "transcript.json")["words"])
+        except FileNotFoundError:
+            return False  # The already completed clip can still be reused.
+
+    def reexport(self, project, filename, aspect, profile=None, progress=None):
         if aspect not in render_clips.ASPECTS:
             raise ValueError("Selecciona un formato disponible.")
+        progress = progress or render_progress.Progress()
+        progress.update("preparation")
+        progress.check()
         path = self.service._clip(project, filename)
-        duration = media_info(path, media_stamp(path))["duration"]
+        stamp = media_stamp(path)
+        details = media_info(path, stamp)
         meta = projects.read_json(path.with_suffix(".meta.json"))
-        source, start = subtitle_repair.clean_source(path, project, meta, duration)
-        options = subtitle_repair._options_for_clip(path.parent.parent, meta.get("subtitles") or {}, project)
-        frame_options = options["signature"] if aspect == "9:16" else None
+        track = meta.get("subtitles") or {}
+        base = path.parent.parent
+        options = subtitle_repair._options_for_clip(base, track, project)
+        options, inherited, _ = export_settings.Store(self.root).resolve(options, aspect=aspect, profile=profile)
+        frame_options = options["signature"]
         frame = signature.load(frame_options["template"]) if frame_options else None
-        # Reuse the original words rather than turning publication copy into subtitles.
+        with self.calendar.connect() as db:
+            row = db.execute("SELECT mark FROM clip_art WHERE project=? AND file=?", (project, filename)).fetchone()
+        saved = json.loads(row[0]) if row and row[0] else None
+        global_mark = watermark.Store(self.root)
+        existing_options = track.get("render_options") or {}
+        if (not inherited and profile is None and saved is None and aspect == details["format"]
+                and not options["brand"] and not track.get("watermark_applied")
+                and frame_options == existing_options.get("signature")
+                and options["export_profile"] == existing_options.get("export_profile", "quality")
+                and not self._changed_transcript(project, base, track)
+                and (not options["use_watermark"] or not global_mark.read()["enabled"])):
+            progress.update("verification")
+            expected = track.get("media_hash")
+            if expected:
+                if digest_for(path, stamp) != expected:
+                    raise ValueError("El MP4 existente cambió. Comprueba el archivo antes de exportar.")
+            else:
+                verify_media(path, stamp, "youtube")
+            progress.update("reuse")
+            progress.update("ready")
+            return filename
+
+        progress.update("inspection")
+        duration = details["duration"]
+        options["tighten"] = bool(track.get("tightened"))
+        span = float(meta["end"]) - float(meta["start"]) if options["tighten"] else duration
+        if options["tighten"]:
+            duration = span
+        source, start = subtitle_repair.clean_source(path, project, meta, span)
+        # Reuse original words rather than turning publication copy into subtitles.
         if project.startswith("live/"):
             cues = subtitle_quality.read_srt(path.with_suffix(".srt")) if path.with_suffix(".srt").is_file() else []
             words = [{"start": start+a, "end": start+b, "word": text} for a, b, text in cues]
         else:
-            transcript = projects.read_json(path.parent.parent / "transcript.json")
+            transcript = projects.read_json(base / "transcript.json")
             shift = start - meta["start"]
             words = [{**word, "start": word["start"]+shift, "end": word["end"]+shift}
                      for word in transcript.get("words", [])]
-        with self.calendar.connect() as db:
-            row = db.execute("SELECT mark FROM clip_art WHERE project=? AND file=?", (project, filename)).fetchone()
-        saved = json.loads(row[0]) if row and row[0] else None
         if not saved:
-            mark = watermark.Store(self.root).for_render() if not frame or frame_options["watermark"] else None
+            use_mark = options["use_watermark"] and (not frame or frame_options["watermark"])
+            mark = global_mark.for_render() if use_mark else None
         elif saved["mode"] == "none":
             mark = None
         else:
@@ -297,20 +356,43 @@ class Clips:
             if hashlib.sha256(data).hexdigest() != saved["image_id"]:
                 raise ValueError("La imagen de marca de agua cambió.")
             mark = watermark.Mark(image, watermark._dimensions(data), saved)
+        brand = branding.load_brand(options["brand"]) if options["brand"] else None
+        if not project.startswith("live/") and aspect == details["format"] and not (options["tighten"] and mark):
+            state = projects.read_project(base)
+            for key, record in (state.get("render_artifacts") or {}).items():
+                if (record.get("path") != str(path) or record.get("section") or record.get("recovery")
+                        or not isinstance(record.get("segment"), dict)):
+                    continue
+                if (export_cache.recipe(source, record["segment"], words, options, brand, mark, frame,
+                                        retain=record.get("retained", False)) == key
+                        and export_cache.verified(record, path.parent) == path):
+                    progress.update("reuse")
+                    progress.update("ready")
+                    return filename
+        segment = {"start": start, "end": start + duration, "overall": meta.get("score"),
+                   "hook": str(meta.get("title") or path.stem)}
+        key = export_cache.recipe(source, segment, words, options, brand, mark, frame)
+        with self.calendar.connect() as db:
+            cached = db.execute("SELECT record FROM clip_renders WHERE key=?", (key,)).fetchone()
+        if cached and (output := export_cache.verified(json.loads(cached[0]), path.parent, project=project)):
+            progress.update("reuse")
+            progress.update("ready")
+            return output.name
         export_id = uuid.uuid4().hex[:12]
         with tempfile.TemporaryDirectory(dir=path.parent, prefix=".clip-version-") as tmp:
             output = render_clips.render(
-                {"id": export_id, "start": start, "end": start + duration, "hook": str(meta.get("title") or path.stem)},
-                words, source, *render_clips.ffprobe_dims(source), path.parent.parent, aspect,
-                out_dir=tmp, camera_mode=options["camera_mode"],
-                layout=options["layout"] if aspect == "9:16" else "single", centers=options["centers"],
+                {"id": export_id, **segment}, words, source, *export_cache.dimensions(source, base), base, aspect,
+                out_dir=tmp, camera_mode=options["camera_mode"], brand=brand, do_tighten=options["tighten"],
+                layout=options["layout"], centers=options["centers"], loudnorm=options["loudnorm"],
                 style=options["style"], fit=options["fit"], caption=options["caption"], mark=mark,
-                **({"signature_frame": frame} if frame else {}),
+                export_profile=options["export_profile"], progress=progress, signature_frame=frame,
                 timeout=600, allow_model_download=False)
+            progress.check()
+            progress.update("promotion")
             if project.startswith("live/"):
                 from live_clips import finished_record
-                record = finished_record(projects.read_json(path.parent.parent / "live_session.json"), path) or {}
-                records = path.parent.parent / "records"
+                record = finished_record(projects.read_json(base / "live_session.json"), path) or {}
+                records = base / "records"
                 records.mkdir(exist_ok=True)
                 projects.atomic_json(records / f"{export_id}.json", {"id": export_id, **{
                     key: value for key, value in record.items() if key not in ("id", "files")},
@@ -319,4 +401,9 @@ class Clips:
                 artifact = output.with_suffix(suffix)
                 if artifact.is_file():
                     artifact.replace(path.parent / artifact.name)
+        delivered = path.parent / output.name
+        record = {"path": str(delivered), "artifacts": export_cache.artifacts(delivered)}
+        with self.calendar.connect(write=True) as db:
+            db.execute("INSERT OR REPLACE INTO clip_renders (key,record) VALUES (?,?)", (key, json.dumps(record)))
+        progress.update("ready")
         return output.name

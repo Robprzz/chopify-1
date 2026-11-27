@@ -337,3 +337,20 @@ summary.settings-heading:hover { background: #f7f9fd; border-radius: 14px; }
 #project-view .pulse-frame { display: none; }
 #batch-drafts, #growth-import { display: flex; flex-wrap: wrap; align-items: end; gap: .75rem; }
 #growth-preview { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+#export-template-form, #youtube-monitor-list, .calendar-draft-card {
+  display: grid;
+  gap: .75rem;
+}
+.calendar-draft-card + .calendar-draft-card {
+  margin-top: .75rem;
+  padding-top: .75rem;
+  border-top: 1px solid var(--border, #dbe3ef);
+}
+#youtube-monitor-view {
+  max-width: 75rem;
+}
+#youtube-monitor-list ul {
+  margin: .5rem 0 0;
+  overflow-wrap: anywhere;
+}

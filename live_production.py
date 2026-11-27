@@ -25,6 +25,7 @@ from realtime_priority import FAIR_WAIT, distribution, queue_order
 import score_clips
 import subtitle_quality as quality
 import smart_camera
+import signature
 from live_capture import safe_stderr
 
 PROFILES = {
@@ -643,8 +644,12 @@ class Pipeline:
     def _render(self, home, directory, ident, start, end, video, source, options, info):
         writer = live_clips.LiveClipWriter(home, self.root)
         staging = directory / "render"
+        options, _, _ = writer.template.resolve(options)
         brand = branding.load_brand(options["brand"]) if options["brand"] else None
-        mark = writer.watermark.for_render()
+        frame_options = options["signature"]
+        frame = signature.load(frame_options["template"]) if frame_options else None
+        use_mark = options["use_watermark"] and (not frame or frame_options["watermark"])
+        mark = writer.watermark.for_render() if use_mark else None
         with resource_slot(self.resources, self.stop):
             render_clips.render({"id": ident, "start": start, "end": end}, info["words"], source,
                                 int(video["width"]), int(video["height"]), str(home), options["aspect"],
@@ -652,6 +657,7 @@ class Pipeline:
                                 brand=brand, layout=options["layout"], centers=options["centers"], camera_mode=options.get("camera_mode", "auto"),
                                 caption=options["caption"], fit=options["fit"], facecam_box=options["facecam_box"],
                                 facecam_height=options["facecam_height"], mark=mark, retain_for_repair=True,
+                                signature_frame=frame, export_profile=options["export_profile"],
                                 timeout=600, allow_model_download=False,
                                 transcript_info={"model": MODEL if info["words"] else None,
                                                  "origin": "Whisper de la fuente Live preservada"})

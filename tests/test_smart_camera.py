@@ -112,10 +112,10 @@ def test_fallback_preserves_sources_and_revalidates_output(tmp_path, monkeypatch
 
 
 def test_explicit_split_uses_verified_pair_or_stable_fallback(tmp_path, monkeypatch):
-    path = source(tmp_path / "source.mp4", duration=1.2)
     observations = [(i / 5, [140, 505], False) for i in range(6)]
     monkeypatch.setattr(render_clips, "detect_track", lambda *_: observations)
     for name, expected in (("pair", "split"), ("single", "stable")):
+        path = source(tmp_path / f"{name}.mp4", duration=1.2)
         out = render_clips.render({"start": 0, "end": 1.2}, [], path, 640, 360, tmp_path, "9:16",
                                   out_dir=tmp_path / name, camera_mode="split", timeout=45)
         assert smart_camera.saved_motion(out)["applied"] == expected

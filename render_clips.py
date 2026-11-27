@@ -25,6 +25,7 @@ import subprocess
 import math
 import tempfile
 import uuid
+from functools import lru_cache
 from pathlib import Path
 
 import shutil
@@ -35,6 +36,7 @@ import tighten  # local module: filler/silence removal
 import watermark
 import signature
 import smart_camera
+import render_progress
 from unicode_io import configure_utf8
 
 # aspect -> (target_w, target_h, caption_font_size, caption_margin_v)
@@ -287,6 +289,13 @@ def sanitize(text, maxlen=70):
 
 
 def ffprobe_dims(path):
+    from export_cache import identity
+
+    return _probe_dimensions(*identity(path))
+
+
+@lru_cache(maxsize=128)
+def _probe_dimensions(path, _size, _mtime, _ctime):
     out = subprocess.run(
         ["ffprobe", "-v", "error", "-select_streams", "v:0",
          "-show_entries", "stream=width,height:stream_side_data=rotation", "-of", "json", str(path)],
@@ -377,6 +386,22 @@ def detect_track(source, start, dur, W, workdir, allow_download=True, timeout=No
                 cap.release()
     except (AttributeError, OSError, cv2.error, subprocess.SubprocessError):
         return []
+
+
+def cached_track(source, start, duration, width, workdir, allow_download, timeout):
+    from export_cache import analysis, identity
+
+    def detect():
+        return detect_track(source, start, duration, width, workdir, allow_download, timeout)
+
+    if duration > 300 or not Path(source).is_file():
+        return detect()
+    model = Path(workdir).parent / "yunet.onnx"
+    if allow_download and not model.exists():
+        return detect()
+    model_identity = identity(model) if model.is_file() else "haar"
+    return analysis(workdir, "camera", [identity(source), start, duration, width, model_identity, DET_FPS, DET_W],
+                    detect, cache_empty=False)
 
 
 def ass_time(t):
@@ -602,7 +627,13 @@ def _render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAU
            layout="single", centers=(0.25, 0.75), caption=None,
            source_offset=0.0, fit="cover", facecam_box=None,
            facecam_height=0.34, mark=None, transcript_info=None, timeout=None, allow_model_download=True,
-           retain_for_repair=False, camera_mode="auto", *, scratch, burn_subtitles=True, signature_frame=None):
+           retain_for_repair=False, camera_mode="auto", *, scratch, burn_subtitles=True, signature_frame=None, export_profile="quality", progress=None):
+    from export_settings import PROFILES
+
+    progress = progress or render_progress.Progress()
+    preset, crf = PROFILES[export_profile]
+    progress.update("filters")
+    progress.check()
     out_dir = (Path(out_dir) if out_dir else default_out()).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     source = Path(source).resolve()
@@ -691,6 +722,7 @@ def _render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAU
     else:
         write_caption(margin_v, caption)
 
+    progress.update("camera")
     vertical = aspect == "9:16"
     needs_track = cw < W * .95 and fit == "cover"
     motion = framing = None
@@ -711,7 +743,7 @@ def _render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAU
         if manual_split:
             layout = "split"
         elif layout == "single" and (needs_track or auto_split) and camera_mode != "stable":
-            observations = detect_track(render_src, local_start, dur, W, workdir, False, timeout)
+            observations = cached_track(render_src, local_start, dur, W, workdir, False, timeout)
             framing = smart_camera.plan(observations, W, cw, dur)
             motion.update(framing.metrics())
             if camera_mode in {"auto", "split"} and framing.pairs:
@@ -723,10 +755,11 @@ def _render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAU
                 smart_camera.write_commands(framing.points, W, cw, scratch / "_crop.cmd", dur)
     if not vertical and layout == "single" and needs_track:
         framing = smart_camera.plan(
-            detect_track(render_src, local_start, dur, W, workdir, allow_model_download, timeout), W, cw, dur)
+            cached_track(render_src, local_start, dur, W, workdir, allow_model_download, timeout), W, cw, dur)
         if framing.reliable:
             smart_camera.write_commands(framing.points, W, cw, scratch / "_crop.cmd", dur)
 
+    progress.update("filters")
     blur_w, blur_h = (tw // 8) * 2, (th // 8) * 2
     stable = (f"[0:v]split=2[bg][fg];[bg]crop={cw}:{ch}:{x0}:{y0},"
               f"scale={blur_w}:{blur_h}:flags=fast_bilinear,boxblur=6:1,"
@@ -808,7 +841,7 @@ def _render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAU
             cmd += ["-r", str(rate), "-fps_mode", "cfr"]
         if timeout is not None or vertical:
             cmd += ["-threads", "2"]
-        return cmd + ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+        return cmd + ["-c:v", "libx264", "-preset", preset, "-crf", crf, "-pix_fmt", "yuv420p",
                       "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", str(destination)]
 
     with tempfile.TemporaryDirectory(prefix=".render-", dir=out_dir) as staging:
@@ -820,8 +853,9 @@ def _render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAU
             paths[str(temporary)] = "<MP4 temporal>"
             print(">", " ".join(paths.get(arg, arg) for arg in cmd), flush=True)
             try:
-                result = subprocess.run(cmd, check=True, cwd=scratch, stderr=subprocess.PIPE, encoding="utf-8",
-                                        errors="backslashreplace", timeout=timeout or max(60, min(7200, dur * 12 + 60)))
+                progress.update("encode")
+                result = render_progress.encode(cmd, scratch, timeout or max(60, min(7200, dur * 12 + 60)),
+                                                dur, progress)
                 if result.stderr:
                     print(sanitized_stderr(result.stderr, paths), file=sys.stderr, flush=True)
             except subprocess.CalledProcessError as exc:
@@ -846,6 +880,7 @@ def _render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAU
                 raise RenderFailure("No se pudo validar el archivo ASS. Consulta el registro.", "subtitles") from exc
         encode(vf)
         if motion is not None and not preview:
+            progress.update("verification")
             source_spans = None
 
             def verify():
@@ -885,64 +920,82 @@ def _render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAU
                     raise
                 motion["fallback"] = {"reason": str(exc), "intervals": exc.intervals}
                 encode(stable)
+                progress.update("verification")
                 mode = "stable"
                 motion.update(verify())
             if mode == "stable" and camera_mode == "smart" and "fallback" not in motion:
                 motion["fallback"] = {"reason": motion.get("reason", "encuadre sin sujeto verificable")}
             motion["applied"] = mode
-        temporary.replace(out)
-    srt = captions.write_srt(cap_words, start, start + dur, out.with_suffix(".srt"), groups=groups)
-    ass = scratch / "_caption.ass"
-    track = None
-    if not preview:
-        if not burn_subtitles:
-            caption_error = "Exportación autorizada sin subtítulos incrustados."
-        from subtitle_quality import artifact_hash
-        ass_output = out.with_suffix(".ass")
-        if burn_subtitles:
-            shutil.copyfile(ass, ass_output)
-        track = {
-            "version": captions.TIMELINE_VERSION, "duration": dur,
-            "words": sum(len(captions.cue_text(group).split()) for group in groups),
-            "timing": {k: resolved[k] for k in captions.TIMING_FIELDS},
-            "srt_hash": artifact_hash(srt), "ass_hash": artifact_hash(ass_output) if burn_subtitles else None,
-            "media_hash": artifact_hash(out), "tightened": bool(do_tighten), "burned_in": burn_subtitles,
-            "render_options": {"style": style, "fit": fit, "layout": requested_layout, "centers": requested_centers,
-                               "camera_mode": camera_mode,
-                               "caption": caption, "facecam_box": facecam_box, "facecam_height": facecam_height,
-                               **({"signature": {"template": signature.TEMPLATE_ID, "watermark": bool(mark)}}
-                                  if signature_frame else {})},
-            **(transcript_info or {}),
-            **({"caption_error": caption_error} if caption_error else {}),
-        }
+        progress.check()
+        staged = Path(staging) / out.name
+        temporary.replace(staged)
+        progress.update("metadata")
+        srt = captions.write_srt(cap_words, start, start + dur, staged.with_suffix(".srt"), groups=groups)
+        ass = scratch / "_caption.ass"
+        track = None
+        if not preview:
+            if not burn_subtitles:
+                caption_error = "Exportación autorizada sin subtítulos incrustados."
+            from subtitle_quality import artifact_hash
+            ass_output = staged.with_suffix(".ass")
+            if burn_subtitles:
+                shutil.copyfile(ass, ass_output)
+            track = {
+                "version": captions.TIMELINE_VERSION, "duration": dur,
+                "words": sum(len(captions.cue_text(group).split()) for group in groups),
+                "timing": {k: resolved[k] for k in captions.TIMING_FIELDS},
+                "srt_hash": artifact_hash(srt), "ass_hash": artifact_hash(ass_output) if burn_subtitles else None,
+                "media_hash": artifact_hash(staged), "tightened": bool(do_tighten), "burned_in": burn_subtitles,
+            "watermark_applied": bool(mark),
+                "render_options": {"style": style, "fit": fit, "layout": requested_layout, "centers": requested_centers,
+                                   "camera_mode": camera_mode, "export_profile": export_profile,
+                                   "caption": caption, "facecam_box": facecam_box, "facecam_height": facecam_height,
+                                   **({"signature": {"template": signature.TEMPLATE_ID, "watermark": bool(mark)}}
+                                      if signature_frame else {})},
+                **(transcript_info or {}),
+                **({"caption_error": caption_error} if caption_error else {}),
+            }
 
-    for tmpf in (scratch / "_caption.ass", scratch / "_crop.cmd"):
-        try:
-            tmpf.unlink()
-        except OSError:
-            pass
+        for tmpf in (scratch / "_caption.ass", scratch / "_crop.cmd"):
+            try:
+                tmpf.unlink()
+            except OSError:
+                pass
 
-    if do_tighten:
-        try:
-            render_src.unlink()
-        except OSError:
-            pass
+        if do_tighten:
+            try:
+                render_src.unlink()
+            except OSError:
+                pass
 
-    if preview:
-        # drafts skip the poster and metadata - they exist to be eyeballed fast
-        print(f"SAVED {out}  ({aspect} {tw}x{canvas_h} preview, {mode})", flush=True)
+        def promote():
+            progress.check()
+            progress.update("write")
+            for sidecar in (".srt", ".ass", ".png", ".meta.json"):
+                item = staged.with_suffix(sidecar)
+                if item.is_file():
+                    item.replace(out.with_suffix(sidecar))
+            staged.replace(out)
+
+        if preview:
+            promote()
+            # drafts skip the poster and metadata - they exist to be eyeballed fast
+            print(f"SAVED {out}  ({aspect} {tw}x{canvas_h} preview, {mode})", flush=True)
+            progress.update("ready")
+            return out
+
+        # poster: a representative still saved next to the clip (<clip>.png)
+        poster = staged.with_suffix(".png")
+        subprocess.run(["ffmpeg", "-y", "-ss", f"{dur * 0.4:.2f}", "-i", str(staged),
+                        "-frames:v", "1", "-q:v", "2", str(poster)],
+                       check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=timeout)
+        meta_path = write_meta(seg, staged, track, motion)
+        promote()
+        progress.update("ready")
+
+        print(f"SAVED {out}  ({aspect} {tw}x{canvas_h}, {mode})  "
+              f"+ poster {poster.name} + {meta_path.name}", flush=True)
         return out
-
-    # poster: a representative still saved next to the clip (<clip>.png)
-    poster = out.with_suffix(".png")
-    subprocess.run(["ffmpeg", "-y", "-ss", f"{dur * 0.4:.2f}", "-i", str(out),
-                    "-frames:v", "1", "-q:v", "2", str(poster)],
-                   check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=timeout)
-    meta_path = write_meta(seg, out, track, motion)
-
-    print(f"SAVED {out}  ({aspect} {tw}x{canvas_h}, {mode})  "
-          f"+ poster {poster.name} + {meta_path.name}", flush=True)
-    return out
 
 
 def main():

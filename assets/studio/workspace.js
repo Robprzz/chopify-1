@@ -2,13 +2,13 @@
 
 const workspaceViews = {
   "home-view": "show-home", "live-view": "show-live", "clips-view": "show-clips-library",
-  "new-view": "show-projects", "project-view": "show-projects", "projects-view": "show-projects",
+  "youtube-monitor-view": "show-projects", "new-view": "show-projects", "project-view": "show-projects", "projects-view": "show-projects",
   "clip-editor-view": "show-clips-library", "automation-view": "show-settings", "ai-settings-view": "show-settings",
   "trash-view": "show-settings",
   "calendar-view": "show-publications", "publications-view": "show-publications", "statistics-view": "show-statistics",
   "settings-view": "show-settings", "system-view": "show-settings", "watermark-view": "show-settings", "telegram-view": "show-settings",
 };
-const workspaceEntry = {...workspaceViews, "automation-view": "show-automation", "ai-settings-view": "show-ai-settings", "trash-view": "show-trash", "new-view": "new-project", "publications-view": "calendar-tiktok",
+const workspaceEntry = {...workspaceViews, "youtube-monitor-view": "show-youtube-monitor", "automation-view": "show-automation", "ai-settings-view": "show-ai-settings", "trash-view": "show-trash", "new-view": "new-project", "publications-view": "calendar-tiktok",
   "system-view": "show-system", "watermark-view": "show-watermark", "telegram-view": "show-telegram"};
 const workspaceStates = {generated:"Nuevo clip detectado", ready:"Lista para revisión", review:"Revisión pendiente",
   rejected:"Rechazado", failed:"Fallido", exported:"Exportado", cancelled:"Cancelado",
@@ -462,6 +462,7 @@ function settingsDisplay(category, view) {
     $("#settings-tiktok-controls").append($("#tiktok-account-controls"));
     refreshPublications().catch(error => notice(error.message,true));
   }
+  if (category === "appearance" && typeof refreshExportTemplate === "function") refreshExportTemplate();
   if (category === "storage") api("/api/system/status").then(data => {
     $("#settings-disk-path").textContent = data.projects_dir || "Detalles de ocupación por elemento en la papelera.";
   }).catch(() => {});

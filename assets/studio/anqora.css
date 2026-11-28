@@ -354,3 +354,12 @@ summary.settings-heading:hover { background: #f7f9fd; border-radius: 14px; }
   margin: .5rem 0 0;
   overflow-wrap: anywhere;
 }
+
+#stop-project {
+  background: #a8202c;
+  border-color: #a8202c;
+  color: #fff;
+}
+#stop-project:not(:disabled):hover {
+  background: #861926;
+}

@@ -9,9 +9,9 @@ No external/paid APIs. CPU-friendly (int8). Usage:
 """
 import sys
 import json
+import studio_json
+import project_cancel
 import argparse
-import os
-import subprocess
 import tempfile
 import shutil
 from urllib.parse import urlparse
@@ -26,7 +26,7 @@ OVERLAP_SECONDS = 30
 
 def run(cmd):
     print(">", " ".join(str(c) for c in cmd), flush=True)
-    subprocess.run(cmd, env=utf8_environment(), check=True)
+    project_cancel.run(cmd, env=utf8_environment(), check=True)
 
 
 def resolve_source(source, workdir, *, public_only=False):
@@ -114,15 +114,10 @@ def transcribe(video, workdir, model_size, device, compute_type, duration=None,
     return out
 
 
-def _atomic_json(path, data):
-    path = Path(path)
-    temp = path.with_suffix(path.suffix + ".tmp")
-    temp.write_text(json.dumps(data, ensure_ascii=False, indent=2),
-                    encoding="utf-8")
-    os.replace(temp, path)
-
+_atomic_json = studio_json.write
 
 def _load_model(model_size, device, compute_type):
+    project_cancel.check()
     from faster_whisper import WhisperModel
     print(f"Loading faster-whisper model={model_size} device={device} "
           f"compute={compute_type} (first run downloads the model)...", flush=True)
@@ -130,11 +125,18 @@ def _load_model(model_size, device, compute_type):
 
 
 def _transcribe_media(model, media, offset=0.0):
+    project_cancel.check()
     segments, info = model.transcribe(
         str(media), word_timestamps=True, vad_filter=True)
     language = getattr(info, "language", "")
     seg_list, words = [], []
-    for seg in segments:
+    iterator = iter(segments)
+    while True:
+        project_cancel.check()
+        seg = next(iterator, None)
+        if seg is None:
+            break
+        project_cancel.check()
         start = float(seg.start) + offset
         end = float(seg.end) + offset
         seg_list.append({"start": start, "end": end, "text": seg.text})
@@ -144,6 +146,7 @@ def _transcribe_media(model, media, offset=0.0):
                 "start": float(w.start) + offset,
                 "end": float(w.end) + offset,
             })
+    project_cancel.check()
     info_duration = float(getattr(info, "duration", 0.0) or 0.0)
     print(f"Detected language: {language} "
           f"(p={getattr(info, 'language_probability', 0.0):.2f}), audio {info_duration:.1f}s", flush=True)
@@ -153,7 +156,7 @@ def _transcribe_media(model, media, offset=0.0):
 
 
 def _probe_duration(path):
-    result = subprocess.run(
+    result = project_cancel.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
          "-of", "default=nw=1:nk=1", str(path)],
         capture_output=True, encoding="utf-8", errors="backslashreplace", check=True)
@@ -163,7 +166,7 @@ def _probe_duration(path):
 def _extract_chunk(source, start, end, path):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run([
+    project_cancel.run([
         "ffmpeg", "-v", "error", "-y",
         "-ss", f"{float(start):.3f}", "-t", f"{float(end) - float(start):.3f}",
         "-i", str(source), "-vn", "-ac", "1", "-ar", "16000",
@@ -271,29 +274,32 @@ def transcribe_chunked(video, workdir, model_size, device, compute_type,
     part_dir = workdir / "audio_parts"
     part_dir.mkdir(parents=True, exist_ok=True)
     for done, (index, start, end) in enumerate(bounds, 1):
+        project_cancel.check()
         part_path = workdir / (f"transcript.part{index:03d}.json")
         part = _read_part(part_path) if resume else None
         if not _part_matches(part, index, start, end, identity):
             wav = part_dir / f"part{index:03d}.wav"
-            _extract_chunk(source_path, start, end, wav)
-            (seg_list, words, language, _), metrics = runtime.run(
-                lambda model: _transcribe_media(model, wav, offset=start))
-            part = {
-                "version": TRANSCRIPT_VERSION,
-                "index": index,
-                "start": start,
-                "end": end,
-                "identity": identity,
-                "whisper_runtime": metrics,
-                "language": language,
-                "segments": seg_list,
-                "words": words,
-            }
-            _atomic_json(part_path, part)
             try:
-                wav.unlink()
-            except OSError:
-                pass
+                _extract_chunk(source_path, start, end, wav)
+                (seg_list, words, language, _), metrics = runtime.run(
+                    lambda model: _transcribe_media(model, wav, offset=start))
+                part = {
+                    "version": TRANSCRIPT_VERSION,
+                    "index": index,
+                    "start": start,
+                    "end": end,
+                    "identity": identity,
+                    "whisper_runtime": metrics,
+                    "language": language,
+                    "segments": seg_list,
+                    "words": words,
+                }
+                _atomic_json(part_path, part)
+            finally:
+                try:
+                    wav.unlink(missing_ok=True)
+                except OSError:
+                    pass
         parts.append(part)
         if progress:
             progress(done, len(bounds))

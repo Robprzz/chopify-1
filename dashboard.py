@@ -9,7 +9,6 @@ from pathlib import Path
 import re
 import secrets
 import os
-import signal
 import socket
 import sqlite3
 import subprocess
@@ -30,6 +29,9 @@ import render_progress
 import youtube_monitor
 import live_production
 import projects
+import project_cancel
+import studio_json
+from local_process import use_resources
 import production
 import publishing_calendar
 import instagram_import
@@ -471,7 +473,7 @@ class Studio:
                         return project, True
         return projects.create_project(self.root, source, options, instagram=authorization), False
 
-    def enqueue(self, project_id, action, preview=False, pick=None, *, output=None, recovery=None):
+    def enqueue(self, project_id, action, preview=False, pick=None, *, output=None, recovery=None, resuming=False):
         if action not in {"prepare", "render", "all"}:
             raise ValueError("Unknown action.")
         if not isinstance(preview, bool):
@@ -480,10 +482,12 @@ class Studio:
             raise ValueError("Select numbered clips, for example 1,3,5.")
         with self.lock:
             path = projects.project_path(self.root, project_id)
-            if self.busy(project_id):
-                raise ValueError("This project is already queued or running.")
+            if self.closing or self.busy(project_id):
+                raise ValueError("El proyecto ya está activo o Studio se está cerrando.")
+            if path.resolve() != path:
+                raise ValueError("La carpeta de proyecto debe ser local.")
             state = projects.read_project(path)
-            if recovery is not None:
+            if recovery is not None and not resuming:
                 pending = state.get("render_recovery") or {}
                 if recovery not in {"stable", "subtitles", "watermark"} or pending.get("alternative") != recovery:
                     raise ValueError("La alternativa de render ya no está disponible.")
@@ -496,12 +500,39 @@ class Studio:
                         and state["stage"] in instagram_import.DOWNLOAD_STAGES and state.get("error")):
                     state.setdefault("instagram_errors", []).append({"at": state["updated"], "error": state["error"]})
             (path / ".render-cancel").unlink(missing_ok=True)
-            state.update(status="queued", stage=action, error=None)
+            previous = state.get("job")
+            if previous:
+                project_cancel.Job(path, previous["id"]).clear()
+            state.update(status="queued", stage=action, error=None,
+                         job={"id": secrets.token_hex(16), "action": action, "preview": preview,
+                              "pick": pick, "recovery": recovery})
             projects.save_project(path, state)
             future = self.executor.submit(self._run, path, action, preview, pick, recovery)
             self.futures[project_id] = future
             if action != "prepare" and not preview and not recovery:
                 future.add_done_callback(lambda _: self._editorial_exports(project_id, path))
+            return state["job"]
+
+    def stop_project(self, project_id, path, state):
+        if path.resolve() != path:
+            raise ValueError("La carpeta de proyecto debe ser local.")
+        future = self.futures.get(project_id)
+        if future is None or future.done() or state["status"] not in {"queued", "running"}:
+            raise ValueError("El proyecto ya terminó o no tiene una tarea activa.")
+        job = project_cancel.Job(path, state["job"]["id"])
+        if future.cancel():
+            state.update(status="cancelled", error=project_cancel.MESSAGE)
+            projects.save_project(path, state)
+            return "cancelled"
+        job.request()
+        return "cancelling"
+
+    def resume_project(self, project_id, state):
+        job = state.get("job")
+        if state["status"] not in {"cancelled", "interrupted"} or not job:
+            raise ValueError("El proyecto no tiene una ejecución que se pueda reanudar.")
+        return self.enqueue(project_id, job["action"], job["preview"], job["pick"],
+                            recovery=job["recovery"], resuming=True)
 
     def _editorial_exports(self, project_id, path):
         try:
@@ -514,7 +545,10 @@ class Studio:
             self._production_clip(project_id, Path(output).name)
 
     def _run(self, path, action, preview, pick, recovery=None):
+        state = projects.read_project(path)
+        job = project_cancel.Job(path, state["job"]["id"])
         cmd = [sys.executable, "-X", "utf8", str(HERE / "chopify.py"), "--project", str(path),
+               "--project-job", state["job"]["id"],
                "--action", action, "--out", str(path / ("previews" if preview else "clips"))]
         # Studio jobs run unattended: never wait for interactive CLI questions.
         cmd.extend(["--no-input", "--automation-export"])
@@ -525,11 +559,10 @@ class Studio:
         if pick:
             cmd += ["--clips", pick]
         try:
-            with self.resources, (path / "job.log").open("a", encoding="utf-8") as log:
+            with use_resources(self.resources, job), (path / "job.log").open("a", encoding="utf-8") as log:
                 print(f"\n--- {action} {time.strftime('%Y-%m-%d %H:%M:%S')} ---", file=log, flush=True)
                 with self.lock:
-                    if self.closing:
-                        return
+                    job.check()
                     child = subprocess.Popen(cmd, cwd=HERE, stdin=subprocess.DEVNULL, stdout=log,
                                              stderr=subprocess.STDOUT, env=utf8_environment(),
                                              start_new_session=os.name != "nt")
@@ -539,15 +572,23 @@ class Studio:
                     self.processes.discard(child)
             if code:
                 state = projects.read_project(path)
-                state.update(status="interrupted" if self.closing else ("review" if state.get("stage") == "render recovery" else
-                                 "cancelled" if state["status"] == "cancelled" else "failed"),
-                             error="Studio se cerró. Reanuda el proyecto para continuar." if self.closing else (
-                                 state.get("error") or "Job failed. Open the job log for setup or input details."))
+                if state["status"] in {"queued", "running"} and job.requested():
+                    state.update(status="cancelled", error=project_cancel.MESSAGE)
+                elif state["status"] != "cancelled":
+                    state.update(status="interrupted" if self.closing else (
+                        "review" if state.get("stage") == "render recovery" else "failed"),
+                        error=state.get("error") or "El proceso no terminó correctamente. Consulta el registro.")
                 projects.save_project(path, state)
+        except project_cancel.Cancelled as exc:
+            state = projects.read_project(path)
+            state.update(status="cancelled", error=str(exc))
+            projects.save_project(path, state)
         except Exception as exc:
             state = projects.read_project(path)
             state.update(status="failed", error=str(exc))
             projects.save_project(path, state)
+        finally:
+            job.clear()
 
     def start_live(self, source, options, brief_text=None):
         import live
@@ -717,7 +758,13 @@ class Studio:
                 return
             self.closed = self.closing = True
             sessions = list(self.live_sessions.values())
-            children = list(self.processes)
+            for ident, future in list(self.futures.items()):
+                if not future.done():
+                    path = projects.project_path(self.root, ident)
+                    try:
+                        self.stop_project(ident, path, projects.read_project(path))
+                    except (OSError, ValueError, KeyError):
+                        continue
         self.channels.close()
         for cancel in self.clip_cancels.values():
             cancel.set()
@@ -733,17 +780,6 @@ class Studio:
             wait_export = getattr(session, "wait_for_export", None)
             if wait_export:
                 wait_export()
-        for child in children:
-            if child.poll() is not None:
-                continue
-            if os.name == "nt":
-                from ingest import _kill_tree
-                _kill_tree(child)
-            else:
-                try:
-                    os.killpg(child.pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
         self.executor.shutdown(wait=True, cancel_futures=True)
         self.production.close()
         self.editorial.close()
@@ -769,7 +805,7 @@ class Handler(BaseHTTPRequestHandler):
         super().end_headers()
 
     def send_json(self, data, status=200):
-        body = json.dumps(data, ensure_ascii=False, allow_nan=False).encode("utf-8")
+        body = studio_json.dumps(data).encode("utf-8")
         self.send_content(body, "application/json; charset=utf-8", status)
 
     def send_content(self, body, content_type, status=200):
@@ -909,7 +945,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_content(self.app.watermark.preview(parts[1]), "image/png")
             if len(parts) == 3 and parts[:2] == ["api", "projects"]:
                 data = project_detail(self.app.root, parts[2])
-                data["busy"] = self.app.busy(parts[2])
+                with self.app.lock:
+                    data["busy"] = self.app.busy(parts[2])
+                    state = projects.read_project(projects.project_path(self.app.root, parts[2]))
+                    job = state.get("job")
+                    data["project"] = state
+                    data["can_stop"] = bool(data["busy"] and job and state["status"] in {"queued", "running"})
+                    data["can_resume"] = bool(not data["busy"] and job and state["status"] in {"cancelled", "interrupted"})
+                    if data["can_stop"] and project_cancel.Job(projects.project_path(self.app.root, parts[2]), job["id"]).requested():
+                        state["status"] = "cancelling"
                 return self.send_json(data)
             if len(parts) == 5 and parts[:2] == ["media", "live"] and parts[3] == "clips":
                 from live_clips import live_clip_path
@@ -1140,13 +1184,20 @@ class Handler(BaseHTTPRequestHandler):
                     if asset_lifecycle.hidden(self.app.root, project_id):
                         raise FileNotFoundError
                     state = projects.read_project(path)
+                    if action in {"stop", "resume"}:
+                        execution = (state.get("job") or {}).get("id")
+                        if not execution or body.get("job") != execution:
+                            raise publishing_calendar.Conflict("La ejecución cambió. Actualiza el estado del proyecto.")
+                        if action == "stop":
+                            return self.send_json({"status": self.app.stop_project(project_id, path, state)}, 202)
+                        return self.send_json({"ok": True, "job": self.app.resume_project(project_id, state)}, 202)
                     if action == "retry-import":
                         if (not state.get("instagram_import") or path.resolve() != path
                                 or state["status"] not in instagram_import.RETRY_STATUSES
                                 or state["stage"] not in instagram_import.DOWNLOAD_STAGES):
                             raise ValueError("Este proyecto no tiene una descarga de Instagram pendiente de reintento.")
-                        self.app.enqueue(project_id, "prepare")
-                        return self.send_json({"ok": True}, 202)
+                        job = self.app.enqueue(project_id, "prepare")
+                        return self.send_json({"ok": True, "job": job}, 202)
                     if action == "cancel-render":
                         if not self.app.busy(project_id) or not (state["stage"] in {"render", "render preview"} or
                                 str(state["stage"]).startswith(("render ", "preview "))):
@@ -1235,9 +1286,10 @@ class Handler(BaseHTTPRequestHandler):
                             if (body.get("action") != "render" or not isinstance(output, dict)
                                     or output.keys() - {"aspect", "layout", "camera_mode", "export_profile"}):
                                 raise ValueError("Configuración de exportación no válida.")
-                            self.app.enqueue(project_id, "render", body.get("preview", False), body.get("pick"), output=output)
+                            job = self.app.enqueue(project_id, "render", body.get("preview", False), body.get("pick"), output=output)
                         else:
-                            self.app.enqueue(project_id, body.get("action", "prepare"), body.get("preview", False), body.get("pick"))
+                            job = self.app.enqueue(project_id, body.get("action", "prepare"), body.get("preview", False), body.get("pick"))
+                        return self.send_json({"ok": True, "job": job})
                     else:
                         return self.send_json({"error": "Not found."}, 404)
                     return self.send_json({"ok": True})

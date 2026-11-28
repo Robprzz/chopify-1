@@ -7,6 +7,7 @@ import math
 import os
 from pathlib import Path
 import re
+import project_cancel
 import socket
 import ssl
 import subprocess
@@ -257,6 +258,7 @@ def import_video(url, folder, limits, progress):
     deadline = time.monotonic() + 300
 
     def cancel():
+        project_cancel.check()
         if (folder / CANCEL_FILE).exists():
             raise Cancelled("Importación de Instagram cancelada.")
         if time.monotonic() > deadline:

@@ -11,6 +11,8 @@ import json
 import math
 from pathlib import Path
 import subprocess
+import project_cancel
+import studio_json
 import zipfile
 
 import cv2
@@ -214,30 +216,32 @@ def extract_features(source, start, end):
         "-pix_fmt", "rgb24", "-f", "rawvideo", "-",
     ]
     try:
-        process = subprocess.Popen(
+        process = project_cancel.spawn(
             command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     except (OSError, ValueError):
         return None
-    builder = _VisualBuilder()
-    leftover = b""
-    try:
-        assert process.stdout is not None
-        while True:
-            block = process.stdout.read(READ_BYTES)
-            if not block:
-                break
-            leftover += block
-            while len(leftover) >= FRAME_BYTES:
-                frame = np.frombuffer(
-                    leftover[:FRAME_BYTES], dtype=np.uint8
-                ).reshape(FRAME_HEIGHT, FRAME_WIDTH, 3)
-                builder.add(frame)
-                leftover = leftover[FRAME_BYTES:]
-        code = process.wait()
-    finally:
-        if process.poll() is None:
-            process.kill()
-            process.wait()
+    with project_cancel.watch(process):
+        builder = _VisualBuilder()
+        leftover = b""
+        try:
+            assert process.stdout is not None
+            while True:
+                project_cancel.check()
+                block = process.stdout.read(READ_BYTES)
+                if not block:
+                    break
+                leftover += block
+                while len(leftover) >= FRAME_BYTES:
+                    frame = np.frombuffer(
+                        leftover[:FRAME_BYTES], dtype=np.uint8
+                    ).reshape(FRAME_HEIGHT, FRAME_WIDTH, 3)
+                    builder.add(frame)
+                    leftover = leftover[FRAME_BYTES:]
+            code = process.wait()
+        finally:
+            if process.poll() is None:
+                project_cancel.terminate(process, grouped=project_cancel.active())
+                process.wait()
     if code != 0 or builder.frames == 0:
         return None
     return builder.finish(start)
@@ -400,8 +404,7 @@ def _load_baseline(path, identity):
 def _save_baseline(path, identity, baseline, duration):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_suffix(path.suffix + ".tmp")
-    temp.write_text(json.dumps({
+    studio_json.write(path, {
         "version": FEATURE_VERSION,
         "identity": str(identity),
         "duration": round(float(duration), 3),
@@ -410,8 +413,7 @@ def _save_baseline(path, identity, baseline, duration):
         "cut_rate": round(baseline.cut_rate, 4),
         "facecam_norm": round(baseline.facecam_norm, 4),
         "samples": baseline.samples,
-    }, ensure_ascii=False, indent=2), encoding="utf-8")
-    temp.replace(path)
+    })
 
 
 def sample_baseline(source, workdir, duration):

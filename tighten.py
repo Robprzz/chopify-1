@@ -9,6 +9,7 @@ No paid APIs, no extra dependencies. Used by render_clips.py --tighten.
 """
 import re
 import subprocess
+import project_cancel
 from pathlib import Path
 
 FILLER_TOKENS = {"um", "uh", "uhh", "umm", "erm", "er", "hmm", "mmm", "mm", "ah", "eh"}
@@ -98,6 +99,7 @@ def apply_cuts(source, keeps, clip_start, out_path, crf=18, source_offset=0.0):
     ``clip_start`` stays a global source time; keeps are cut from the local
     section whose first frame is ``source_offset``.
     """
+    run = project_cancel.run if project_cancel.active() else subprocess.run
     out_path = Path(out_path)
     tmp = out_path.parent / "_tight_parts"
     tmp.mkdir(parents=True, exist_ok=True)
@@ -106,7 +108,7 @@ def apply_cuts(source, keeps, clip_start, out_path, crf=18, source_offset=0.0):
         for i, (a, b) in enumerate(keeps):
             part = tmp / f"part_{i:03d}.mp4"
             seek = max(0.0, clip_start + a - float(source_offset))
-            subprocess.run(
+            run(
                 ["ffmpeg", "-y", "-ss", f"{seek:.3f}", "-i", str(source),
                  "-t", f"{b - a:.3f}", "-c:v", "libx264", "-preset", "veryfast",
                  "-crf", str(crf), "-c:a", "aac", "-b:a", "160k", str(part)],
@@ -115,7 +117,7 @@ def apply_cuts(source, keeps, clip_start, out_path, crf=18, source_offset=0.0):
         lst = tmp / "list.txt"
         lst.write_text("".join(f"file '{p.as_posix()}'\n" for p in parts),
                        encoding="utf-8")
-        subprocess.run(
+        run(
             ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(lst),
              "-c", "copy", str(out_path)],
             check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

@@ -392,7 +392,7 @@ function updateBrands(selected = "") {
 const projectLabels = {
   new: "Nuevo", waiting: "En espera", queued: "En cola", running: "En proceso",
   complete: "Completado", "render recovery": "Alternativa disponible", interrupted: "Interrumpido", failed: "Fallido",
-  "instagram download": "Descarga de Instagram", cancelled: "Cancelado",
+  "instagram download": "Descarga de Instagram", cancelling: "Cancelando", cancelled: "Cancelado",
   error: "Error", ready: "Listo", prepare: "Preparación", render: "Exportación",
   "render incomplete": "Exportación parcial", "rendered": "Exportado", review: "En revisión",
 };
@@ -456,9 +456,30 @@ $("#render-recovery").addEventListener("click",safe(async () => {
   const detail = await api(`/api/projects/${state.id}`);
   if (detail.project.id === state.id) { state.detail = detail; updateStatus(detail); }
 }));
-$("#cancel-project-render").addEventListener("click", safe(async () => {
-  await api(`/api/projects/${state.id}/cancel-render`, {});
-  notice("Cancelación solicitada. Se conservan los archivos ya terminados.");
+$("#stop-project").addEventListener("click", safe(async () => {
+  const id = state.id, button = $("#stop-project");
+  button.disabled = true;
+  try {
+    const result = await api("/api/projects/" + id + "/stop", {job:state.detail.project.job?.id});
+    if (id === state.id && state.detail.busy) {
+      state.detail.project.status = result.status;
+      updateStatus(state.detail);
+    }
+  } catch (error) {
+    if (id === state.id) button.disabled = false;
+    throw error;
+  }
+}));
+$("#resume-project").addEventListener("click", safe(async () => {
+  const id = state.id;
+  const result = await api("/api/projects/" + id + "/resume", {job:state.detail.project.job?.id});
+  if (id !== state.id) return;
+  state.detail.project.job = result.job;
+  state.detail.busy = state.detail.can_stop = true;
+  state.detail.can_resume = false;
+  state.detail.project.status = "queued";
+  state.detail.project.error = null;
+  updateStatus(state.detail);
 }));
 $("#cancel-instagram").addEventListener("click", safe(async () => {
   await api(`/api/projects/${state.id}/cancel-import`, {});
@@ -470,9 +491,11 @@ $("#retry-instagram").addEventListener("click", safe(async () => {
   const button = $("#retry-instagram");
   button.disabled = true;
   try {
-    await api(`/api/projects/${id}/retry-import`, {});
+    const result = await api(`/api/projects/${id}/retry-import`, {});
     if (state.id !== id) return;
-    state.detail.busy = state.busy = true;
+    state.detail.project.job = result.job;
+    state.detail.busy = state.detail.can_stop = state.busy = true;
+    state.detail.can_resume = false;
     state.detail.project.status = "queued";
     state.detail.project.stage = "prepare";
     state.detail.project.error = null;
@@ -536,7 +559,11 @@ function updateStatus(detail) {
   const recovery = recoveryLabels[detail.project.render_recovery?.alternative];
   $("#render-recovery").hidden = detail.busy || !recovery || detail.project.stage !== "render recovery";
   $("#render-recovery").textContent = recovery || "";
-  $("#cancel-project-render").hidden = !detail.busy || !(/^(render|preview)( |$)/).test(detail.project.stage);
+  $("#stop-project").hidden = !detail.can_stop;
+  $("#stop-project").disabled = ["cancelling", "cancelled"].includes(detail.project.status);
+  $("#stop-project").textContent = detail.project.status === "cancelling" ? "Cancelando…" : "Detener proyecto";
+  $("#resume-project").hidden = !detail.can_resume;
+  $("#project-continue").hidden = Boolean(detail.can_resume);
   $("#project-render-progress").textContent = detail.progress?.render && typeof renderProgressSummary === "function"
     ? renderProgressSummary(detail.progress.render) : "";
   $("#log").textContent = detail.log || "Aún no se ha ejecutado ningún trabajo.";
@@ -876,11 +903,13 @@ function projectOutput() {
   return {aspect, layout: aspect === "9:16" ? form.layout.value : "single", camera_mode: form.camera_mode.value, export_profile: form.export_profile.value};
 }
 async function run(action, preview = false) {
+  const id = state.id;
   if (action === "render") {
     if (!state.selected.size) throw new Error("Selecciona al menos un clip.");
     await saveCandidates(false);
   }
-  await api(`/api/projects/${state.id}/run`, {
+  if (state.id !== id) return;
+  const result = await api(`/api/projects/${id}/run`, {
     action,
     preview,
     ...(action === "render" ? {output: projectOutput()} : {}),
@@ -889,7 +918,10 @@ async function run(action, preview = false) {
         ? [...state.selected].sort((a, b) => a - b).join(",")
         : null,
   });
-  state.detail.busy = true;
+  if (state.id !== id) return;
+  state.detail.project.job = result.job;
+  state.detail.busy = state.detail.can_stop = true;
+  state.detail.can_resume = false;
   state.detail.project.status = "queued";
   state.detail.project.stage = action;
   updateStatus(state.detail);

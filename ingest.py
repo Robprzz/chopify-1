@@ -8,6 +8,8 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
+import project_cancel
 import sys
 from pathlib import Path
 from urllib.parse import urlparse
@@ -51,6 +53,8 @@ def _run(cmd, timeout=None, **kwargs):
     kwargs.setdefault("errors", "backslashreplace")
     kwargs["env"] = utf8_environment(kwargs.get("env"))
     kwargs.setdefault("check", True)
+    if project_cancel.active():
+        return project_cancel.run(cmd, timeout=timeout, **kwargs)
     if timeout is None:
         return subprocess.run(cmd, **kwargs)
     capture = kwargs.pop("capture_output")
@@ -256,6 +260,17 @@ def _remove_old(workdir, prefix):
 
 
 def download_visual_discovery(url, workdir, runner=None):
+    if not project_cancel.active():
+        return _download_visual_discovery(url, workdir, runner)
+    Path(workdir).mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".discovery-", dir=workdir) as directory:
+        media = _download_visual_discovery(url, Path(directory), runner)
+        target = Path(workdir) / media.name
+        media.replace(target)
+        return target
+
+
+def _download_visual_discovery(url, workdir, runner=None):
     """Download the lowest-resolution video for speechless visual discovery."""
     run = runner or _run
     workdir = Path(workdir)
@@ -276,6 +291,17 @@ def download_visual_discovery(url, workdir, runner=None):
 
 
 def download_discovery(url, workdir, meta=None, runner=None):
+    if not project_cancel.active():
+        return _download_discovery(url, workdir, meta, runner)
+    Path(workdir).mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".discovery-", dir=workdir) as directory:
+        media, kind = _download_discovery(url, Path(directory), meta, runner)
+        target = Path(workdir) / media.name
+        media.replace(target)
+        return target, kind
+
+
+def _download_discovery(url, workdir, meta=None, runner=None):
     """Download best audio, or a low-resolution video for silent URLs."""
     run = runner or _run
     workdir = Path(workdir)
@@ -295,10 +321,19 @@ def download_discovery(url, workdir, meta=None, runner=None):
         if audio is not None:
             return audio, "audio"
 
-    return download_visual_discovery(url, workdir, runner=run), "video"
+    return _download_visual_discovery(url, workdir, runner=run), "video"
 
 
 def _download(url, out_path, fmt, runner=None, timeout=None, extra=()):
+    if not project_cancel.active():
+        return _download_file(url, out_path, fmt, runner, timeout, extra)
+    with tempfile.TemporaryDirectory(prefix=".section-", dir=out_path.parent) as directory:
+        media = _download_file(url, Path(directory) / out_path.name, fmt, runner, timeout, extra)
+        media.replace(out_path)
+        return out_path
+
+
+def _download_file(url, out_path, fmt, runner=None, timeout=None, extra=()):
     """Run one yt-dlp download, converting a timeout into a clear error."""
     run = runner or _run
     cmd = [sys.executable, "-m", "yt_dlp", "-f", fmt,

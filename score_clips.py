@@ -25,6 +25,8 @@ No paid APIs, no API keys. Usage:
 import re
 import math
 import json
+import studio_json
+import project_cancel
 import bisect
 import hashlib
 import argparse
@@ -186,7 +188,9 @@ def sentenceize(words, gap=SENTENCE_PAUSE_SECONDS):
     """
     sentences, cur = [], []
     abbreviations = {"sr.", "sra.", "srta.", "dr.", "dra.", "ud.", "uds.", "núm.", "pág.", "prof.", "mr.", "mrs.", "ms."}
-    for w in words:
+    for i, w in enumerate(words):
+        if i % 256 == 0:
+            project_cancel.check()
         if cur and (w["start"] - cur[-1]["end"]) > gap:
             sentences.append((cur, "pause"))
             cur = []
@@ -667,6 +671,7 @@ def discover_media_candidates(timeline, min_len, max_len, preferred_len=None,
     candidates = []
     windows_scanned = 0
     for seed, seed_kind in seeds:
+        project_cancel.check()
         choices = {}
         for target in ladder:
             if usable_timeline is not None:
@@ -752,6 +757,7 @@ def discover_candidates(sentences, min_len=15, max_len=300,
             choices[end_index] = candidate_record(index, seed, end_index)
 
     for done, seed in enumerate(seeds, 1):
+        project_cancel.check()
         start = sentences[seed]["start"]
         windows_scanned += len(ladder)
         if ends[seed] - start <= max_len:
@@ -802,7 +808,7 @@ def _transcript_identity(workdir):
 
 
 def _block_key(identity, min_len, max_len, preferred_len, band):
-    return hashlib.sha256(json.dumps([
+    return hashlib.sha256(studio_json.dumps([
         BLOCK_VERSION, DISCOVERY_VERSION, identity, float(min_len), float(max_len),
         None if preferred_len is None else float(preferred_len),
         list(band), evidence.EVIDENCE_VERSION, visual.FEATURE_VERSION,
@@ -850,7 +856,7 @@ def discover_blocks(sentences, min_len, max_len, preferred_len=None,
     if workdir:
         identity = _transcript_identity(workdir)
         if not identity:
-            identity = hashlib.sha256(json.dumps(sentences, sort_keys=True)
+            identity = hashlib.sha256(studio_json.dumps(sentences, sort_keys=True)
                                       .encode("utf-8")).hexdigest()
         scan_key = _block_key(identity, min_len, max_len, preferred_len, band)
 
@@ -865,6 +871,7 @@ def discover_blocks(sentences, min_len, max_len, preferred_len=None,
     seeds = 0
     windows_scanned = 0
     for done, (index, block_start, block_end) in enumerate(bounds, 1):
+        project_cancel.check()
         part_path = (Path(workdir) / f"candidates.part{index:03d}.json"
                      if workdir else None)
         part = None
@@ -957,6 +964,7 @@ def dedupe_candidates(candidates, preferred_len=None, band=(30, 120),
                                        item["duration"]))
     kept = []
     for record in records:
+        project_cancel.check()
         drop = False
         for index, existing in enumerate(kept):
             ratio = overlap_ratio(record, existing)
@@ -1015,6 +1023,7 @@ def review_suggestions(records, limit=5):
             continue
     ranked = sorted(verified, key=lambda item: (-item["overall"], item["start"], item["end"]))
     for item in ranked:
+        project_cancel.check()
         profile = item.get("score_parts") or {}
         if (item.get("seed_kind") != "sentence" or not item.get("endpoint_kind")
                 or profile.get("self_containment", 0) < .65 or profile.get("payoff", 0) < .4
@@ -1108,13 +1117,7 @@ CANDIDATES_VERSION = 1
 SELECTION_VERSION = 2
 
 
-def _write_json(path, data):
-    path = Path(path)
-    temp = path.with_suffix(path.suffix + ".tmp")
-    temp.write_text(json.dumps(data, ensure_ascii=False, indent=2,
-                               allow_nan=False), encoding="utf-8")
-    temp.replace(path)
-
+_write_json = studio_json.write
 
 def save_candidates(workdir, candidates, stats, mode="heuristic"):
     """Write the threshold-independent candidates.json envelope."""
@@ -1357,13 +1360,17 @@ def _ollama_chat(model, host, messages, timeout=120):
         "options": {"temperature": 0.2},
         "messages": messages,
     }
-    request = urllib.request.Request(
-        host.rstrip("/") + "/api/chat",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        content = json.loads(response.read().decode("utf-8")).get(
-            "message", {}).get("content", "")
+    project_cancel.check()
+    if project_cancel.active() and host.rstrip("/") in {"http://127.0.0.1:11434", "http://localhost:11434"}:
+        response_data = project_cancel.ollama("/api/chat", payload, timeout)
+    else:
+        request = urllib.request.Request(
+            host.rstrip("/") + "/api/chat", data=studio_json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            response_data = json.load(response)
+    project_cancel.check()
+    content = response_data.get("message", {}).get("content", "")
     match = re.search(r"\[.*\]", content, re.S)
     return json.loads(match.group(0)) if match else []
 
@@ -1389,7 +1396,7 @@ def ollama_rerank(candidates, model, host=OLLAMA_HOST, timeout=120):
             for i, item in enumerate(ranked)]
     messages = [
         {"role": "system", "content": RERANK_SYSTEM},
-        {"role": "user", "content": json.dumps(sent, ensure_ascii=False)},
+        {"role": "user", "content": studio_json.dumps(sent)},
     ]
     try:
         raw = _ollama_chat(model, host, messages, timeout)
@@ -1485,6 +1492,7 @@ def attach_audio_evidence(candidates, timeline, profile, energy):
     """Apply audio evidence to each candidate without changing its raw text score."""
     updated = []
     for candidate in candidates:
+        project_cancel.check()
         audio = (evidence.audio_evidence(timeline, candidate["start"],
                                           candidate["end"])
                  if timeline is not None else None)
@@ -1516,6 +1524,7 @@ def visual_shortlist(candidates, profile, energy, audio_usable):
     """Keep text candidates that could still reach 8.0 with visual evidence."""
     shortlisted = []
     for candidate in candidates:
+        project_cancel.check()
         if candidate.get("seed_kind") != "sentence":
             shortlisted.append(candidate)
         elif visual_potential(candidate, profile, energy,
@@ -1529,6 +1538,7 @@ def attach_media_evidence(candidates, sections, timeline, profile, energy,
     """Blend audio and visual evidence and refine wordless action boundaries."""
     updated = []
     for candidate in candidates:
+        project_cancel.check()
         record = dict(candidate)
         media = record.get("seed_kind") != "sentence"
         section = (visual.visual_features_for(
@@ -1674,6 +1684,7 @@ def select(workdir, min_score=8.0, max_clips=None, preferred_len=None,
            band=None, llm=None, host=OLLAMA_HOST, mode="heuristic"):
     """Read candidates.json, write segments.json and selection.json."""
     workdir = Path(workdir)
+    project_cancel.check()
     candidates, discovery = load_candidates(workdir)
     effective_band = (evidence.profile_band(
         discovery.get("content_profile", "mixed"))
@@ -1692,6 +1703,7 @@ def select(workdir, min_score=8.0, max_clips=None, preferred_len=None,
         preferred_len=preferred_len, band=effective_band, dedupe=False,
         discovery=discovery, mode=mode,
         evidence_available=discovery.get("evidence_available"))
+    project_cancel.check()
     _write_json(workdir / "segments.json", segments)
     _write_json(workdir / "selection.json", stats)
     return segments, mode

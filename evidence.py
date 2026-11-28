@@ -9,6 +9,8 @@ import json
 import math
 from pathlib import Path
 import subprocess
+import project_cancel
+import studio_json
 import zipfile
 
 import numpy as np
@@ -260,7 +262,7 @@ def source_identity(source):
         stat = path.stat()
     except OSError:
         return str(source)
-    return json.dumps([str(path.resolve()), stat.st_size, stat.st_mtime_ns])
+    return studio_json.dumps([str(path.resolve()), stat.st_size, stat.st_mtime_ns], ensure_ascii=True)
 
 
 def build_audio_timeline(source):
@@ -275,28 +277,30 @@ def build_audio_timeline(source):
         "-vn", "-ac", "1", "-ar", str(SAMPLE_RATE), "-f", "f32le", "-",
     ]
     try:
-        process = subprocess.Popen(
+        process = project_cancel.spawn(
             command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     except (OSError, ValueError):
         return None
-    builder = _TimelineBuilder()
-    leftover = b""
-    try:
-        assert process.stdout is not None
-        while True:
-            block = process.stdout.read(READ_BYTES)
-            if not block:
-                break
-            leftover += block
-            usable = len(leftover) - (len(leftover) % 4)
-            if usable:
-                builder.add(np.frombuffer(leftover[:usable], dtype=np.float32))
-                leftover = leftover[usable:]
-        code = process.wait()
-    finally:
-        if process.poll() is None:
-            process.kill()
-            process.wait()
+    with project_cancel.watch(process):
+        builder = _TimelineBuilder()
+        leftover = b""
+        try:
+            assert process.stdout is not None
+            while True:
+                project_cancel.check()
+                block = process.stdout.read(READ_BYTES)
+                if not block:
+                    break
+                leftover += block
+                usable = len(leftover) - (len(leftover) % 4)
+                if usable:
+                    builder.add(np.frombuffer(leftover[:usable], dtype=np.float32))
+                    leftover = leftover[usable:]
+            code = process.wait()
+        finally:
+            if process.poll() is None:
+                project_cancel.terminate(process, grouped=project_cancel.active())
+                process.wait()
     if code != 0:
         return None
     timeline = builder.finish()

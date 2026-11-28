@@ -5,6 +5,8 @@ local audio/visual/transcript/metadata signals; confidence and an explicit
 override are the contract when a source is ambiguous.
 """
 import json
+import project_cancel
+import studio_json
 import re
 import urllib.request
 from pathlib import Path
@@ -148,18 +150,22 @@ def llm_classify(signals, transcript_sample, model, host="http://localhost:11434
     """Ask a local Ollama chat model for a type label. Return None on any failure."""
     prompt = ("Pick exactly one video type from "
               + ", ".join(VIDEO_TYPES) + ". Reply with only that word.\n"
-              + "Signals: " + json.dumps(signals, sort_keys=True) + "\n"
+              + "Signals: " + studio_json.dumps(signals, sort_keys=True) + "\n"
               + "Transcript sample: " + str(transcript_sample)[:1200])
-    body = json.dumps({"model": model, "stream": False,
-                       "messages": [{"role": "user", "content": prompt}]}).encode()
-    request = urllib.request.Request(
-        host.rstrip("/") + "/api/chat", data=body,
-        headers={"Content-Type": "application/json"}, method="POST")
+    body = {"model": model, "stream": False, "messages": [{"role": "user", "content": prompt}]}
+    from editorial_providers import ProviderError
+
     try:
-        with urllib.request.urlopen(request, timeout=15) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+        if project_cancel.active() and host.rstrip("/") in {"http://127.0.0.1:11434", "http://localhost:11434"}:
+            payload = project_cancel.ollama("/api/chat", body, 15)
+        else:
+            request = urllib.request.Request(host.rstrip("/") + "/api/chat",
+                                             data=studio_json.dumps(body).encode(),
+                                             headers={"Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(request, timeout=15) as response:
+                payload = json.load(response)
         label = str(payload.get("message", {}).get("content", "")).strip().lower()
-    except (OSError, ValueError, KeyError, TypeError):
+    except (OSError, ValueError, KeyError, TypeError, ProviderError):
         return None
     return label if label in VIDEO_TYPES else None
 

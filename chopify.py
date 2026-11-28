@@ -22,6 +22,7 @@ import argparse
 import subprocess
 import json
 from pathlib import Path
+import project_cancel
 from unicode_io import configure_utf8
 
 CHOPIFY_VERSION = "1.4.0"
@@ -370,6 +371,7 @@ def main():
     ap.add_argument("--strict-selection", action="store_true")
     ap.set_defaults(use_watermark=True)
     render_clips.add_caption_arguments(ap)
+    ap.add_argument("--project-job", help=argparse.SUPPRESS)
     args = ap.parse_args()
     if args.list_formats:
         custom, _ = video_types.load_custom_formats()
@@ -436,8 +438,25 @@ def main():
     except ValueError as exc:
         ap.exit(1, f"Caption: {exc}\n")
 
+    job = None
+    if args.project_job is not None:
+        if not args.project:
+            ap.error("La ejecución del proyecto requiere una carpeta de proyecto.")
+        import projects
+        folder = Path(args.project).resolve()
+        manifest = projects.read_project(folder)
+        if (manifest.get("job") or {}).get("id") != args.project_job:
+            ap.error("La ejecución del proyecto ya no está vigente.")
+        job = project_cancel.Job(folder, args.project_job)
     if not args.no_preflight:
-        problems = check_environment()
+        try:
+            if job is None:
+                problems = check_environment()
+            else:
+                with project_cancel.scope(job):
+                    problems = check_environment(runner=project_cancel.run)
+        except project_cancel.Cancelled:
+            ap.exit(130, project_cancel.MESSAGE + "\n")
         if problems:
             print("PREFLIGHT FAILED - fix these and re-run "
                   "(or bypass with --no-preflight):", flush=True)
@@ -544,7 +563,10 @@ def main():
             result = projects.run_project(path, action=args.action, preview=args.preview,
                                           pick=args.clips, resume=args.resume,
                                           automation_export=args.automation_export, on_detection=detection_cb,
-                                          explicit_keys=explicit_keys, recovery=args.render_recovery)
+                                          explicit_keys=explicit_keys, recovery=args.render_recovery, job=job)
+        if result["status"] == "cancelled":
+            print(result["error"], flush=True)
+            return
         if not printed_summary:
             _print_selection(path, result, args.explain)
         if args.action != "prepare":

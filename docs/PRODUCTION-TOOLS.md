@@ -51,3 +51,9 @@ En este entorno se usaron feeds controlados para verificar la recuperación y la
 ## Mejores candidatos
 
 Si el proyecto tiene ventanas válidas pero ninguna supera el umbral, Studio muestra **Mejores candidatos para revisión** cuando hay opciones con suficiente contexto y cierre. Se muestran hasta cinco ventanas diferenciadas con su puntuación real, intervalo y motivo. Cada una requiere selección explícita. Activa **Filtro estricto de puntuación** en el proyecto para mostrar solo los resultados que superen el umbral. Si también falta evidencia contextual, la lista de recomendaciones puede quedar vacía.
+
+## Detener y reanudar un proyecto
+
+**Detener proyecto** aparece mientras Studio tenga una tarea del proyecto en cola o en curso. El estado **Cancelando** se muestra hasta que el trabajo confirma la cancelación. Después, **Reanudar proyecto** recupera el modo, el formato y la selección de la ejecución anterior. Una reanudación conserva la fuente terminada, la transcripción completa o sus bloques guardados, los checkpoints de descubrimiento y los MP4 válidos. Puede repetir el bloque de Whisper que quedó en curso.
+
+La cancelación de FFmpeg y yt-dlp se limita a los procesos de la tarea. Whisper espera un límite seguro de inferencia antes de parar, tanto en CPU como en CUDA. La espera puede durar hasta que termine el segmento actual; también puede esperar a que devuelva el control una carga de modelo. El editor de Clips mantiene su propio botón de cancelación para exportaciones individuales.

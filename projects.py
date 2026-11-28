@@ -1,6 +1,8 @@
 """Shared, resumable local project pipeline for CLI and dashboard."""
 import hashlib
 import json
+import studio_json
+import project_cancel
 import math
 import re
 import time
@@ -45,15 +47,10 @@ DEFAULT_OPTIONS = {"aspect": "16:9", "fit": "cover", "style": "default", "tighte
 
 
 def digest(value):
-    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    return hashlib.sha256(studio_json.dumps(value, sort_keys=True).encode()).hexdigest()
 
 
-def atomic_json(path, data):
-    path = Path(path)
-    temp = path.with_suffix(path.suffix + ".tmp")
-    temp.write_text(json.dumps(data, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
-    temp.replace(path)
-
+atomic_json = studio_json.write
 
 def read_json(path):
     return json.loads(Path(path).read_text(encoding="utf-8-sig"))
@@ -373,6 +370,13 @@ def instagram_source(path, state, stage):
 
 
 def run_project(path, action="all", preview=False, pick=None, resume=True,
+                progress=None, on_detection=None, explicit_keys=None, automation_export=False, recovery=None, job=None):
+    with project_cancel.scope(job):
+        return _run_project(path, action, preview, pick, resume, progress, on_detection,
+                            explicit_keys, automation_export, recovery)
+
+
+def _run_project(path, action="all", preview=False, pick=None, resume=True,
                 progress=None, on_detection=None, explicit_keys=None, automation_export=False, recovery=None):
     """Prepare candidates or render saved candidates; checkpoint every successful clip."""
     workspace = Path(path).resolve().parent
@@ -382,6 +386,7 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
     if action not in {"all", "prepare", "render"}:
         raise ValueError("Unknown project action.")
     def stage(name):
+        project_cancel.check()
         state.update(status="running", stage=name, error=None,
                      progress={"stage": name, "done": 0, "total": 0,
                                "detail": ""})
@@ -391,6 +396,7 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
             progress(name)
 
     def transcribe_progress(done, total):
+        project_cancel.check()
         state["progress"] = {"stage": "transcribe", "done": int(done),
                              "total": int(total),
                              "detail": f"chunk {done}/{total}"}
@@ -624,6 +630,7 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
                                   else read_json(path / "selection.json"))
             if discovered is not None:
                 state["automation_discovery"] = {"detected_at": discovered, "key": discovery_key}
+        project_cancel.check()
         adaptive_review = (action == "all" and not pick and not read_json(path / "segments.json")
                            and (state.get("youtube_monitor") or
                                 (not options["strict_selection"] and
@@ -830,9 +837,14 @@ def run_project(path, action="all", preview=False, pick=None, resume=True,
                              error=message + " Successful clips were kept.")
                 save_project(path, state)
                 return state
+            project_cancel.check()
             if render_from_sections and not preview and not automation_export:
                 sections.cleanup_sections(path)
             state.update(status="review" if preview else "complete", stage="preview ready" if preview else "complete")
+        save_project(path, state)
+        return state
+    except project_cancel.Cancelled as exc:
+        state.update(status="cancelled", error=str(exc))
         save_project(path, state)
         return state
     except (Exception, SystemExit) as exc:

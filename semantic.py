@@ -1,6 +1,8 @@
 """Optional semantic transcript search through a local Ollama embedding model."""
 import hashlib
 import json
+import studio_json
+import project_cancel
 import math
 import urllib.error
 import urllib.request
@@ -11,10 +13,16 @@ DEFAULT_MODEL = "nomic-embed-text"
 
 
 def ollama_embed(texts, model):
-    request = urllib.request.Request(HOST + "/api/embed", data=json.dumps(
-        {"model": model, "input": texts, "truncate": True}).encode(),
-        headers={"Content-Type": "application/json"})
+    payload = {"model": model, "input": texts, "truncate": True}
     try:
+        if project_cancel.active():
+            from editorial_providers import ProviderError
+            try:
+                return project_cancel.ollama("/api/embed", payload, 180)["embeddings"]
+            except ProviderError as exc:
+                raise ValueError(str(exc)) from exc
+        request = urllib.request.Request(HOST + "/api/embed", data=studio_json.dumps(payload).encode(),
+                                         headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(request, timeout=180) as response:
             vectors = json.load(response)["embeddings"]
     except (OSError, KeyError, ValueError) as exc:
@@ -53,15 +61,15 @@ def search(sentences, query, model=DEFAULT_MODEL, cache_dir=None, embed=None):
     if vectors is None:
         vectors = []
         for i in range(0, len(texts), 64):
+            project_cancel.check()
             batch = embed(texts[i:i + 64], model)
             validate_vectors(batch, len(texts[i:i + 64]))
             vectors.extend(batch)
         validate_vectors(vectors, len(texts))
         if cache:
             cache.parent.mkdir(parents=True, exist_ok=True)
-            temp = cache.with_suffix(".tmp")
-            temp.write_text(json.dumps({"key": key, "vectors": vectors}), encoding="utf-8")
-            temp.replace(cache)
+            studio_json.write(cache, {"key": key, "vectors": vectors})
+    project_cancel.check()
     query_vector = embed([query], model)
     validate_vectors(query_vector, 1)
     q = query_vector[0]
@@ -85,6 +93,7 @@ def candidates(sentences, query, model, cache_dir, min_len, max_len, max_clips):
     found, _ = discover_candidates(sentences, min_len, max_len,
                                    seed_indices=list(similarity))
     for item in found:
+        project_cancel.check()
         item["similarity"] = similarity.get(item["seed_index"], 0.0)
     kept = dedupe_candidates(found)
     if max_clips is not None:

@@ -1,5 +1,6 @@
 """FFmpeg encoding progress and timings, without exposing command-line paths."""
 import math
+import project_cancel
 import subprocess
 import tempfile
 import threading
@@ -28,6 +29,7 @@ class Progress:
             self.emit({"stage": stage, "fraction": fraction, "eta": eta, "times": dict(self.times)})
 
     def check(self):
+        project_cancel.check()
         if self.cancelled():
             raise Cancelled("Exportación cancelada. Se conservaron los clips terminados.")
 
@@ -35,11 +37,11 @@ class Progress:
 def encode(cmd, cwd, timeout, duration, progress):
     """Read ffmpeg machine progress and keep stderr separately for diagnosis."""
     if progress.emit is None:
-        return subprocess.run(cmd, check=True, cwd=cwd, stderr=subprocess.PIPE, encoding="utf-8",
+        return project_cancel.run(cmd, check=True, cwd=cwd, stderr=subprocess.PIPE, encoding="utf-8",
                               errors="backslashreplace", timeout=timeout)
     progress.check()
     with tempfile.TemporaryFile() as errors:
-        proc = subprocess.Popen([cmd[0], "-progress", "pipe:1", "-nostats", *cmd[1:]],
+        proc = project_cancel.spawn([cmd[0], "-progress", "pipe:1", "-nostats", *cmd[1:]],
                                 cwd=cwd, stderr=errors, stdout=subprocess.PIPE, text=True,
                                 encoding="utf-8", errors="backslashreplace")
         timestamps = []
@@ -76,8 +78,7 @@ def encode(cmd, cwd, timeout, duration, progress):
                     pass
         except BaseException as exc:
             failure = exc
-            if proc.poll() is None:
-                proc.kill()
+            project_cancel.terminate(proc, grouped=project_cancel.active())
             proc.wait()
         finally:
             reader.join()

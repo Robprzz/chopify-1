@@ -79,8 +79,7 @@ def nvenc_probe():
 def analysis(workdir, name, key, analyze, *, cache_empty=True):
     """Keep bounded, versioned inspection records across Studio subprocesses."""
     from projects import digest, read_json
-    import json
-    from watermark import _write
+    from studio_json import write
 
     directory = Path(workdir).resolve()
     path = directory / f".render-{name}.json"
@@ -98,8 +97,8 @@ def analysis(workdir, name, key, analyze, *, cache_empty=True):
     result = analyze()
     if cache_empty or result:
         try:
-            _write(path, json.dumps({**dict(list(cached.items())[-15:]), stamp: result}, allow_nan=False).encode("utf-8"))
-        except (OSError, ValueError):
+            write(path, {**dict(list(cached.items())[-15:]), stamp: result}, indent=None)
+        except OSError:
             pass
     return result
 

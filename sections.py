@@ -1,6 +1,7 @@
 """Plan, cache, and clean padded source sections for long URL rendering."""
 import hashlib
 import json
+import studio_json
 import os
 import shutil
 from pathlib import Path
@@ -101,13 +102,7 @@ def _matches(meta, source_key, index, start, end):
         return False
 
 
-def _write_json(path, data):
-    path = Path(path)
-    temp = path.with_suffix(path.suffix + ".tmp")
-    temp.write_text(json.dumps(data, ensure_ascii=False, indent=2),
-                    encoding="utf-8")
-    os.replace(temp, path)
-
+_write_json = studio_json.write
 
 def find_full_source(workdir):
     """Return a cached complete source, if one has already been downloaded."""

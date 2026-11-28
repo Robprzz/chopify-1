@@ -20,6 +20,8 @@ import sys
 import os
 import re
 import json
+import studio_json
+import project_cancel
 import argparse
 import subprocess
 import math
@@ -296,7 +298,7 @@ def ffprobe_dims(path):
 
 @lru_cache(maxsize=128)
 def _probe_dimensions(path, _size, _mtime, _ctime):
-    out = subprocess.run(
+    out = project_cancel.run(
         ["ffprobe", "-v", "error", "-select_streams", "v:0",
          "-show_entries", "stream=width,height:stream_side_data=rotation", "-of", "json", str(path)],
         capture_output=True, encoding="utf-8", errors="backslashreplace", check=True).stdout.strip()
@@ -334,7 +336,21 @@ def _make_detector(workdir, allow_download=True):
     if allow_download and not model.exists():
         try:
             import urllib.request
-            urllib.request.urlretrieve(YUNET_URL, str(model))
+            if project_cancel.active():
+                with (tempfile.TemporaryDirectory(dir=model.parent) as tmp,
+                      urllib.request.urlopen(YUNET_URL, timeout=10) as response):
+                    pending = Path(tmp) / model.name
+                    with pending.open("wb") as target:
+                        while True:
+                            project_cancel.check()
+                            block = response.read(65536)
+                            if not block:
+                                break
+                            target.write(block)
+                    project_cancel.check()
+                    pending.replace(model)
+            else:
+                urllib.request.urlretrieve(YUNET_URL, str(model))
         except Exception as e:
             print("  YuNet download failed -> Haar:", e, flush=True)
     if model.exists():
@@ -353,7 +369,7 @@ def detect_track(source, start, dur, W, workdir, allow_download=True, timeout=No
         kind, detector = _make_detector(workdir, allow_download)
         with tempfile.TemporaryDirectory(prefix="anqora-camera-") as scratch:
             det_path = Path(scratch) / "detect.mp4"
-            subprocess.run(
+            project_cancel.run(
                 ["ffmpeg", "-nostdin", "-v", "error", "-threads", "1", "-ss", f"{start:.3f}", "-i", str(source),
                  "-t", f"{dur:.3f}", "-filter_threads", "1", "-vf", f"fps={DET_FPS},scale={DET_W}:-2",
                  "-an", "-threads", "1", str(det_path)], check=True, capture_output=True, timeout=timeout)
@@ -366,6 +382,7 @@ def detect_track(source, start, dur, W, workdir, allow_download=True, timeout=No
                 previous = previous_hist = None
                 observations = []
                 while True:
+                    project_cancel.check()
                     ok, frame = cap.read()
                     if not ok:
                         return observations
@@ -510,8 +527,7 @@ def write_meta(seg, out_path, subtitle_track=None, motion=None):
         meta["subtitles"] = subtitle_track
     if motion is not None:
         meta["motion"] = motion
-    Path(out_path).with_suffix(".meta.json").write_text(
-        json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    studio_json.write(Path(out_path).with_suffix(".meta.json"), meta)
     return Path(out_path).with_suffix(".meta.json")
 
 
@@ -733,7 +749,7 @@ def _render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAU
             color = smart_camera.source_color(render_src, timeout)
         except (OSError, subprocess.SubprocessError, ValueError, KeyError, IndexError):
             color = {"pix_fmt": "unknown", "color_range": "unknown"}
-        print("Color de entrada:", json.dumps(color), flush=True)
+        print("Color de entrada:", studio_json.dumps(color), flush=True)
         motion = {"version": 1, "requested": camera_mode, "source_cadence": cadence, "fps": str(rate),
                   "source_color": color}
         if camera_mode != "auto":
@@ -986,7 +1002,7 @@ def _render(seg, words, source, W, H, workdir, aspect, out_dir=None, style=DEFAU
 
         # poster: a representative still saved next to the clip (<clip>.png)
         poster = staged.with_suffix(".png")
-        subprocess.run(["ffmpeg", "-y", "-ss", f"{dur * 0.4:.2f}", "-i", str(staged),
+        project_cancel.run(["ffmpeg", "-y", "-ss", f"{dur * 0.4:.2f}", "-i", str(staged),
                         "-frames:v", "1", "-q:v", "2", str(poster)],
                        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=timeout)
         meta_path = write_meta(seg, staged, track, motion)
@@ -1134,7 +1150,7 @@ def resolve_facecam_box(source, W, H, workdir, box, detector=None, allow_downloa
         return DEFAULT_FACECAM_BOX, "No source for facecam detection; using default box."
     try:
         frame_path = Path(workdir) / "_facecam.jpg"
-        subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", "0.5",
+        project_cancel.run(["ffmpeg", "-y", "-v", "error", "-ss", "0.5",
                         "-i", str(source), "-frames:v", "1", str(frame_path)],
                        check=True, capture_output=True, timeout=timeout)
         return _detect_facecam_box(frame_path, W, H, workdir, detector, allow_download)

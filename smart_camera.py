@@ -3,6 +3,8 @@ from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
 import json
+import studio_json
+import project_cancel
 import math
 import re
 from statistics import median
@@ -148,7 +150,7 @@ def write_commands(points, width, crop, destination, duration):
 
 def source_rate(source, start, timeout):
     """Measure presentation times; choose a rational delivery rate for VFR."""
-    result = subprocess.run([
+    result = project_cancel.run([
         "ffprobe", "-v", "error", "-select_streams", "v:0", "-read_intervals", f"{start:.3f}%+#241",
         "-show_packets", "-show_streams", "-show_entries", "packet=pts_time:stream=avg_frame_rate,r_frame_rate",
         "-of", "json", str(source),
@@ -172,7 +174,7 @@ def source_rate(source, start, timeout):
 
 def freeze_spans(path, start, duration, timeout):
     """Read-only low-resolution analysis at native PTS, without frame synthesis."""
-    result = subprocess.run([
+    result = project_cancel.run([
         "ffmpeg", "-nostdin", "-hide_banner", "-xerror", "-v", "info", "-threads", "2", "-ss", f"{start:.3f}",
         "-i", str(path), "-t", f"{duration:.3f}", "-an", "-sn", "-filter_threads", "1",
         "-vf", "scale=160:90:flags=area,freezedetect=n=-50dB:d=0.6",
@@ -206,7 +208,7 @@ class DeliveryError(MotionError):
 
 
 def source_color(path, timeout):
-    result = subprocess.run([
+    result = project_cancel.run([
         "ffprobe", "-v", "error", "-select_streams", "v:0",
         "-show_entries", "stream=pix_fmt,color_range", "-of", "json", str(path),
     ], check=True, capture_output=True, timeout=min(timeout or 15, 15))
@@ -243,7 +245,7 @@ def delivery_number(item, key, label):
 def delivery_check(path, rate, duration, timeout):
     """Verify geometry, color, packet cadence and audiovisual alignment."""
     try:
-        result = subprocess.run([
+        result = project_cancel.run([
             "ffprobe", "-v", "error", "-show_packets", "-show_streams",
             "-show_entries", "packet=stream_index,pts_time,dts_time:stream=index,codec_type,width,height,sample_aspect_ratio,"
             "display_aspect_ratio,pix_fmt,color_range,codec_name,avg_frame_rate,start_time,duration", "-of", "json", str(path),
@@ -293,7 +295,7 @@ def delivery_check(path, rate, duration, timeout):
         if max(start_skew, end_skew) > .22:
             raise DeliveryError("Control vertical: audio fuera de sincronía con el video.")
         metrics.update(av_start_skew=round(start_skew, 4), av_end_skew=round(end_skew, 4))
-    print("Control vertical aprobado:", json.dumps(metrics), flush=True)
+    print("Control vertical aprobado:", studio_json.dumps(metrics), flush=True)
     return metrics
 
 

@@ -2,6 +2,7 @@
 from functools import lru_cache
 import hashlib
 import json
+import studio_json
 import math
 import subprocess
 import tempfile
@@ -404,6 +405,6 @@ class Clips:
         delivered = path.parent / output.name
         record = {"path": str(delivered), "artifacts": export_cache.artifacts(delivered)}
         with self.calendar.connect(write=True) as db:
-            db.execute("INSERT OR REPLACE INTO clip_renders (key,record) VALUES (?,?)", (key, json.dumps(record)))
+            db.execute("INSERT OR REPLACE INTO clip_renders (key,record) VALUES (?,?)", (key, studio_json.dumps(record)))
         progress.update("ready")
         return output.name

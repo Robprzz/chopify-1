@@ -11,7 +11,7 @@ import re
 import sqlite3
 import threading
 import time
-from urllib.parse import quote, unquote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 from uuid import uuid4
 import xml.etree.ElementTree as ET
 
@@ -21,8 +21,29 @@ HANDLE = re.compile(r"@[^\s/@?#\\\x00-\x20]{2,80}\Z")
 HOSTS = {"www.youtube.com", "youtube.com", "m.youtube.com"}
 ATOM = "{http://www.w3.org/2005/Atom}"
 YT = "{http://www.youtube.com/xml/schemas/2015}"
+MEDIA = "{http://search.yahoo.com/mrss/}"
+MODES = {"discover", "produce"}
 MAX_CHANNELS = 32
 MAX_PENDING = 240
+
+
+def project_id(channel, video):
+    return sha256(f"YouTube channel {channel} video {video}".encode()).hexdigest()[:12]
+
+
+def video_id(url):
+    host = url.hostname or ""
+    parts = url.path.strip("/").split("/")
+    if host == "youtu.be":
+        video = parts[0]
+    elif host == "youtube.com" or host.endswith(".youtube.com"):
+        if parts == ["watch"]:
+            video = next(iter(parse_qs(url.query).get("v", [])), "")
+        else:
+            video = parts[1] if len(parts) == 2 and parts[0] in {"live", "shorts", "embed"} else ""
+    else:
+        return None
+    return video if VIDEO.fullmatch(video) else None
 
 
 class FeedError(ValueError):
@@ -137,11 +158,15 @@ class Atom:
                 video = entry.findtext(YT + "videoId") or ""
                 if not VIDEO.fullmatch(video) or entry.findtext(YT + "channelId") != channel:
                     continue
-                date = datetime.fromisoformat(entry.findtext(ATOM + "published") or "")
+                try:
+                    date = datetime.fromisoformat(entry.findtext(ATOM + "published") or "")
+                except ValueError:
+                    continue
                 if date.tzinfo is None:
                     continue
                 items.append({"id": video, "title": (entry.findtext(ATOM + "title") or video)[:240],
-                              "published": date.timestamp()})
+                              "published": date.timestamp(), "description": entry.findtext(
+                                  MEDIA + "group/" + MEDIA + "description", default="")[:1800]})
             return (root.findtext(ATOM + "title") or channel)[:160], items
         except (ET.ParseError, ValueError, OverflowError):
             raise FeedError("El feed público no tiene un formato Atom válido.") from None
@@ -166,9 +191,12 @@ def options(data):
         raise ValueError("Selecciona una plantilla de canal disponible.")
     category = data.get("category", "auto")
     from video_types import VIDEO_TYPES
-    if category not in {"auto", *VIDEO_TYPES}:
+    if not isinstance(category, str) or category not in {"auto", *VIDEO_TYPES}:
         raise ValueError("Selecciona una categoría disponible.")
-    return {"active": active, "authorized": authorized, "render": render, "reason": reason.strip(),
+    mode = data.get("mode", "produce")
+    if not isinstance(mode, str) or mode not in MODES:
+        raise ValueError("Modalidad de monitoreo inválida.")
+    return {"mode": mode, "active": active, "authorized": authorized, "render": render, "reason": reason.strip(),
             "interval": integer("interval", 15, 5, 1440), "maximum": integer("maximum", 3, 1, 5),
             "preferred": integer("preferred", 60, 15, 300), "template": template, "category": category}
 
@@ -199,7 +227,17 @@ class Monitor:
                 db.execute("ALTER TABLE videos ADD COLUMN lease_owner TEXT")
             if "lease_until" not in columns:
                 db.execute("ALTER TABLE videos ADD COLUMN lease_until REAL NOT NULL DEFAULT 0")
-            db.execute("PRAGMA user_version=2")
+            if "mode" not in {row["name"] for row in db.execute("PRAGMA table_info(channels)")}:
+                db.execute("ALTER TABLE channels ADD COLUMN mode TEXT NOT NULL DEFAULT 'produce' "
+                           "CHECK(mode IN ('discover','produce'))")
+            for key, definition in (("description", "TEXT NOT NULL DEFAULT ''"),
+                                    ("detected_at", "REAL"),
+                                    ("metadata_revision", "INTEGER NOT NULL DEFAULT 0")):
+                if key not in columns:
+                    db.execute(f"ALTER TABLE videos ADD COLUMN {key} {definition}")
+            if db.execute("PRAGMA user_version").fetchone()[0] < 3:
+                db.execute("PRAGMA user_version=3")
+            db.execute("CREATE INDEX IF NOT EXISTS monitor_published ON videos(published DESC, channel, id)")
             db.execute("CREATE INDEX IF NOT EXISTS monitor_work ON videos(state, next_try)")
         self.worker = threading.Thread(target=self._loop, daemon=True, name="studio-youtube-monitor")
         if start:
@@ -211,6 +249,7 @@ class Monitor:
             raise ValueError("La base del monitor debe estar dentro del espacio de trabajo.")
         with closing(sqlite3.connect(self.path, timeout=4)) as db, db:
             db.row_factory = sqlite3.Row
+            db.execute("PRAGMA foreign_keys=ON")
             if write:
                 db.execute("BEGIN IMMEDIATE")
             yield db
@@ -262,18 +301,22 @@ class Monitor:
                         db.execute("UPDATE channels SET next_check=min(next_check, ?) WHERE id=?",
                                    (self.clock() + config["interval"] * 60, ident))
                 elif action == "check":
+                    if old["mode"] == "discover" and not old["active"]:
+                        raise ValueError("Activa la fuente antes de actualizarla.")
                     if old["errors"] and self.clock() < old["next_check"]:
                         raise ValueError("YouTube pidió esperar tras el último error. Consulta el próximo intento.")
                     if old["checked"] is not None and self.clock() - old["checked"] < 30:
                         raise ValueError("Espera 30 segundos desde la última consulta.")
                     db.execute("UPDATE channels SET next_check=0 WHERE id=?", (ident,))
                 elif action == "import":
+                    if old["mode"] == "discover":
+                        raise ValueError("Este canal está en Solo descubrir.")
                     if not old["authorized"] or not old["active"]:
                         raise ValueError("Activa el canal y registra tu autorización antes de importar.")
                     item = db.execute("SELECT * FROM videos WHERE channel=? ORDER BY published DESC,id LIMIT 1", (ident,)).fetchone()
                     if not item:
                         raise ValueError("Todavía no se detectó un video público para importar.")
-                    if item["state"] in {"reference", "unapproved", "failed", "deferred"}:
+                    if item["state"] in {"reference", "unapproved", "failed", "deferred", "discovered"}:
                         db.execute("UPDATE videos SET state='pending', attempts=0, next_try=0,error=NULL WHERE channel=? AND id=?",
                                    (ident, item["id"]))
                 else:
@@ -281,11 +324,22 @@ class Monitor:
         self.wake.set()
         return self.snapshot()
 
+    def refresh_active(self):
+        now = self.clock()
+        with self.connect(write=True) as db:
+            changed = db.execute("""UPDATE channels SET next_check=0
+                WHERE active=1 AND next_check!=0 AND (errors=0 OR next_check<=?)
+                  AND (next_check<=? OR next_check>?) AND (checked IS NULL OR checked<=?)""",
+                (now, now, now + 30, now - 30)).rowcount
+        self.wake.set()
+        return {"scheduled": changed}
+
     def poll(self):
         now = self.clock()
         with self.connect(write=True) as db:
-            row = db.execute("SELECT * FROM channels WHERE (active=1 OR next_check=0) AND next_check<=? ORDER BY next_check,id LIMIT 1",
-                             (now,)).fetchone()
+            row = db.execute("""SELECT * FROM channels WHERE next_check<=?
+                AND (active=1 OR (mode='produce' AND next_check=0)) ORDER BY next_check,id LIMIT 1""",
+                (now,)).fetchone()
             if not row:
                 return
             db.execute("UPDATE channels SET next_check=? WHERE id=?", (now + 30, row["id"]))
@@ -303,12 +357,20 @@ class Monitor:
         with self.connect(write=True) as db:
             current = self._channel(db, row["id"])
             empty = current["baseline"] is None
-            total = db.execute("SELECT count(*) FROM videos WHERE state IN ('pending','queued')").fetchone()[0]
+            total = db.execute("""SELECT count(*) FROM videos v JOIN channels c ON c.id=v.channel
+                                WHERE c.mode='produce' AND v.state IN ('pending','queued')""").fetchone()[0]
             for item in items:
-                state = ("reference" if empty or item["published"] <= current["baseline"] else
+                state = ("discovered" if current["mode"] == "discover" else
+                         "reference" if empty or item["published"] <= current["baseline"] else
                          "unapproved" if not current["authorized"] else "pending" if total < MAX_PENDING else "deferred")
-                added = db.execute("INSERT OR IGNORE INTO videos (channel,id,title,published,state) VALUES(?,?,?,?,?)",
-                                   (row["id"], item["id"], item["title"], item["published"], state))
+                description = item.get("description") or ""
+                added = db.execute("""INSERT OR IGNORE INTO videos
+                    (channel,id,title,published,state,description,detected_at) VALUES(?,?,?,?,?,?,?)""",
+                    (row["id"], item["id"], item["title"], item["published"], state, description, now))
+                if not added.rowcount:
+                    db.execute("""UPDATE videos SET title=?,description=CASE WHEN ?='' THEN description ELSE ? END,metadata_revision=metadata_revision+1
+                        WHERE channel=? AND id=? AND (title!=? OR (?!='' AND description!=?))""",
+                        (item["title"], description, description, row["id"], item["id"], item["title"], description, description))
                 total += added.rowcount if state == "pending" else 0
             db.execute("UPDATE channels SET name=?,baseline=coalesce(baseline,?),checked=?,next_check=?,errors=0,error=NULL WHERE id=?",
                        (name, now, now, now + current["interval"] * 60, row["id"]))
@@ -318,21 +380,22 @@ class Monitor:
             return
         now = self.clock()
         with self.connect(write=True) as db:
-            available = MAX_PENDING - db.execute("SELECT count(*) FROM videos WHERE state IN ('pending','queued')").fetchone()[0]
+            available = MAX_PENDING - db.execute("""SELECT count(*) FROM videos v JOIN channels c ON c.id=v.channel
+                            WHERE c.mode='produce' AND v.state IN ('pending','queued')""").fetchone()[0]
             if available > 0:
                 db.execute("""UPDATE videos SET state='pending' WHERE rowid IN (
                     SELECT v.rowid FROM videos v JOIN channels c ON c.id=v.channel
-                    WHERE v.state='deferred' AND c.active=1 AND c.authorized=1
+                    WHERE v.state='deferred' AND c.mode='produce' AND c.active=1 AND c.authorized=1
                     ORDER BY v.published,v.rowid LIMIT ?)""", (available,))
             item = db.execute("""SELECT v.*, c.authorized, c.reason, c.maximum, c.preferred, c.template,
                 c.category, c.render, c.active FROM videos v JOIN channels c ON c.id=v.channel
-                WHERE (v.state='queued' OR (v.state='pending' AND c.active=1 AND c.authorized=1)) AND v.next_try<=? AND v.lease_until<=?
+                WHERE c.mode='produce' AND (v.state='queued' OR (v.state='pending' AND c.active=1 AND c.authorized=1)) AND v.next_try<=? AND v.lease_until<=?
                 ORDER BY v.state='queued' DESC,v.published,v.id LIMIT 1""", (now, now)).fetchone()
             if not item:
                 return
             db.execute("UPDATE videos SET lease_owner=?,lease_until=? WHERE channel=? AND id=?",
                        (self.owner, now + 60, item["channel"], item["id"]))
-        project = sha256(f"YouTube channel {item['channel']} video {item['id']}".encode()).hexdigest()[:12]
+        project = project_id(item["channel"], item["id"])
         try:
             state, error = self.dispatch(dict(item), project)
         except (ValueError, OSError, sqlite3.Error):

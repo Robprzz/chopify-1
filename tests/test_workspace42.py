@@ -156,7 +156,8 @@ def test_clips_first_project_caption_persistence_and_calendar(tmp_path, chromium
         page.goto(base)
         expect(page.get_by_role("heading", name="Clips", exact=True)).to_be_visible()
         assert page.locator(".main-navigation button").all_text_contents() == [
-            "Clips","Proyectos","Live Studio","Publicaciones","Centro de operaciones","Estadísticas","Configuración"]
+            "Clips","Proyectos","Content Discovery","Live Studio","Publicaciones","Centro de operaciones",
+            "Estadísticas","Configuración"]
         clip = page.locator("#clip-library .library-item")
         expect(clip).to_have_count(1)
         page.screenshot(path=str(tmp_path / f"clips-{width}.png"), full_page=True)

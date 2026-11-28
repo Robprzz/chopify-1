@@ -76,7 +76,7 @@ const channelForm = $("#youtube-monitor-form");
 let channelData = [];
 let channelEditing = null;
 let channelBusy = false;
-const channelStates = {reference:"Referencia inicial", unapproved:"Sin autorización de descarga",
+const channelStates = {discovered:"Solo descubrimiento", reference:"Referencia inicial", unapproved:"Sin autorización de descarga",
   pending:"Pendiente", queued:"En producción", ready:"Por revisar", restricted:"Restringido",
   failed:"Error de procesamiento", deferred:"Límite de cola alcanzado"};
 const channelDate = date => date == null ? "Pendiente" : new Date(date * 1000).toLocaleString();
@@ -92,7 +92,7 @@ function channelsRender(data) {
       <button type="button" data-channel-action="settings" data-channel="${row.id}">Editar</button>
       <button type="button" data-channel-action="pause" data-channel="${row.id}">${row.active ? "Pausar" : "Activar"}</button>
       <button type="button" data-channel-action="check" data-channel="${row.id}">Revisar ahora</button>
-      <button type="button" data-channel-action="import" data-channel="${row.id}" ${row.active && row.authorized && row.videos.length ? "" : "disabled"}>Importar último video</button>
+      <button type="button" data-channel-action="import" data-channel="${row.id}" ${row.active && row.authorized && row.mode !== "discover" && row.videos.length ? "" : "disabled"}>Importar último video</button>
     </div>
     <ul>${row.videos.map(video => `<li>${escapeHTML(video.title)} · ${escapeHTML(channelDate(video.published))} ·
       ${escapeHTML(channelStates[video.state] || video.state)}${video.error ? " · " + escapeHTML(video.error) : ""}

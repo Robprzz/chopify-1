@@ -1,6 +1,7 @@
 "use strict";
 
 const workspaceViews = {
+  "content-discovery-view": "show-content-discovery",
   "home-view": "show-home", "live-view": "show-live", "clips-view": "show-clips-library",
   "youtube-monitor-view": "show-projects", "new-view": "show-projects", "project-view": "show-projects", "projects-view": "show-projects",
   "clip-editor-view": "show-clips-library", "automation-view": "show-settings", "ai-settings-view": "show-settings",
@@ -541,7 +542,7 @@ document.addEventListener("keydown", event => {
     event.preventDefault(); workspaceDialog();
   }
 });
-const workspaceHashes = {"clips-view":"clips","projects-view":"proyectos","new-view":"proyecto-nuevo",
+const workspaceHashes = {"content-discovery-view":"content-discovery","clips-view":"clips","projects-view":"proyectos","new-view":"proyecto-nuevo",
   "live-view":"live","calendar-view":"calendario","publications-view":"publicaciones",
   "home-view":"operaciones","statistics-view":"estadisticas","settings-view":"configuracion"};
 let restoringRoute = false;

@@ -22,12 +22,13 @@
     <script src="/clip-workspace.js" defer></script>
     <script src="/calendar.js" defer></script>
     <script src="/production-tools.js" defer></script>
+    <script src="/content-discovery.js" defer></script>
   </head>
   <body>
     <svg class="icon-defs" aria-hidden="true"><symbol id="icon-home" viewBox="0 0 24 24"><path d="m3 10 9-7 9 7v10H3z"/><path d="M9 20v-7h6v7"/></symbol><symbol id="icon-live" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2"/><path d="M7 8a7 7 0 0 0 0 8m10-8a7 7 0 0 1 0 8M4 5a11 11 0 0 0 0 14M20 5a11 11 0 0 1 0 14"/></symbol><symbol id="icon-clip" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="m10 8 6 4-6 4z"/></symbol><symbol id="icon-stack" viewBox="0 0 24 24"><path d="m3 7 9-4 9 4-9 4zm0 5 9 4 9-4M3 17l9 4 9-4"/></symbol><symbol id="icon-publish" viewBox="0 0 24 24"><path d="m22 3-7 18-4-8-8-3 19-7zM11 13 22 3"/></symbol><symbol id="icon-stats" viewBox="0 0 24 24"><path d="M3 21h18M5 17v-5h3v5zm6 0V8h3v9zm6 0V4h3v13z"/></symbol><symbol id="icon-config" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="m9 3-1 3-3 1-2 4 2 3v3l4 3 3-1 3 1 4-3v-3l2-3-2-4-3-1-1-3z"/></symbol><symbol id="icon-search" viewBox="0 0 24 24"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></symbol><symbol id="icon-bell" viewBox="0 0 24 24"><path d="M5 17h14l-2-3V9a5 5 0 0 0-10 0v5zm5 3a2 2 0 0 0 4 0"/></symbol><symbol id="icon-star" viewBox="0 0 24 24"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z"/></symbol><symbol id="icon-rail" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></symbol></svg>
     <aside class="rail">
       <button id="brand-home" class="brand-home" aria-label="Clips de Anqora Media Studio"><img class="brand-full" src="/anqora-logo" alt="Anqora Media Studio" /><img class="brand-mark" src="/anqora-symbol" alt="" /></button>
-      <nav class="main-navigation" aria-label="Menú principal"><button id="show-clips-library" type="button" title="Clips"><svg aria-hidden="true" class="ani-icon" viewBox="0 0 24 24"><use href="#icon-clip"/></svg><span>Clips</span></button><button id="show-projects" type="button" title="Proyectos"><svg aria-hidden="true" class="ani-icon" viewBox="0 0 24 24"><use href="#icon-rail"/></svg><span>Proyectos</span></button><button id="show-live" type="button" title="Live Studio"><svg aria-hidden="true" class="ani-icon" viewBox="0 0 24 24"><use href="#icon-live"/></svg><span>Live Studio</span></button><button id="show-publications" type="button" title="Publicaciones"><svg aria-hidden="true" class="ani-icon" viewBox="0 0 24 24"><use href="#icon-publish"/></svg><span>Publicaciones</span></button><button id="show-home" type="button" title="Centro de operaciones"><svg aria-hidden="true" class="ani-icon" viewBox="0 0 24 24"><use href="#icon-home"/></svg><span>Centro de operaciones</span></button><button id="show-statistics" type="button" title="Estadísticas"><svg aria-hidden="true" class="ani-icon" viewBox="0 0 24 24"><use href="#icon-stats"/></svg><span>Estadísticas</span></button><button id="show-settings" type="button" title="Configuración"><svg aria-hidden="true" class="ani-icon" viewBox="0 0 24 24"><use href="#icon-config"/></svg><span>Configuración</span></button></nav>
+      <nav class="main-navigation" aria-label="Menú principal"><button id="show-clips-library" type="button" title="Clips"><svg aria-hidden="true" class="ani-icon" viewBox="0 0 24 24"><use href="#icon-clip"/></svg><span>Clips</span></button><button id="show-projects" type="button" title="Proyectos"><svg aria-hidden="true" class="ani-icon" viewBox="0 0 24 24"><use href="#icon-rail"/></svg><span>Proyectos</span></button><button id="show-content-discovery" type="button" title="Content Discovery"><svg aria-hidden="true" class="ani-icon" viewBox="0 0 24 24"><use href="#icon-search"/></svg><span>Content Discovery</span></button><button id="show-live" type="button" title="Live Studio"><svg aria-hidden="true" class="ani-icon" viewBox="0 0 24 24"><use href="#icon-live"/></svg><span>Live Studio</span></button><button id="show-publications" type="button" title="Publicaciones"><svg aria-hidden="true" class="ani-icon" viewBox="0 0 24 24"><use href="#icon-publish"/></svg><span>Publicaciones</span></button><button id="show-home" type="button" title="Centro de operaciones"><svg aria-hidden="true" class="ani-icon" viewBox="0 0 24 24"><use href="#icon-home"/></svg><span>Centro de operaciones</span></button><button id="show-statistics" type="button" title="Estadísticas"><svg aria-hidden="true" class="ani-icon" viewBox="0 0 24 24"><use href="#icon-stats"/></svg><span>Estadísticas</span></button><button id="show-settings" type="button" title="Configuración"><svg aria-hidden="true" class="ani-icon" viewBox="0 0 24 24"><use href="#icon-config"/></svg><span>Configuración</span></button></nav>
       <div class="system-indicator"><span class="system-light"></span><div><strong>Estado del sistema</strong><small id="rail-health">Estudio local</small></div></div>
     </aside>
     <main>
@@ -74,6 +75,91 @@
         <label class="workspace-toolbar">Mostrar <select id="projects-filter"><option value="active">Activos</option><option value="archived">Archivados</option><option value="all">Todos</option></select></label>
         <p id="project-count" aria-live="polite"></p>
         <div id="projects" class="project-list" aria-label="Proyectos guardados"></div>
+      </section>
+      <section id="content-discovery-view" class="view discovery-view" hidden>
+        <header class="discovery-header">
+          <div><h1>Content Discovery</h1><p>Encuentra y revisa oportunidades editoriales de tus canales de YouTube.</p></div>
+          <button id="discovery-refresh" type="button" class="primary">Actualizar fuentes</button>
+        </header>
+        <div class="discovery-tabs" role="tablist" aria-label="Content Discovery">
+          <button id="discovery-tab-browse" role="tab" aria-selected="true" aria-controls="discovery-browse">Descubrir</button>
+          <button id="discovery-tab-sources" role="tab" aria-selected="false" aria-controls="discovery-sources" tabindex="-1">Fuentes</button>
+          <button id="discovery-tab-library" role="tab" aria-selected="false" aria-controls="discovery-library" tabindex="-1">Biblioteca</button>
+          <button id="discovery-tab-metrics" role="tab" aria-selected="false" aria-controls="discovery-metrics" tabindex="-1">Rendimiento</button>
+        </div>
+        <p id="discovery-feedback" class="discovery-feedback" aria-live="polite"></p>
+        <p id="discovery-connectivity" class="discovery-connectivity" role="status" hidden></p>
+        <section id="discovery-browse" role="tabpanel" aria-labelledby="discovery-tab-browse">
+          <form id="discovery-filters" class="workspace-card discovery-filters">
+            <label class="discovery-search">Buscar<input name="q" type="search" maxlength="150" placeholder="Título, canal, tema o nota" /></label>
+            <label>Canal<select name="channel"><option value="">Todos</option></select></label>
+            <label>Categoría<select name="category"><option value="">Todas</option></select></label>
+            <label>Estado<select name="state"><option value="">Todos</option><option value="inbox">Pendiente</option><option value="saved">Guardada</option><option value="approved">Aprobada</option><option value="discarded">Descartada</option></select></label>
+            <label>Derechos<select name="rights"><option value="">Todos</option><option value="pending">Pendientes</option><option value="cleared">Confirmados</option><option value="restricted">Restringidos</option></select></label>
+            <label>Desde<input name="from" type="date" /></label>
+            <label>Hasta<input name="to" type="date" /></label>
+            <label>Orden<select name="sort"><option value="score">Puntuación</option><option value="date">Fecha</option></select></label>
+            <button type="submit">Aplicar filtros</button>
+          </form>
+          <div id="discovery-results" class="discovery-results">
+            <div class="discovery-results-heading"><p id="discovery-count" role="status"></p><span>Relevancia editorial</span></div>
+            <div id="discovery-list" class="discovery-list"></div>
+            <nav class="discovery-pagination" aria-label="Páginas de oportunidades">
+              <button id="discovery-prev" type="button" disabled>Anterior</button><span id="discovery-page"></span>
+              <button id="discovery-next" type="button" disabled>Siguiente</button>
+            </nav>
+          </div>
+        </section>
+        <section id="discovery-sources" role="tabpanel" aria-labelledby="discovery-tab-sources" hidden>
+          <div class="discovery-source-layout">
+            <form id="discovery-source-form" class="workspace-card discovery-form">
+              <h2 id="discovery-source-title">Agregar canal</h2>
+              <label id="discovery-source-location">Canal<input name="source" required maxlength="240" placeholder="URL, @handle o ID del canal" /></label>
+              <label>Categoría<select name="category"></select></label>
+              <label>Frecuencia en minutos<input name="interval" type="number" min="5" max="1440" value="180" required /></label>
+              <label>Modalidad<select name="mode"><option value="discover">Solo descubrir</option><option value="produce">Descubrir y producir</option></select></label>
+              <label class="check"><input name="active" type="checkbox" checked /> Monitoreo activo</label>
+              <p class="muted" id="discovery-production-hint" hidden>El monitor anterior aplica las reglas y la autorización del canal para producir.</p>
+              <div class="publication-actions"><button type="submit" class="primary">Guardar fuente</button><button id="discovery-source-reset" type="button">Nuevo canal</button></div>
+              <button id="discovery-open-monitor" type="button">Abrir reglas de producción del monitor</button>
+            </form>
+            <div id="discovery-source-list" class="discovery-list"></div>
+          </div>
+          <details class="workspace-card discovery-rules">
+            <summary>Reglas de ranking y temas</summary>
+            <form id="discovery-rules-form" class="discovery-form">
+              <div id="discovery-weights" class="form-grid"></div>
+              <p id="discovery-weight-total" role="status"></p>
+              <label>Temas y palabras clave<textarea name="topics" rows="4" maxlength="32000" placeholder="Tecnología: energía solar, baterías"></textarea></label>
+              <p class="muted">Escribe un tema por línea y separa las palabras clave con comas.</p>
+              <button type="submit" class="primary">Guardar reglas</button>
+            </form>
+          </details>
+        </section>
+        <section id="discovery-library" role="tabpanel" aria-labelledby="discovery-tab-library" hidden>
+          <div id="discovery-library-slot"></div>
+        </section>
+        <section id="discovery-metrics" role="tabpanel" aria-labelledby="discovery-tab-metrics" hidden>
+          <div id="discovery-metric-list" class="discovery-metrics"></div>
+          <p class="muted">El tiempo registrado corresponde a revisiones guardadas. Los proyectos vinculados proceden del monitor existente.</p>
+        </section>
+        <dialog id="discovery-review" aria-labelledby="discovery-review-title">
+          <section class="discovery-dialog">
+            <header class="section-heading"><h2 id="discovery-review-title"></h2><button id="discovery-close-review" type="button">Cerrar</button></header>
+            <p id="discovery-review-meta" class="muted"></p>
+            <p id="discovery-description"></p>
+            <a id="discovery-original" target="_blank" rel="noopener noreferrer">Abrir el video original en YouTube</a>
+            <div id="discovery-explanation"></div>
+            <form id="discovery-review-form" class="discovery-form">
+              <label>Notas editoriales<textarea name="notes" rows="4" maxlength="4000"></textarea></label>
+              <label>Revisión de derechos<select name="rights"><option value="pending">Pendientes</option><option value="cleared">Confirmados</option><option value="restricted">Restringidos</option></select></label>
+              <label>Referencia de derechos<input name="rights_note" maxlength="1000" /></label>
+              <label>Estado editorial<select name="action"><option value="edit">Mantener estado</option><option value="save">Guardar oportunidad</option><option value="approve">Aprobar editorialmente</option><option value="discard">Descartar</option><option value="restore">Volver a la bandeja</option></select></label>
+              <p id="discovery-review-feedback" role="status"></p>
+              <div class="publication-actions"><button type="submit" class="primary">Guardar revisión</button><button type="button" disabled title="Disponible en una fase posterior">Enviar a proyecto</button></div>
+            </form>
+          </section>
+        </dialog>
       </section>
       <section id="youtube-monitor-view" class="view" hidden>
         <div class="intro"><h1>Canales monitoreados</h1><p>Studio consulta YouTube mientras permanece abierto. Si el equipo se suspende o apaga, vuelve a consultar al reabrir.</p></div>

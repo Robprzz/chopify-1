@@ -27,6 +27,7 @@ import export_cache
 import export_settings
 import render_progress
 import youtube_monitor
+import content_discovery
 import live_production
 import projects
 import project_cancel
@@ -70,15 +71,8 @@ def live_source_identity(source):
     url = urlsplit(source)
     host = url.hostname or ""
     parts = url.path.strip("/").split("/")
-    if host == "youtu.be" or host == "youtube.com" or host.endswith(".youtube.com"):
-        if host == "youtu.be":
-            video = parts[0]
-        elif parts == ["watch"]:
-            video = next(iter(parse_qs(url.query).get("v", [])), "")
-        else:
-            video = parts[1] if len(parts) == 2 and parts[0] in {"live", "shorts", "embed"} else ""
-        if re.fullmatch(r"[\w-]{11}", video, re.ASCII):
-            return ("youtube", video), "YouTube · " + video
+    if video := youtube_monitor.video_id(url):
+        return ("youtube", video), "YouTube · " + video
     for domain, name in (("twitch.tv", "Twitch"), ("kick.com", "Kick")):
         if host in {domain, "www." + domain} and len(parts) == 1 and re.fullmatch(r"[a-zA-Z0-9_]+", parts[0]):
             channel = parts[0].lower()
@@ -104,6 +98,7 @@ STATIC_FILES = {
     "realtime.js": ("realtime.js", "text/javascript; charset=utf-8"),
     "workspace.js": ("workspace.js", "text/javascript; charset=utf-8"),
     "clip-workspace.js": ("clip-workspace.js", "text/javascript; charset=utf-8"),
+    "content-discovery.js": ("content-discovery.js", "text/javascript; charset=utf-8"),
     "production-tools.js": ("production-tools.js", "text/javascript; charset=utf-8"),
     "calendar.js": ("calendar.js", "text/javascript; charset=utf-8"),
     "anqora.css": ("anqora.css", "text/css; charset=utf-8"),
@@ -247,6 +242,7 @@ class Studio:
         self.telegram.start()
         self.schedule_thread.start()
         self.channels = youtube_monitor.Monitor(self.root, self._monitor_project, self._monitor_idle, start=False)
+        self.discovery = content_discovery.Discovery(self.channels, self.root)
         self.channels.worker.start()
 
     def _monitor_idle(self):
@@ -263,6 +259,8 @@ class Studio:
                 return "restricted", "La ruta de proyecto está protegida o en la papelera."
             with self.channels.connect() as db:
                 current = self.channels._channel(db, item["channel"])
+            if current["mode"] == "discover":
+                return "paused", None
             item.update({key: current[key] for key in ("active","authorized","reason","maximum","preferred",
                                                      "template","category","render")})
             stamp = {"channel": item["channel"], "video": item["id"], "published": item["published"],
@@ -842,6 +840,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(future.result() if future.done() else {"state": "running", "progress": running})
             if parts == ["api", "export-template"]:
                 return self.send_json(export_settings.Store(self.app.root).read())
+            if parts == ["api", "content-discovery"]:
+                query = parse_qs(location.query, max_num_fields=12, keep_blank_values=True)
+                return self.send_json(self.app.discovery.browse({key: values[-1] for key, values in query.items()}))
+            if parts == ["api", "content-discovery", "sources"]:
+                return self.send_json({"sources": self.app.discovery.sources()})
+            if parts == ["api", "content-discovery", "rules"]:
+                return self.send_json(self.app.discovery.rules())
+            if parts == ["api", "content-discovery", "metrics"]:
+                return self.send_json(self.app.discovery.metrics())
             if parts == ["api", "youtube-monitor"]:
                 return self.send_json(self.app.channels.snapshot())
             if parts == ["api", "publishing-assist"]:
@@ -1037,6 +1044,18 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(body, dict):
                 raise ValueError("Expected a JSON object.")
             parts = unquote(urlsplit(self.path).path).strip("/").split("/")
+            if len(parts) == 3 and parts[:2] == ["api", "content-discovery"]:
+                if parts[2] == "source":
+                    if "id" in body:
+                        with self.app.lock:
+                            return self.send_json({"sources": self.app.discovery.source(body)})
+                    return self.send_json({"sources": self.app.discovery.source(body)}, 201)
+                if parts[2] == "rules":
+                    return self.send_json(self.app.discovery.rules(body))
+                if parts[2] == "review":
+                    return self.send_json(self.app.discovery.review(body))
+                if parts[2] == "refresh":
+                    return self.send_json(self.app.channels.refresh_active(), 202)
             if len(parts) == 3 and parts[:2] == ["api", "youtube-monitor"]:
                 if parts[2] == "add":
                     return self.send_json(self.app.channels.action(parts[2], body))
@@ -1296,7 +1315,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"error": "Not found."}, 404)
         except FileNotFoundError:
             self.send_json({"error": "Project or transcript not found. Prepare the project first."}, 404)
-        except publishing_calendar.Conflict as exc:
+        except (publishing_calendar.Conflict, content_discovery.Conflict) as exc:
             return self.send_json({"error": str(exc)}, 409)
         except (sqlite3.Error, automation.SettingsUnavailable):
             return self.send_json({"error": "El espacio local no está disponible."}, 503)

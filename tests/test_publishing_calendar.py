@@ -179,7 +179,7 @@ def test_calendar_ui_and_navigation_over_http(tmp_path, chromium_page):
     with running_server(tmp_path) as (_, base):
         page.goto(base)
         expect(page.locator("#home-greeting")).to_have_text("Centro de operaciones")
-        expect(page.locator(".main-navigation button")).to_have_count(7)
+        expect(page.locator(".main-navigation button")).to_have_count(8)
         page.locator("#show-home").click()
         expect(page.locator("#home-kpis")).to_contain_text("0/5")
         assert page.evaluate("getComputedStyle(document.body).backgroundColor") == "rgb(247, 249, 253)"

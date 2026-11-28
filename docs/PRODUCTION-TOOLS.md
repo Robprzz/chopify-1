@@ -40,6 +40,8 @@ En **Publicaciones**, el filtro **Solo borradores sin programar** y el filtro de
 
 ## Canales monitoreados de YouTube
 
+Para clasificar oportunidades a partir de metadatos públicos, abre **Content Discovery**. Los canales registrados allí comienzan en **Solo descubrir**, con una frecuencia de 180 minutos. [Guía de Content Discovery](CONTENT-DISCOVERY.md)
+
 Abre **Proyectos → Canales monitoreados**. Puedes agregar un identificador `UC…`, un `@handle` o una URL HTTPS oficial con `/channel/UC…` o `/@handle`. El monitor registra las entradas de la primera consulta como referencia. Elige **Importar último video** si también quieres incorporar el más reciente de esa referencia inicial. **Revisar ahora** solicita una consulta y respeta el intervalo mínimo manual y el periodo de espera impuesto por YouTube.
 
 La detección consulta el feed Atom público de YouTube. El flujo básico no requiere una clave. Cuando dispones de derechos, marca la autorización y documenta su origen. Al incorporar un video, Studio comprueba con yt-dlp sin cookies ni configuración de usuario que pertenece al canal, es público y está disponible como grabación. La ingestión conserva Whisper Automático con respaldo CPU. Puedes limitar el número de clips, elegir duración, plantilla y categoría, y decidir si quieres exportar automáticamente los clips que superen el umbral. Los resultados quedan para revisión editorial.
